@@ -1,0 +1,28 @@
+[package]
+name = "attestation-gateway"
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/worldcoin/attestation-gateway"
+description = "Protects app integrity."
+license-file = "LICENSE"
+keywords = ["integrity", "attestation", "PlayIntegrity", "DeviceCheck"]
+categories = ["web-programming"]
+
+
+[dependencies]
+aide = { version = "0.13.4", features = ["axum", "scalar"] }
+axum = "0.7.5"
+axum-jsonschema = { version = "0.8.0", features = ["aide"] }
+dotenvy = "0.15.7"
+redis = { version = "0.25.4", features = ["tokio-comp", "connection-manager", "tokio-native-tls-comp"] }
+schemars = "0.8.21"
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.107"
+tokio = { version = "1.38.0", features = ["full"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt","json"
+] }
+
+[build-dependencies]
+chrono = "0.4.38"

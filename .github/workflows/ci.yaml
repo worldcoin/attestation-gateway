@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Format, Clippy, Build, and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-index-
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+
+      - name: Install dependencies
+        run: cargo fetch
+
+      - name: Check code formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-features -- -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+
+      - name: Build the project
+        run: cargo build --release
+
+      - name: Run tests
+        run: cargo test --all
+
+  docker-build:
+    name: Test docker build
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+        # Set health checks to wait until postgres has started
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cache/docker
+          key: ${{ runner.os }}-docker-${{ hashFiles('**/Dockerfile') }}
+
+      - name: Build Docker image
+        run: docker build -t attestation-gateway-ci:latest .
+
+      - name: Run Docker container
+        run: |
+          docker run -d -p 8000:8000 --network host --env-file .env.example --name attestation-gateway-ci-container attestation-gateway-ci:latest
+
+          # Wait for the application to start
+          sleep 10
+
+          # Output logs to GitHub action
+          docker logs attestation-gateway-ci-container
+
+      - name: Health check Docker container
+        run: curl -f http://0.0.0.0:8000/health
+
+      - name: Clean up
+        run: |
+          docker stop attestation-gateway-ci-container
+          docker rm attestation-gateway-ci-container
