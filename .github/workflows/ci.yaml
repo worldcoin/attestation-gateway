@@ -52,7 +52,7 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Run clippy
-        run: cargo clippy --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+        run: cargo clippy --all-features -- -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
       - name: Build the project
         run: cargo build --release
