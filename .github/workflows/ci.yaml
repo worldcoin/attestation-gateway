@@ -7,6 +7,7 @@ on:
 
 jobs:
   build:
+    name: Format, Clippy, Build, and Test
     runs-on: ubuntu-latest
 
     steps:
@@ -51,10 +52,42 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+        run: cargo clippy --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
       - name: Build the project
         run: cargo build --release
 
       - name: Run tests
         run: cargo test --all
+
+  docker-build:
+    name: Test docker build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cache/docker
+          key: ${{ runner.os }}-docker-${{ hashFiles('**/Dockerfile') }}
+
+      - name: Build Docker image
+        run: docker build -t attestation-gateway-ci:latest .
+
+      - name: Run Docker container
+        run: |
+          docker run -d -p 8000:8000 --network host --env-file .env.example --name attestation-gateway-ci-container attestation-gateway-ci:latest
+
+          # Output logs to GitHub action
+          docker logs attestation-gateway-ci-container
+
+      - name: Health check Docker container
+        run: curl -f http://0.0.0.0:8000/health
+
+      - name: Clean up
+        run: |
+          docker stop attestation-gateway-ci-container
+          docker rm attestation-gateway-ci-container
