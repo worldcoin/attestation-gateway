@@ -1,0 +1,15 @@
+{
+  "version": "0.2",
+  "language": "en-US",
+  "allowCompoundWords": true,
+  "ignorePaths": ["CODEOWNERS"],
+  "words": ["dotenv", "rustc", "schemars", "serde"],
+  "enabledLanguageIds": [
+    "jsonc",
+    "markdown",
+    "plaintext",
+    "rust",
+    "shellscript"
+  ],
+  "dictionaries": ["markdown"]
+}
