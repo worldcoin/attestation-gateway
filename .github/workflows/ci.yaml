@@ -81,6 +81,9 @@ jobs:
         run: |
           docker run -d -p 8000:8000 --network host --env-file .env.example --name attestation-gateway-ci-container attestation-gateway-ci:latest
 
+          # Wait for the application to start
+          sleep 10
+
           # Output logs to GitHub action
           docker logs attestation-gateway-ci-container
 
