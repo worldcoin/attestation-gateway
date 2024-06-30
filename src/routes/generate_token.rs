@@ -7,7 +7,7 @@ pub async fn handler(
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, StatusCode> {
     let response = TokenGenerationResponse {
-        attestation_gateway_token: request.bundle_identifier,
+        attestation_gateway_token: request.bundle_identifier.platform().to_string(),
     };
     Ok(Json(response))
 }
