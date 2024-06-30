@@ -3,22 +3,24 @@ use std::fmt::Display;
 
 #[derive(Debug)]
 pub enum Platform {
-    IOS,
+    AppleIOS,
     Android,
 }
 
 impl Display for Platform {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Platform::IOS => write!(f, "ios"),
-            Platform::Android => write!(f, "android"),
+            Self::AppleIOS => write!(f, "ios"),
+            Self::Android => write!(f, "android"),
         }
     }
 }
 
+#[allow(clippy::enum_variant_names)] // Only World App is supported right now (postfix)
 #[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BundleIdentifier {
+    // World App
     #[serde(rename = "com.worldcoin")]
     AndroidProdWorldApp,
     #[serde(rename = "com.worldcoin.staging")]
@@ -32,12 +34,12 @@ pub enum BundleIdentifier {
 }
 
 impl BundleIdentifier {
-    pub fn platform(&self) -> Platform {
+    pub const fn platform(&self) -> Platform {
         match self {
             Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
                 Platform::Android
             }
-            Self::IOSProdWorldApp | Self::IOSStageWorldApp => Platform::IOS,
+            Self::IOSProdWorldApp | Self::IOSStageWorldApp => Platform::AppleIOS,
         }
     }
 }
