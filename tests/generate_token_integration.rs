@@ -31,15 +31,13 @@ async fn test_token_generation() {
         .await
         .unwrap();
 
-    // assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::OK);
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
 
-    println!("{:?}", body);
-
     assert_eq!(
         body,
-        json!({ "attestation_gateway_token": "android".to_string() })
+        json!({ "attestation_gateway_token": "my_token".to_string() })
     );
 }

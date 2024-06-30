@@ -6,8 +6,12 @@ use crate::utils::{TokenGenerationRequest, TokenGenerationResponse};
 pub async fn handler(
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, StatusCode> {
+    println!(
+        "Processing for platform: {}",
+        request.bundle_identifier.platform()
+    );
     let response = TokenGenerationResponse {
-        attestation_gateway_token: request.bundle_identifier.platform().to_string(),
+        attestation_gateway_token: "my_token".to_string(),
     };
     Ok(Json(response))
 }
