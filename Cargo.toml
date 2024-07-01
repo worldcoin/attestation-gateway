@@ -26,3 +26,9 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 
 [build-dependencies]
 chrono = "0.4.38"
+
+[dev-dependencies]
+http-body-util = "0.1.2"
+hyper = "1.3.1"
+mime = "0.3.17"
+tower = "0.4.13"
