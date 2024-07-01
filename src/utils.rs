@@ -44,7 +44,7 @@ impl BundleIdentifier {
     }
 }
 
-#[derive(Debug, serde::Deserialize, JsonSchema)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct TokenGenerationRequest {
     pub integrity_token: String,
     pub client_error: Option<String>,

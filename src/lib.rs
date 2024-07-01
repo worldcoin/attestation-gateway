@@ -1,2 +1,2 @@
 pub mod routes;
-mod utils;
+pub mod utils;
