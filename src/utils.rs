@@ -72,14 +72,16 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RequestError {
+    InternalServerError,
     InvalidToken,
 }
 
 impl std::fmt::Display for RequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            RequestError::InternalServerError => write!(f, "internal_server_error"),
             RequestError::InvalidToken => write!(f, "invalid_token"),
         }
     }
