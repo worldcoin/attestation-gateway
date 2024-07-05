@@ -14,7 +14,7 @@ pub async fn handler(
         Platform::Android => {
             // TODO: Error response text
             android::verify_token(&request.integrity_token, &request.bundle_identifier)
-                .map_err(|_e| StatusCode::BAD_REQUEST)?
+                .map_err(|_e| StatusCode::BAD_REQUEST)?;
         }
         Platform::AppleIOS => {}
     }

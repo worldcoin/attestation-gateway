@@ -22,7 +22,7 @@ struct PlayIntegrityToken {
 }
 
 pub fn verify_token(
-    integrity_token: &String,
+    integrity_token: &str,
     bundle_identifier: &BundleIdentifier,
 ) -> Result<(), RequestError> {
     // FIXME: These are temporary keys for local development
@@ -39,7 +39,7 @@ pub fn verify_token(
             return Err(RequestError::InternalServerError);
         }
     };
-    let (compact_jws, _headers) = match jwe::deserialize_compact(&integrity_token, &decrypter) {
+    let (compact_jws, _headers) = match jwe::deserialize_compact(integrity_token, &decrypter) {
         Ok(payload) => payload,
         Err(e) => {
             // We log an info because this is a client error (provided an invalidly encrypted token)
@@ -50,7 +50,7 @@ pub fn verify_token(
 
     // Verify the JWS and extract the payload
 
-    let verifier = match HS256.verifier_from_bytes(&verifier_key) {
+    let verifier = match HS256.verifier_from_bytes(verifier_key) {
         Ok(value) => value,
         Err(e) => {
             tracing::error!("HS256 error: {e}");
@@ -58,7 +58,7 @@ pub fn verify_token(
         }
     };
 
-    let (jws, _headers) = match josekit::jwt::decode_with_verifier(&compact_jws, &verifier) {
+    let (jws, _headers) = match josekit::jwt::decode_with_verifier(compact_jws, &verifier) {
         Ok(value) => value,
         Err(e) => {
             // We log an info because this is a client error (provided an invalidly signed token)
@@ -98,14 +98,14 @@ pub fn verify_token(
 #[cfg(test)]
 mod tests {
 
-    use josekit::jwe::{self, JweHeader, A256KW};
-
-    use crate::utils::{BundleIdentifier, RequestError};
-
     use super::verify_token;
+    use crate::utils::{BundleIdentifier, RequestError};
+    use josekit::jwe::{self, JweHeader, A256KW};
+    use tracing_test::traced_test;
 
     // SECTION - JWE tests
 
+    #[traced_test]
     #[test]
     fn test_invalid_jwe_fails_verification() -> Result<(), ()> {
         let other_private_key = b"caba71cf1b1e3896136dc70301c0613f";
@@ -118,7 +118,9 @@ mod tests {
 
         let test_jwe = jwe::serialize_compact(b"test", &headers, &encrypter).unwrap();
 
-        // TODO: Assert tracing info
+        let _subscriber = tracing_subscriber::fmt::Subscriber::builder()
+            .with_test_writer()
+            .finish();
 
         let result = verify_token(&test_jwe, &BundleIdentifier::AndroidStageWorldApp);
 
@@ -126,6 +128,8 @@ mod tests {
             matches!(result, Err(RequestError::InvalidToken)),
             "Token decryption should have failed."
         );
+
+        assert!(logs_contain("Received Android JWE failed decryption: "));
 
         Ok(())
     }

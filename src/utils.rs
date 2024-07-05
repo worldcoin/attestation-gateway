@@ -72,7 +72,7 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum RequestError {
     //  IntegrityFailed,
     InternalServerError,
@@ -83,11 +83,11 @@ pub enum RequestError {
 impl std::fmt::Display for RequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            //   RequestError::IntegrityFailed => write!(f, "integrity_failed"),
-            RequestError::InternalServerError => write!(f, "internal_server_error"),
+            //   Self::IntegrityFailed => write!(f, "integrity_failed"),
+            Self::InternalServerError => write!(f, "internal_server_error"),
             // Received an integrity token for a package name that does not match the provided bundle identifier
-            RequestError::InvalidBundleIdentifier => write!(f, "invalid_bundle_identifier"),
-            RequestError::InvalidToken => write!(f, "invalid_token"),
+            Self::InvalidBundleIdentifier => write!(f, "invalid_bundle_identifier"),
+            Self::InvalidToken => write!(f, "invalid_token"),
         }
     }
 }
