@@ -1,6 +1,6 @@
 use crate::utils::{BundleIdentifier, RequestError};
 use josekit::jwe::{self, A256KW};
-use josekit::jws::HS256;
+use josekit::jws::ES256;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,11 +25,23 @@ pub fn verify_token(
     integrity_token: &str,
     bundle_identifier: &BundleIdentifier,
 ) -> Result<(), RequestError> {
+    let decrypted_jws = decrypt_outer_jwe(integrity_token)?;
+
+    let integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)?;
+
+    // --- requestHash matches ---
+    if integrity_payload.request_details.request_package_name != bundle_identifier.to_string() {
+        return Err(RequestError::InvalidBundleIdentifier);
+    }
+
+    Ok(())
+}
+
+/// Decrypts the outer JWE (JSON Web Encryption) token using the AES secret provided by Google for each bundle identifier
+/// https://developer.android.com/google/play/integrity/classic#kotlin
+fn decrypt_outer_jwe(integrity_token: &str) -> Result<Vec<u8>, RequestError> {
     // FIXME: These are temporary keys for local development
     let private_key = b"7d5b44298bf959af149a0086d79334e6";
-    let verifier_key = b"cc7e0d44fd473002f1c42167459001140ec6389b7353f8088f4d9a95f2f596f2";
-
-    // SECTION - Token decryption & verification
 
     // Decrypt the outer JWE
     let decrypter = match A256KW.decrypter_from_bytes(private_key) {
@@ -48,12 +60,23 @@ pub fn verify_token(
         }
     };
 
-    // Verify the JWS and extract the payload
+    Ok(compact_jws)
+}
 
-    let verifier = match HS256.verifier_from_bytes(verifier_key) {
+/// Verifies the signature of the inner JWS (as well as expiration) and parses the payload into a PlayIntegrityToken struct
+/// https://developer.android.com/google/play/integrity/classic#kotlin
+///
+fn verify_and_parse_inner_jws(compact_jws: &Vec<u8>) -> Result<PlayIntegrityToken, RequestError> {
+    // FIXME: These are temporary keys for local development
+    let verifier_key = b"-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/ESc
+v4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==
+-----END PUBLIC KEY-----";
+
+    let verifier = match ES256.verifier_from_pem(verifier_key) {
         Ok(value) => value,
         Err(e) => {
-            tracing::error!("HS256 error: {e}");
+            tracing::error!("ES256 error: {e}");
             return Err(RequestError::InternalServerError);
         }
     };
@@ -79,20 +102,13 @@ pub fn verify_token(
     let integrity_payload: PlayIntegrityToken = match serde_json::from_str(&integrity_payload) {
         Ok(value) => value,
         Err(e) => {
-            // This is not an expected client error, because this is a signed and encrypted token, suggests Google is sending a token payload we don't expect
+            // This is not an expected client error, because this is a signed and encrypted token, suggests Google is sending an attribute incorrectly
             tracing::error!("Received invalid token payload: {e}. Payload: {integrity_payload}");
             return Err(RequestError::InternalServerError);
         }
     };
 
-    // SECTION - Verify integrity rules
-
-    // --- requestHash matches ---
-    if integrity_payload.request_details.request_package_name != bundle_identifier.to_string() {
-        return Err(RequestError::InvalidBundleIdentifier);
-    }
-
-    Ok(())
+    Ok(integrity_payload)
 }
 
 #[cfg(test)]
