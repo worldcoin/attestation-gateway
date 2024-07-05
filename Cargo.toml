@@ -13,6 +13,7 @@ categories = ["web-programming"]
 aide = { version = "0.13.4", features = ["axum", "scalar"] }
 axum = "0.7.5"
 axum-jsonschema = { version = "0.8.0", features = ["aide"] }
+biscuit = "0.7.0"
 dotenvy = "0.15.7"
 redis = { version = "0.25.4", features = ["tokio-comp", "connection-manager", "tokio-native-tls-comp"] }
 schemars = "0.8.21"

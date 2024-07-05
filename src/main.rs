@@ -4,6 +4,7 @@ use dotenvy::dotenv;
 use redis::aio::ConnectionManager;
 use std::env;
 
+mod android;
 mod routes;
 mod server;
 mod utils;
