@@ -4,10 +4,21 @@ use josekit::jws::HS256;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-struct PlayIntegrityClaims {
-    sub: String,
-    iss: String,
-    aud: String,
+struct RequestDetails {
+    #[serde(rename = "requestPackageName")]
+    request_package_name: String,
+
+    #[serde(rename = "requestHash")]
+    request_hash: String,
+
+    #[serde(rename = "timestampMillis")]
+    timestamp_millis: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PlayIntegrityToken {
+    #[serde(rename = "requestDetails")]
+    request_details: RequestDetails,
 }
 
 pub fn verify_token(
@@ -18,9 +29,11 @@ pub fn verify_token(
     let private_key = b"7d5b44298bf959af149a0086d79334e6";
     let verifier_key = b"cc7e0d44fd473002f1c42167459001140ec6389b7353f8088f4d9a95f2f596f2";
 
+    // SECTION - Token decryption & verification
+
     // Decrypt the outer JWE
     let decrypter = match A256KW.decrypter_from_bytes(private_key) {
-        Ok(decrypter) => decrypter,
+        Ok(value) => value,
         Err(e) => {
             tracing::error!("A256KW error: {e}");
             return Err(RequestError::InternalServerError);
@@ -29,6 +42,7 @@ pub fn verify_token(
     let (compact_jws, _headers) = match jwe::deserialize_compact(&integrity_token, &decrypter) {
         Ok(payload) => payload,
         Err(e) => {
+            // We log an info because this is a client error (provided an invalidly encrypted token)
             tracing::info!("Received Android JWE failed decryption: {e}");
             return Err(RequestError::InvalidToken);
         }
@@ -36,15 +50,47 @@ pub fn verify_token(
 
     // Verify the JWS and extract the payload
 
-    let verifier = HS256.verifier_from_bytes(&verifier_key).unwrap();
-    let (payload, _headers) = josekit::jwt::decode_with_verifier(&compact_jws, &verifier).unwrap();
+    let verifier = match HS256.verifier_from_bytes(&verifier_key) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!("HS256 error: {e}");
+            return Err(RequestError::InternalServerError);
+        }
+    };
 
-    println!("{:?}", payload.claim("sub"));
+    let (jws, _headers) = match josekit::jwt::decode_with_verifier(&compact_jws, &verifier) {
+        Ok(value) => value,
+        Err(e) => {
+            // We log an info because this is a client error (provided an invalidly signed token)
+            tracing::info!("Received Android JWS with invalid signature: {e}");
+            return Err(RequestError::InvalidToken);
+        }
+    };
 
-    println!(
-        "Verifying Android token: {} - {}",
-        integrity_token, bundle_identifier
-    );
+    // Parse the JWS
+
+    let integrity_payload = match jws.claim("payload") {
+        Some(value) => value.to_string(),
+        None => {
+            return Err(RequestError::InvalidToken);
+        }
+    };
+
+    let integrity_payload: PlayIntegrityToken = match serde_json::from_str(&integrity_payload) {
+        Ok(value) => value,
+        Err(e) => {
+            // This is not an expected client error, because this is a signed and encrypted token, suggests Google is sending a token payload we don't expect
+            tracing::error!("Received invalid token payload: {e}. Payload: {integrity_payload}");
+            return Err(RequestError::InternalServerError);
+        }
+    };
+
+    // SECTION - Verify integrity rules
+
+    // --- requestHash matches ---
+    if integrity_payload.request_details.request_package_name != bundle_identifier.to_string() {
+        return Err(RequestError::InvalidBundleIdentifier);
+    }
 
     Ok(())
 }
