@@ -120,13 +120,14 @@ mod tests {
 
         // TODO: Assert tracing info
 
-        match verify_token(&test_jwe, &BundleIdentifier::AndroidStageWorldApp) {
-            Ok(()) => panic!("Token decryption should have failed."),
-            Err(e) => {
-                assert_eq!(e, RequestError::InvalidToken);
-                return Ok(());
-            }
-        }
+        let result = verify_token(&test_jwe, &BundleIdentifier::AndroidStageWorldApp);
+
+        assert!(
+            matches!(result, Err(RequestError::InvalidToken)),
+            "Token decryption should have failed."
+        );
+
+        Ok(())
     }
 
     #[test]
