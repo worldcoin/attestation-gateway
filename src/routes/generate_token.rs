@@ -13,8 +13,12 @@ pub async fn handler(
     match request.bundle_identifier.platform() {
         Platform::Android => {
             // TODO: Error response text
-            android::verify_token(&request.integrity_token, &request.bundle_identifier)
-                .map_err(|_e| StatusCode::BAD_REQUEST)?;
+            android::verify_token(
+                &request.integrity_token,
+                &request.bundle_identifier,
+                &request.request_hash,
+            )
+            .map_err(|_e| StatusCode::BAD_REQUEST)?;
         }
         Platform::AppleIOS => {}
     }

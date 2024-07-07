@@ -71,24 +71,42 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum RequestError {
-    //  IntegrityFailed,
-    InternalServerError,
-    InvalidBundleIdentifier,
-    InvalidToken,
+#[derive(Debug)]
+pub struct RequestError {
+    pub code: ErrorCode,
+    pub internal_details: Option<String>,
 }
 
-impl std::fmt::Display for RequestError {
+impl Display for RequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            //   Self::IntegrityFailed => write!(f, "integrity_failed"),
-            Self::InternalServerError => write!(f, "internal_server_error"),
-            // Received an integrity token for a package name that does not match the provided bundle identifier
-            Self::InvalidBundleIdentifier => write!(f, "invalid_bundle_identifier"),
-            Self::InvalidToken => write!(f, "invalid_token"),
-        }
+        write!(
+            f,
+            "Error Code: `{}`. Internal details: {:?}",
+            self.code, self.internal_details
+        )
     }
 }
 
 impl std::error::Error for RequestError {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ErrorCode {
+    IntegrityFailed,
+    InternalServerError,
+    InvalidBundleIdentifier,
+    InvalidToken,
+    UnexpectedTokenFormat,
+}
+
+impl std::fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IntegrityFailed => write!(f, "integrity_failed"),
+            Self::InternalServerError => write!(f, "internal_server_error"),
+            // Received an integrity token for a package name that does not match the provided bundle identifier
+            Self::InvalidBundleIdentifier => write!(f, "invalid_bundle_identifier"),
+            Self::InvalidToken => write!(f, "invalid_token"),
+            Self::UnexpectedTokenFormat => write!(f, "unexpected_token_format"),
+        }
+    }
+}
