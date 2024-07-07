@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
 use integrity_token_data::PlayIntegrityToken;
@@ -6,6 +6,8 @@ use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
 mod integrity_token_data;
+
+const TOKEN_MAX_AGE: u64 = 10 * 600;
 
 pub fn verify_token(
     integrity_token: &str,
@@ -32,8 +34,44 @@ pub fn verify_token(
         return Err(RequestError {
             code: ErrorCode::IntegrityFailed,
             internal_details: Some(
-                "Provided `bundle_identifier` does not match request_details.request_package_name"
-                    .to_string(),
+                "Provided `request_hash` does not match request_details.nonce".to_string(),
+            ),
+        });
+    }
+
+    println!("{:?}", integrity_payload.request_details.timestamp_millis);
+
+    let timestamp_millis: SystemTime = match integrity_payload
+        .request_details
+        .timestamp_millis
+        .parse::<u64>()
+    {
+        Ok(value) => SystemTime::UNIX_EPOCH + Duration::from_secs(value / 1000),
+        Err(_e) => {
+            return Err(RequestError {
+                code: ErrorCode::UnexpectedTokenFormat,
+                internal_details: Some("Could not parse timestamp_millis".to_string()),
+            });
+        }
+    };
+
+    let duration = match SystemTime::now().duration_since(timestamp_millis) {
+        Ok(value) => value,
+        Err(_e) => {
+            return Err(RequestError {
+                code: ErrorCode::UnexpectedTokenFormat,
+                internal_details: Some(
+                    "Could not calculate timestamp_millis difference".to_string(),
+                ),
+            });
+        }
+    };
+
+    if duration.as_secs() > TOKEN_MAX_AGE {
+        return Err(RequestError {
+            code: ErrorCode::ExpiredToken,
+            internal_details: Some(
+                "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string(),
             ),
         });
     }

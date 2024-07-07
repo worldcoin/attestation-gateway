@@ -91,6 +91,7 @@ impl std::error::Error for RequestError {}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ErrorCode {
+    ExpiredToken,
     IntegrityFailed,
     InternalServerError,
     InvalidBundleIdentifier,
@@ -101,6 +102,7 @@ pub enum ErrorCode {
 impl std::fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::ExpiredToken => write!(f, "expired_token"),
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
             // Received an integrity token for a package name that does not match the provided bundle identifier
