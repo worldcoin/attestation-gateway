@@ -18,7 +18,6 @@ impl Display for Platform {
 
 #[allow(clippy::enum_variant_names)] // Only World App is supported right now (postfix)
 #[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum BundleIdentifier {
     // World App
     #[serde(rename = "com.worldcoin")]
@@ -44,7 +43,7 @@ impl BundleIdentifier {
     }
 }
 
-impl std::fmt::Display for BundleIdentifier {
+impl Display for BundleIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::AndroidProdWorldApp => write!(f, "com.worldcoin"),

@@ -1,25 +1,9 @@
 use crate::utils::{BundleIdentifier, RequestError};
+use integrity_token_data::PlayIntegrityToken;
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct RequestDetails {
-    #[serde(rename = "requestPackageName")]
-    request_package_name: String,
-
-    #[serde(rename = "requestHash")]
-    request_hash: String,
-
-    #[serde(rename = "timestampMillis")]
-    timestamp_millis: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct PlayIntegrityToken {
-    #[serde(rename = "requestDetails")]
-    request_details: RequestDetails,
-}
+mod integrity_token_data;
 
 pub fn verify_token(
     integrity_token: &str,
