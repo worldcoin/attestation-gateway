@@ -40,33 +40,14 @@ pub fn verify_token(
         });
     }
 
-    println!("{:?}", integrity_payload.request_details.timestamp_millis);
+    tracing::debug!("{:?}", integrity_payload.request_details.timestamp_millis);
 
-    let timestamp_millis: SystemTime = match integrity_payload
-        .request_details
-        .timestamp_millis
-        .parse::<u64>()
-    {
-        Ok(value) => SystemTime::UNIX_EPOCH + Duration::from_secs(value / 1000),
-        Err(_e) => {
-            return Err(RequestError {
-                code: ErrorCode::UnexpectedTokenFormat,
-                internal_details: Some("Could not parse timestamp_millis".to_string()),
-            });
-        }
-    };
-
-    let duration = match SystemTime::now().duration_since(timestamp_millis) {
-        Ok(value) => value,
-        Err(_e) => {
-            return Err(RequestError {
-                code: ErrorCode::UnexpectedTokenFormat,
-                internal_details: Some(
-                    "Could not calculate timestamp_millis difference".to_string(),
-                ),
-            });
-        }
-    };
+    let duration = SystemTime::now()
+        .duration_since(integrity_payload.request_details.timestamp_millis)
+        .map_err(|_| RequestError {
+            code: ErrorCode::UnexpectedTokenFormat,
+            internal_details: Some("Could not calculate timestamp_millis difference".to_string()),
+        })?;
 
     if duration.as_secs() > TOKEN_MAX_AGE {
         return Err(RequestError {
@@ -108,27 +89,21 @@ fn decrypt_outer_jwe(integrity_token: &str) -> Result<Vec<u8>, RequestError> {
     let private_key = b"7d5b44298bf959af149a0086d79334e6";
 
     // Decrypt the outer JWE
-    let decrypter = match A256KW.decrypter_from_bytes(private_key) {
-        Ok(value) => value,
-        Err(e) => {
-            tracing::error!("A256KW error: {e}");
-            return Err(RequestError {
-                code: ErrorCode::InternalServerError,
-                internal_details: Some("A256KW error".to_string()),
-            });
+    let decrypter = A256KW.decrypter_from_bytes(private_key).map_err(|e| {
+        tracing::error!("A256KW error: {e}");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            internal_details: Some("A256KW error".to_string()),
         }
-    };
-    let (compact_jws, _headers) = match jwe::deserialize_compact(integrity_token, &decrypter) {
-        Ok(payload) => payload,
-        Err(e) => {
-            // We log a debug because this is a client error (provided an invalidly encrypted token)
-            tracing::debug!("Android JWE failed decryption: {e}");
-            return Err(RequestError {
-                code: ErrorCode::InvalidToken,
-                internal_details: Some("JWE failed decryption".to_string()),
-            });
+    })?;
+
+    let (compact_jws, _) = jwe::deserialize_compact(integrity_token, &decrypter).map_err(|e| {
+        tracing::debug!("Android JWE failed decryption: {e}");
+        RequestError {
+            code: ErrorCode::InvalidToken,
+            internal_details: Some("JWE failed decryption".to_string()),
         }
-    };
+    })?;
 
     Ok(compact_jws)
 }
@@ -143,73 +118,58 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/ESc
 v4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==
 -----END PUBLIC KEY-----";
 
-    let verifier = match ES256.verifier_from_pem(verifier_key) {
-        Ok(value) => value,
-        Err(e) => {
-            tracing::error!("ES256 error: {e}");
-            return Err(RequestError {
-                code: ErrorCode::InternalServerError,
-                internal_details: Some("ES256 error".to_string()),
-            });
-        }
-    };
+    let verifier = ES256.verifier_from_pem(verifier_key).map_err(|e| {
+        tracing::error!("ES256 error: {e}");
 
-    let (jws, _headers) = match josekit::jwt::decode_with_verifier(compact_jws, &verifier) {
-        Ok(value) => value,
-        Err(e) => {
-            // This is **not** expected because the JWE is encrypted with a symmetric secret
-            tracing::error!("JWS signature could not be verified: {e}.");
-            return Err(RequestError {
-                code: ErrorCode::InternalServerError,
-                internal_details: Some("JWS signature could not be verified".to_string()),
-            });
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            internal_details: Some("ES256 error".to_string()),
         }
-    };
+    })?;
+
+    let (jws, _) = josekit::jwt::decode_with_verifier(compact_jws, &verifier).map_err(|e| {
+        // This is **not** expected because the JWE is encrypted with a symmetric secret
+        tracing::error!("JWS signature could not be verified: {e}.");
+
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            internal_details: Some("JWS signature could not be verified".to_string()),
+        }
+    })?;
 
     // Verify expiration
-    match jws.expires_at() {
-        Some(value) => {
-            match value.duration_since(SystemTime::now()) {
-                Ok(_value) => (),
-                Err(_e) => {
-                    return Err(RequestError {
-                        code: ErrorCode::InvalidToken,
-                        internal_details: Some("JWS is expired".to_string()),
-                    });
-                }
-            };
-        }
-        None => {
-            return Err(RequestError {
-                code: ErrorCode::UnexpectedTokenFormat,
-                internal_details: Some("JWS does not have a valid `exp` claim".to_string()),
-            });
-        }
-    }
+    jws.expires_at()
+        .ok_or_else(|| RequestError {
+            code: ErrorCode::UnexpectedTokenFormat,
+            internal_details: Some("JWS does not have a valid `exp` claim".to_string()),
+        })
+        .and_then(|value| {
+            value
+                .duration_since(SystemTime::now())
+                .map_err(|_| RequestError {
+                    code: ErrorCode::InvalidToken,
+                    internal_details: Some("JWS is expired".to_string()),
+                })
+        })?;
 
     // Parse the JWS
 
-    let integrity_payload = match jws.claim("payload") {
-        Some(value) => value.to_string(),
-        None => {
-            return Err(RequestError {
-                code: ErrorCode::UnexpectedTokenFormat,
-                internal_details: Some("JWT does not have a `payload` attribute".to_string()),
-            });
-        }
+    let Some(integrity_payload) = jws.claim("payload") else {
+        return Err(RequestError {
+            code: ErrorCode::UnexpectedTokenFormat,
+            internal_details: Some("JWT does not have a `payload` attribute".to_string()),
+        });
     };
 
-    let integrity_payload: PlayIntegrityToken = match serde_json::from_str(&integrity_payload) {
-        Ok(value) => value,
-        Err(e) => {
-            // This is **not** an expected client error, because this is a signed and encrypted token, suggests Google is sending an attribute incorrectly
+    let integrity_payload: PlayIntegrityToken =
+        serde_json::from_str(&integrity_payload.to_string()).map_err(|e| {
             tracing::error!("Received invalid token payload: {e}. Payload: {integrity_payload}");
-            return Err(RequestError {
+
+            RequestError {
                 code: ErrorCode::UnexpectedTokenFormat,
                 internal_details: Some("Failure parsing integrity payload".to_string()),
-            });
-        }
-    };
+            }
+        })?;
 
     Ok(integrity_payload)
 }
