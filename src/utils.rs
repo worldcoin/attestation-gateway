@@ -88,7 +88,7 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
-#[derive(Debug, OperationIo)]
+#[derive(Debug, OperationIo, PartialEq, Eq)]
 pub struct RequestError {
     pub code: ErrorCode,
     pub internal_details: Option<String>,

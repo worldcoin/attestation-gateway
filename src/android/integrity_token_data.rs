@@ -5,7 +5,7 @@ use std::{fmt::Display, time::SystemTime};
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
 
 // TODO const ALLOWED_TIMESTAMP_WINDOW: u64 = 10 * 600;
-const ALLOWED_TIMESTAMP_WINDOW: u64 = 10_000_000_000_000;
+const ALLOWED_TIMESTAMP_WINDOW: u64 = 10_000_000;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -312,5 +312,212 @@ impl PlayIntegrityToken {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    fn create_test_token() -> PlayIntegrityToken {
+        PlayIntegrityToken {
+            app_integrity: AppIntegrity {
+                package_name: "com.worldcoin.staging".to_string(),
+                version_code: "25700".to_string(),
+                certificate_sha_256_digest: vec![
+                    // cspell:disable-next-line
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8".to_string(),
+                ],
+                app_recognition_verdict: AppIntegrityVerdict::PlayRecognized,
+            },
+            account_details: AccountDetails {
+                app_licensing_verdict: AppLicensingVerdict::Licensed,
+            },
+            request_details: RequestDetails {
+                nonce: "valid_nonce".to_string(),
+                timestamp_millis: SystemTime::now(),
+                request_package_name: "com.worldcoin.staging".to_string(),
+            },
+            device_integrity: DeviceIntegrity {
+                device_recognition_verdict: vec!["MEETS_DEVICE_INTEGRITY".to_string()],
+                recent_device_activity: None,
+            },
+            environment_details: Some(EnvironmentDetails {
+                app_access_risk_verdict: AppAccessRiskVerdict {
+                    apps_detected: vec![],
+                },
+                play_protect_verdict: Some(PlayProtectVerdict::NoIssues),
+            }),
+        }
+    }
+
+    #[test]
+    fn test_validate_request_details() {
+        let token = create_test_token();
+
+        assert!(token
+            .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "valid_nonce")
+            .is_ok());
+
+        // Test invalid package name
+        let error = token
+            .validate_request_details(&BundleIdentifier::AndroidProdWorldApp, "valid_nonce")
+            .unwrap_err();
+        assert_eq!(
+            error,
+            RequestError {
+                code: ErrorCode::InvalidBundleIdentifier,
+                internal_details: Some("Provided `bundle_identifier` does not match request_details.request_package_name".to_string()),
+            }
+        );
+
+        // Test expired token
+        let mut expired_token = create_test_token();
+        expired_token.request_details.timestamp_millis = UNIX_EPOCH + Duration::from_secs(0);
+        let error = expired_token
+            .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "valid_nonce")
+            .unwrap_err();
+        assert_eq!(
+            error,
+            RequestError {
+                code: ErrorCode::ExpiredToken,
+                internal_details: Some(
+                    "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string()
+                ),
+            }
+        );
+
+        // Test invalid nonce
+        let error = token
+            .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "invalid_nonce")
+            .unwrap_err();
+        assert_eq!(
+            error,
+            RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some(
+                    "Provided `request_hash` does not match request_details.nonce".to_string()
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn test_validate_app_integrity() {
+        let token = create_test_token();
+
+        // Test valid app integrity
+        assert!(token
+            .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+            .is_ok());
+
+        // Test invalid package name (passing a different bundle identifier)
+        let error = token
+            .validate_app_integrity(&BundleIdentifier::AndroidProdWorldApp)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            RequestError {
+                code: ErrorCode::InvalidBundleIdentifier,
+                internal_details: Some(
+                    "Provided `bundle_identifier` does not match app_integrity.package_name"
+                        .to_string()
+                ),
+            }
+        );
+
+        // Test invalid certificate sha256
+        let mut invalid_token = create_test_token();
+        invalid_token.app_integrity.certificate_sha_256_digest =
+            vec!["different_sha_256".to_string()];
+        let error = invalid_token
+            .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some(
+                    "certificate_sha_256_digest does not match the expected value".to_string()
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn test_validate_device_integrity() {
+        let token = create_test_token();
+
+        // Test valid device integrity
+        assert!(token.validate_device_integrity().is_ok());
+
+        // Test device which is running on a device with signs of attack
+        let mut invalid_token = create_test_token();
+        invalid_token.device_integrity.device_recognition_verdict = vec![];
+        let error = invalid_token.validate_device_integrity().unwrap_err();
+        assert_eq!(
+            error,
+            RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some(
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY"
+                        .to_string()
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn test_validate_account_details() {
+        let token = create_test_token();
+        let bundle_identifier = BundleIdentifier::AndroidProdWorldApp;
+
+        // Test valid account details
+        assert!(token.validate_account_details(&bundle_identifier).is_ok());
+
+        // Test unlicensed app
+        let mut invalid_token = create_test_token();
+        invalid_token.account_details.app_licensing_verdict = AppLicensingVerdict::Unlicensed;
+        let error = invalid_token
+            .validate_account_details(&bundle_identifier)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some("AppLicensingVerdict does not match Licensed".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_validate_environment_details() {
+        let token = create_test_token();
+
+        // Test valid environment details
+        assert!(token.validate_environment_details().is_ok());
+
+        // Test high-risk environment
+        let mut invalid_token = create_test_token();
+        invalid_token.environment_details = Some(EnvironmentDetails {
+            app_access_risk_verdict: AppAccessRiskVerdict {
+                apps_detected: vec![],
+            },
+            play_protect_verdict: Some(PlayProtectVerdict::HighRisk),
+        });
+        let error = invalid_token.validate_environment_details().unwrap_err();
+        assert_eq!(
+            error,
+            RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some("PlayProtectVerdict reported as HighRisk".to_string()),
+            }
+        );
+
+        // Test with no environment details (this is still a valid token)
+        let mut valid_token = create_test_token();
+        valid_token.environment_details = None;
+        assert!(valid_token.validate_environment_details().is_ok());
     }
 }
