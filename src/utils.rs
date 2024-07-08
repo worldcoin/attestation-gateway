@@ -44,6 +44,18 @@ impl BundleIdentifier {
     }
 }
 
+impl std::fmt::Display for BundleIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::AndroidProdWorldApp => write!(f, "com.worldcoin"),
+            Self::AndroidStageWorldApp => write!(f, "com.worldcoin.staging"),
+            Self::AndroidDevWorldApp => write!(f, "com.worldcoin.dev"),
+            Self::IOSProdWorldApp => write!(f, "org.worldcoin.insight"),
+            Self::IOSStageWorldApp => write!(f, "org.worldcoin.insight.staging"),
+        }
+    }
+}
+
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct TokenGenerationRequest {
     pub integrity_token: String,
@@ -59,3 +71,25 @@ pub struct TokenGenerationRequest {
 pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RequestError {
+    //  IntegrityFailed,
+    InternalServerError,
+    InvalidBundleIdentifier,
+    InvalidToken,
+}
+
+impl std::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            //   Self::IntegrityFailed => write!(f, "integrity_failed"),
+            Self::InternalServerError => write!(f, "internal_server_error"),
+            // Received an integrity token for a package name that does not match the provided bundle identifier
+            Self::InvalidBundleIdentifier => write!(f, "invalid_bundle_identifier"),
+            Self::InvalidToken => write!(f, "invalid_token"),
+        }
+    }
+}
+
+impl std::error::Error for RequestError {}
