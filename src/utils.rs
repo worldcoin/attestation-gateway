@@ -1,3 +1,5 @@
+use aide::OperationIo;
+use axum::response::IntoResponse;
 use schemars::JsonSchema;
 use std::fmt::Display;
 
@@ -71,7 +73,7 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, OperationIo)]
 pub struct RequestError {
     pub code: ErrorCode,
     pub internal_details: Option<String>,
@@ -84,6 +86,23 @@ impl Display for RequestError {
             "Error Code: `{}`. Internal details: {:?}",
             self.code, self.internal_details
         )
+    }
+}
+
+impl IntoResponse for RequestError {
+    fn into_response(self) -> axum::response::Response {
+        #[derive(serde::Serialize)]
+        struct ErrorResponse {
+            code: String,
+        }
+
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(ErrorResponse {
+                code: self.code.to_string(),
+            }),
+        )
+            .into_response()
     }
 }
 

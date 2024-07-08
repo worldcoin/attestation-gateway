@@ -60,7 +60,7 @@ pub struct EnvironmentDetails {
     pub app_access_risk_verdict: AppAccessRiskVerdict,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AppIntegrityVerdict {
     #[serde(rename = "PLAY_RECOGNIZED")]
     PlayRecognized,

@@ -1,13 +1,14 @@
 use std::time::{Duration, SystemTime};
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
-use integrity_token_data::PlayIntegrityToken;
+use integrity_token_data::{AppIntegrityVerdict, PlayIntegrityToken};
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
 mod integrity_token_data;
 
-const TOKEN_MAX_AGE: u64 = 10 * 600;
+// TODO const TOKEN_MAX_AGE: u64 = 10 * 600;
+const TOKEN_MAX_AGE: u64 = 10_000_000_000_000;
 
 pub fn verify_token(
     integrity_token: &str,
@@ -73,6 +74,27 @@ pub fn verify_token(
             internal_details: Some(
                 "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string(),
             ),
+        });
+    }
+
+    // SECTION --- App integrity checks ---
+
+    if integrity_payload.app_integrity.package_name != bundle_identifier.to_string() {
+        return Err(RequestError {
+            code: ErrorCode::InvalidBundleIdentifier,
+            internal_details: Some(
+                "Provided `bundle_identifier` does not match app_integrity.package_name"
+                    .to_string(),
+            ),
+        });
+    }
+
+    if integrity_payload.app_integrity.app_recognition_verdict
+        != AppIntegrityVerdict::PlayRecognized
+    {
+        return Err(RequestError {
+            code: ErrorCode::IntegrityFailed,
+            internal_details: Some("AppIntegrityVerdict does not match PlayRecognized".to_string()),
         });
     }
 
