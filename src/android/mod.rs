@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
-use integrity_token_data::PlayIntegrityToken;
+use integrity_token_data::{PlayIntegrityToken, RequestErrorWithIntegrityToken};
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
@@ -11,14 +11,24 @@ pub fn verify_token(
     integrity_token: &str,
     bundle_identifier: &BundleIdentifier,
     request_hash: &str,
-) -> Result<(), RequestError> {
-    let decrypted_jws = decrypt_outer_jwe(integrity_token)?;
+) -> Result<PlayIntegrityToken, RequestErrorWithIntegrityToken> {
+    let decrypted_jws =
+        decrypt_outer_jwe(integrity_token).map_err(handle_request_error_with_integrity_token)?;
 
-    let play_integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)?;
+    let play_integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)
+        .map_err(handle_request_error_with_integrity_token)?;
 
-    play_integrity_payload.validate_all_claims(bundle_identifier, request_hash)?;
+    PlayIntegrityToken::new(&play_integrity_payload, bundle_identifier, request_hash)
+}
 
-    Ok(())
+fn handle_request_error_with_integrity_token(e: RequestError) -> RequestErrorWithIntegrityToken {
+    RequestErrorWithIntegrityToken {
+        request_error: RequestError {
+            code: e.code,
+            internal_details: e.internal_details,
+        },
+        failed_integrity_token: None,
+    }
 }
 
 /// Decrypts the outer JWE (JSON Web Encryption) token using the AES secret provided by Google for each bundle identifier
@@ -50,7 +60,7 @@ fn decrypt_outer_jwe(integrity_token: &str) -> Result<Vec<u8>, RequestError> {
 /// Verifies the signature of the inner JWS (as well as expiration) and parses the payload into a `PlayIntegrityToken` struct
 /// <https://developer.android.com/google/play/integrity/classic#kotlin>
 ///
-fn verify_and_parse_inner_jws(compact_jws: &Vec<u8>) -> Result<PlayIntegrityToken, RequestError> {
+fn verify_and_parse_inner_jws(compact_jws: &Vec<u8>) -> Result<String, RequestError> {
     // FIXME: These are temporary keys for local development
     let verifier_key = b"-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/ESc
@@ -100,29 +110,18 @@ v4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==
         });
     };
 
-    let integrity_payload: PlayIntegrityToken =
-        serde_json::from_str(&integrity_payload.to_string()).map_err(|e| {
-            tracing::error!("Received invalid token payload: {e}. Payload: {integrity_payload}");
-
-            RequestError {
-                code: ErrorCode::UnexpectedTokenFormat,
-                internal_details: Some("Failure parsing integrity payload".to_string()),
-            }
-        })?;
-
-    Ok(integrity_payload)
+    Ok(integrity_payload.to_string())
 }
 
 #[cfg(test)]
 mod tests {
 
-    use std::time::{Duration, SystemTime};
-
-    use super::{verify_and_parse_inner_jws, verify_token};
+    use super::{verify_and_parse_inner_jws, verify_token, RequestErrorWithIntegrityToken};
     use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
     use josekit::jwe::{self, JweHeader, A256KW};
     use josekit::jws::{JwsHeader, ES256};
     use josekit::jwt::{self, JwtPayload};
+    use std::time::{Duration, SystemTime};
     use tracing_test::traced_test;
 
     // SECTION - JWE tests
@@ -151,9 +150,12 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(RequestError {
-                    code: ErrorCode::InvalidToken,
-                    internal_details: Some(ref reason)
+                Err(RequestErrorWithIntegrityToken {
+                    request_error: RequestError {
+                        code: ErrorCode::InvalidToken,
+                        internal_details: Some(ref reason)
+                    },
+                    failed_integrity_token: _
                 }) if reason == "JWE failed decryption"
             ),
             "Token decryption should have failed."

@@ -115,7 +115,40 @@ pub struct PlayIntegrityToken {
     pub environment_details: Option<EnvironmentDetails>,
 }
 
+#[derive(Debug)]
+pub struct RequestErrorWithIntegrityToken {
+    pub request_error: RequestError,
+    pub failed_integrity_token: Option<PlayIntegrityToken>,
+}
+
 impl PlayIntegrityToken {
+    pub fn new(
+        integrity_token: &str,
+        bundle_identifier: &BundleIdentifier,
+        request_hash: &str,
+    ) -> Result<Self, RequestErrorWithIntegrityToken> {
+        let token = serde_json::from_str::<Self>(integrity_token).map_err(|e| {
+            tracing::error!("Received invalid token payload: {e}. Payload: {integrity_token}");
+
+            RequestErrorWithIntegrityToken {
+                request_error: RequestError {
+                    code: ErrorCode::UnexpectedTokenFormat,
+                    internal_details: Some("Failure parsing integrity payload".to_string()),
+                },
+                failed_integrity_token: None,
+            }
+        })?;
+
+        if let Err(e) = token.validate_all_claims(bundle_identifier, request_hash) {
+            return Err(RequestErrorWithIntegrityToken {
+                request_error: e,
+                failed_integrity_token: Some(token),
+            });
+        }
+
+        Ok(token)
+    }
+
     pub fn validate_all_claims(
         &self,
         bundle_identifier: &BundleIdentifier,
