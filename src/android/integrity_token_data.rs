@@ -118,7 +118,7 @@ pub struct PlayIntegrityToken {
 #[derive(Debug)]
 pub struct RequestErrorWithIntegrityToken {
     pub request_error: RequestError,
-    pub failed_integrity_token: Option<PlayIntegrityToken>,
+    pub failed_integrity_token: Option<Box<PlayIntegrityToken>>,
 }
 
 impl PlayIntegrityToken {
@@ -142,7 +142,7 @@ impl PlayIntegrityToken {
         if let Err(e) = token.validate_all_claims(bundle_identifier, request_hash) {
             return Err(RequestErrorWithIntegrityToken {
                 request_error: e,
-                failed_integrity_token: Some(token),
+                failed_integrity_token: Some(Box::new(token)),
             });
         }
 

@@ -16,8 +16,8 @@ pub async fn handler(
                 &request.bundle_identifier,
                 &request.request_hash,
             )
-            .map_err(|e| {
-                if let Some(failed_token) = e.failed_integrity_token {
+            .map_err(|mut e| {
+                if let Some(failed_token) = e.failed_integrity_token.take() {
                     // TODO: Log to failed tokens repository
                     println!("Failed token: {failed_token:?}");
                 }
