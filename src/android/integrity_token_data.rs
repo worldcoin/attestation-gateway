@@ -1,9 +1,6 @@
 use crate::utils::deserialize_system_time_from_millis;
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::Display,
-    time::{Duration, SystemTime},
-};
+use std::{fmt::Display, time::SystemTime};
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
 
@@ -139,28 +136,14 @@ impl PlayIntegrityToken {
             });
         }
 
-        let timestamp_millis: SystemTime =
-            match self.request_details.timestamp_millis.parse::<u64>() {
-                Ok(value) => SystemTime::UNIX_EPOCH + Duration::from_secs(value / 1000),
-                Err(_e) => {
-                    return Err(RequestError {
-                        code: ErrorCode::UnexpectedTokenFormat,
-                        internal_details: Some("Could not parse timestamp_millis".to_string()),
-                    });
-                }
-            };
-
-        let duration = match SystemTime::now().duration_since(timestamp_millis) {
-            Ok(value) => value,
-            Err(_e) => {
-                return Err(RequestError {
-                    code: ErrorCode::UnexpectedTokenFormat,
-                    internal_details: Some(
-                        "Could not calculate timestamp_millis difference".to_string(),
-                    ),
-                });
-            }
-        };
+        let duration = SystemTime::now()
+            .duration_since(self.request_details.timestamp_millis)
+            .map_err(|_| RequestError {
+                code: ErrorCode::UnexpectedTokenFormat,
+                internal_details: Some(
+                    "Could not calculate timestamp_millis difference".to_string(),
+                ),
+            })?;
 
         if duration.as_secs() > ALLOWED_TIMESTAMP_WINDOW {
             return Err(RequestError {
@@ -246,6 +229,37 @@ impl PlayIntegrityToken {
                 ),
             });
         }
+        Ok(())
+    }
+
+    pub fn validate_account_details(
+        &self,
+        bundle_identifier: &BundleIdentifier,
+    ) -> Result<(), RequestError> {
+        if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
+            // Only in Production: App should come from Play Store
+            if self.account_details.app_licensing_verdict != AppLicensingVerdict::Licensed {
+                return Err(RequestError {
+                    code: ErrorCode::IntegrityFailed,
+                    internal_details: Some(
+                        "AppLicensingVerdict does not match Licensed".to_string(),
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_environment_details(&self) -> Result<(), RequestError> {
+        if let Some(value) = &self.environment_details {
+            if value.play_protect_verdict == Some(PlayProtectVerdict::HighRisk) {
+                return Err(RequestError {
+                    code: ErrorCode::IntegrityFailed,
+                    internal_details: Some("PlayProtectVerdict reported as HighRisk".to_string()),
+                });
+            }
+        }
+
         Ok(())
     }
 }

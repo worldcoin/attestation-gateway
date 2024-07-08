@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
-use integrity_token_data::{AppLicensingVerdict, PlayIntegrityToken, PlayProtectVerdict};
+use integrity_token_data::PlayIntegrityToken;
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
@@ -26,28 +26,10 @@ pub fn verify_token(
     play_integrity_payload.validate_device_integrity()?;
 
     // SECTION --- Account details checks ---
-
-    if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
-        // Only in Production: App should come from Play Store
-        if integrity_payload.account_details.app_licensing_verdict != AppLicensingVerdict::Licensed
-        {
-            return Err(RequestError {
-                code: ErrorCode::IntegrityFailed,
-                internal_details: Some("AppLicensingVerdict does not match Licensed".to_string()),
-            });
-        }
-    }
+    play_integrity_payload.validate_account_details(bundle_identifier)?;
 
     // SECTION --- Environment details ---
-
-    if let Some(value) = integrity_payload.environment_details {
-        if value.play_protect_verdict == Some(PlayProtectVerdict::HighRisk) {
-            return Err(RequestError {
-                code: ErrorCode::IntegrityFailed,
-                internal_details: Some("PlayProtectVerdict reported as HighRisk".to_string()),
-            });
-        }
-    }
+    play_integrity_payload.validate_environment_details()?;
 
     Ok(())
 }
