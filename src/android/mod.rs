@@ -1,16 +1,11 @@
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
-use integrity_token_data::{
-    AppIntegrityVerdict, AppLicensingVerdict, PlayIntegrityToken, PlayProtectVerdict,
-};
+use integrity_token_data::{AppLicensingVerdict, PlayIntegrityToken, PlayProtectVerdict};
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
 mod integrity_token_data;
-
-// TODO const ALLOWED_TIMESTAMP_WINDOW: u64 = 10 * 600;
-const ALLOWED_TIMESTAMP_WINDOW: u64 = 10_000_000_000_000;
 
 pub fn verify_token(
     integrity_token: &str,
@@ -19,118 +14,16 @@ pub fn verify_token(
 ) -> Result<(), RequestError> {
     let decrypted_jws = decrypt_outer_jwe(integrity_token)?;
 
-    let integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)?;
+    let play_integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)?;
 
     // SECTION --- Request details checks ---
-
-    if integrity_payload.request_details.request_package_name != bundle_identifier.to_string() {
-        return Err(RequestError {
-            code: ErrorCode::InvalidBundleIdentifier,
-            internal_details: Some(
-                "Provided `bundle_identifier` does not match request_details.request_package_name"
-                    .to_string(),
-            ),
-        });
-    }
-
-    if integrity_payload.request_details.nonce != request_hash {
-        return Err(RequestError {
-            code: ErrorCode::IntegrityFailed,
-            internal_details: Some(
-                "Provided `request_hash` does not match request_details.nonce".to_string(),
-            ),
-        });
-    }
-
-    tracing::debug!("{:?}", integrity_payload.request_details.timestamp_millis);
-
-    let duration = SystemTime::now()
-        .duration_since(integrity_payload.request_details.timestamp_millis)
-        .map_err(|_| RequestError {
-            code: ErrorCode::UnexpectedTokenFormat,
-            internal_details: Some("Could not calculate timestamp_millis difference".to_string()),
-        })?;
-
-    if duration.as_secs() > ALLOWED_TIMESTAMP_WINDOW {
-        return Err(RequestError {
-            code: ErrorCode::ExpiredToken,
-            internal_details: Some(
-                "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string(),
-            ),
-        });
-    }
-
-    if integrity_payload.request_details.nonce != request_hash {
-        return Err(RequestError {
-            code: ErrorCode::IntegrityFailed,
-            internal_details: Some(
-                "Provided `request_hash` does not match request_details.nonce".to_string(),
-            ),
-        });
-    }
+    play_integrity_payload.validate_request_details(bundle_identifier, request_hash)?;
 
     // SECTION --- App integrity checks ---
-
-    if integrity_payload.app_integrity.package_name != bundle_identifier.to_string() {
-        return Err(RequestError {
-            code: ErrorCode::InvalidBundleIdentifier,
-            internal_details: Some(
-                "Provided `bundle_identifier` does not match app_integrity.package_name"
-                    .to_string(),
-            ),
-        });
-    }
-
-    if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
-        // Only in Production: App should come from Play Store
-        if integrity_payload.app_integrity.app_recognition_verdict
-            != AppIntegrityVerdict::PlayRecognized
-        {
-            return Err(RequestError {
-                code: ErrorCode::IntegrityFailed,
-                internal_details: Some(
-                    "AppIntegrityVerdict does not match PlayRecognized".to_string(),
-                ),
-            });
-        }
-    }
-
-    if let Some(digest) = bundle_identifier.certificate_sha256_digest() {
-        if !integrity_payload
-            .app_integrity
-            .certificate_sha_256_digest
-            .contains(&digest.to_string())
-        {
-            return Err(RequestError {
-                code: ErrorCode::IntegrityFailed,
-                internal_details: Some(
-                    "certificate_sha_256_digest does not match the expected value".to_string(),
-                ),
-            });
-        }
-    } else {
-        return Err(RequestError {
-            code: ErrorCode::InternalServerError,
-            internal_details: Some("certificate_sha_256_digest is None".to_string()),
-        });
-    }
-
-    // certificate_sha_256_digest is not checked
+    play_integrity_payload.validate_app_integrity(bundle_identifier)?;
 
     // SECTION --- Device integrity checks ---
-
-    if !integrity_payload
-        .device_integrity
-        .device_recognition_verdict
-        .contains(&"MEETS_DEVICE_INTEGRITY".to_string())
-    {
-        return Err(RequestError {
-            code: ErrorCode::IntegrityFailed,
-            internal_details: Some(
-                "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY".to_string(),
-            ),
-        });
-    }
+    play_integrity_payload.validate_device_integrity()?;
 
     // SECTION --- Account details checks ---
 

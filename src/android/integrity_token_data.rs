@@ -1,6 +1,14 @@
 use crate::utils::deserialize_system_time_from_millis;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, time::SystemTime};
+use std::{
+    fmt::Display,
+    time::{Duration, SystemTime},
+};
+
+use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
+
+// TODO const ALLOWED_TIMESTAMP_WINDOW: u64 = 10 * 600;
+const ALLOWED_TIMESTAMP_WINDOW: u64 = 10_000_000_000_000;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,4 +121,131 @@ pub struct PlayIntegrityToken {
     pub request_details: RequestDetails,
     pub device_integrity: DeviceIntegrity,
     pub environment_details: Option<EnvironmentDetails>,
+}
+
+impl PlayIntegrityToken {
+    pub fn validate_request_details(
+        &self,
+        bundle_identifier: &BundleIdentifier,
+        request_hash: &str,
+    ) -> Result<(), RequestError> {
+        if self.request_details.request_package_name != bundle_identifier.to_string() {
+            return Err(RequestError {
+                code: ErrorCode::InvalidBundleIdentifier,
+                internal_details: Some(
+                    "Provided `bundle_identifier` does not match request_details.request_package_name"
+                        .to_string(),
+                ),
+            });
+        }
+
+        let timestamp_millis: SystemTime =
+            match self.request_details.timestamp_millis.parse::<u64>() {
+                Ok(value) => SystemTime::UNIX_EPOCH + Duration::from_secs(value / 1000),
+                Err(_e) => {
+                    return Err(RequestError {
+                        code: ErrorCode::UnexpectedTokenFormat,
+                        internal_details: Some("Could not parse timestamp_millis".to_string()),
+                    });
+                }
+            };
+
+        let duration = match SystemTime::now().duration_since(timestamp_millis) {
+            Ok(value) => value,
+            Err(_e) => {
+                return Err(RequestError {
+                    code: ErrorCode::UnexpectedTokenFormat,
+                    internal_details: Some(
+                        "Could not calculate timestamp_millis difference".to_string(),
+                    ),
+                });
+            }
+        };
+
+        if duration.as_secs() > ALLOWED_TIMESTAMP_WINDOW {
+            return Err(RequestError {
+                code: ErrorCode::ExpiredToken,
+                internal_details: Some(
+                    "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string(),
+                ),
+            });
+        }
+
+        if self.request_details.nonce != request_hash {
+            return Err(RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some(
+                    "Provided `request_hash` does not match request_details.nonce".to_string(),
+                ),
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn validate_app_integrity(
+        &self,
+        bundle_identifier: &BundleIdentifier,
+    ) -> Result<(), RequestError> {
+        if self.app_integrity.package_name != bundle_identifier.to_string() {
+            return Err(RequestError {
+                code: ErrorCode::InvalidBundleIdentifier,
+                internal_details: Some(
+                    "Provided `bundle_identifier` does not match app_integrity.package_name"
+                        .to_string(),
+                ),
+            });
+        }
+
+        if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
+            // Only in Production: App should come from Play Store
+            if self.app_integrity.app_recognition_verdict != AppIntegrityVerdict::PlayRecognized {
+                return Err(RequestError {
+                    code: ErrorCode::IntegrityFailed,
+                    internal_details: Some(
+                        "AppIntegrityVerdict does not match PlayRecognized".to_string(),
+                    ),
+                });
+            }
+        }
+
+        if let Some(digest) = bundle_identifier.certificate_sha256_digest() {
+            if !self
+                .app_integrity
+                .certificate_sha_256_digest
+                .contains(&digest.to_string())
+            {
+                return Err(RequestError {
+                    code: ErrorCode::IntegrityFailed,
+                    internal_details: Some(
+                        "certificate_sha_256_digest does not match the expected value".to_string(),
+                    ),
+                });
+            }
+        } else {
+            return Err(RequestError {
+                code: ErrorCode::InternalServerError,
+                internal_details: Some("certificate_sha_256_digest is None".to_string()),
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn validate_device_integrity(&self) -> Result<(), RequestError> {
+        if !self
+            .device_integrity
+            .device_recognition_verdict
+            .contains(&"MEETS_DEVICE_INTEGRITY".to_string())
+        {
+            return Err(RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some(
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY"
+                        .to_string(),
+                ),
+            });
+        }
+        Ok(())
+    }
 }
