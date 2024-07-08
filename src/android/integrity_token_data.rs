@@ -1,11 +1,13 @@
+use crate::utils::deserialize_system_time_from_millis;
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
+use std::{fmt::Display, time::SystemTime};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestDetails {
     pub nonce: String,
-    pub timestamp_millis: String,
+    #[serde(deserialize_with = "deserialize_system_time_from_millis")]
+    pub timestamp_millis: SystemTime,
     pub request_package_name: String,
 }
 

@@ -1,7 +1,11 @@
 use aide::OperationIo;
 use axum::response::IntoResponse;
 use schemars::JsonSchema;
-use std::fmt::Display;
+use serde::Deserialize;
+use std::{
+    fmt::Display,
+    time::{Duration, SystemTime},
+};
 
 #[derive(Debug)]
 pub enum Platform {
@@ -130,4 +134,22 @@ impl std::fmt::Display for ErrorCode {
             Self::UnexpectedTokenFormat => write!(f, "unexpected_token_format"),
         }
     }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum StringOrInt {
+    String(String),
+    Number(u64),
+}
+
+pub fn deserialize_system_time_from_millis<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<SystemTime, D::Error> {
+    let timestamp_millis = match StringOrInt::deserialize(deserializer)? {
+        StringOrInt::String(s) => s.parse().map_err(serde::de::Error::custom),
+        StringOrInt::Number(i) => Ok(i),
+    }?;
+
+    Ok(SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp_millis))
 }
