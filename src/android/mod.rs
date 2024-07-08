@@ -16,20 +16,7 @@ pub fn verify_token(
 
     let play_integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)?;
 
-    // SECTION --- Request details checks ---
-    play_integrity_payload.validate_request_details(bundle_identifier, request_hash)?;
-
-    // SECTION --- App integrity checks ---
-    play_integrity_payload.validate_app_integrity(bundle_identifier)?;
-
-    // SECTION --- Device integrity checks ---
-    play_integrity_payload.validate_device_integrity()?;
-
-    // SECTION --- Account details checks ---
-    play_integrity_payload.validate_account_details(bundle_identifier)?;
-
-    // SECTION --- Environment details ---
-    play_integrity_payload.validate_environment_details()?;
+    play_integrity_payload.validate_all_claims(bundle_identifier, request_hash)?;
 
     Ok(())
 }

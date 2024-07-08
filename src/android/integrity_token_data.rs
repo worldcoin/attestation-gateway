@@ -51,18 +51,13 @@ pub struct AppAccessRiskVerdict {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PlayProtectVerdict {
-    #[serde(rename = "NO_ISSUES")]
     NoIssues,
-    #[serde(rename = "NO_DATA")]
     NoData,
-    #[serde(rename = "POSSIBLE_RISK")]
     PossibleRisk,
-    #[serde(rename = "MEDIUM_RISK")]
     MediumRisk,
-    #[serde(rename = "HIGH_RISK")]
     HighRisk,
-    #[serde(rename = "UNEVALUATED")]
     Unevaluated,
 }
 
@@ -121,6 +116,29 @@ pub struct PlayIntegrityToken {
 }
 
 impl PlayIntegrityToken {
+    pub fn validate_all_claims(
+        &self,
+        bundle_identifier: &BundleIdentifier,
+        request_hash: &str,
+    ) -> Result<(), RequestError> {
+        // SECTION --- Request details checks ---
+        self.validate_request_details(bundle_identifier, request_hash)?;
+
+        // SECTION --- App integrity checks ---
+        self.validate_app_integrity(bundle_identifier)?;
+
+        // SECTION --- Device integrity checks ---
+        self.validate_device_integrity()?;
+
+        // SECTION --- Account details checks ---
+        self.validate_account_details(bundle_identifier)?;
+
+        // SECTION --- Environment details ---
+        self.validate_environment_details()?;
+
+        Ok(())
+    }
+
     pub fn validate_request_details(
         &self,
         bundle_identifier: &BundleIdentifier,
