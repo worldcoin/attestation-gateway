@@ -1,20 +1,22 @@
-use axum::http::StatusCode;
 use axum_jsonschema::Json;
 
 use crate::{
     android,
-    utils::{Platform, TokenGenerationRequest, TokenGenerationResponse},
+    utils::{Platform, RequestError, TokenGenerationRequest, TokenGenerationResponse},
 };
 
 pub async fn handler(
     Json(request): Json<TokenGenerationRequest>,
-) -> Result<Json<TokenGenerationResponse>, StatusCode> {
+) -> Result<Json<TokenGenerationResponse>, RequestError> {
     // Verify the integrity token
     match request.bundle_identifier.platform() {
         Platform::Android => {
             // TODO: Error response text
-            android::verify_token(&request.integrity_token, &request.bundle_identifier)
-                .map_err(|_e| StatusCode::BAD_REQUEST)?;
+            android::verify_token(
+                &request.integrity_token,
+                &request.bundle_identifier,
+                &request.request_hash,
+            )?;
         }
         Platform::AppleIOS => {}
     }
@@ -22,5 +24,6 @@ pub async fn handler(
     let response = TokenGenerationResponse {
         attestation_gateway_token: "my_token".to_string(),
     };
+
     Ok(Json(response))
 }

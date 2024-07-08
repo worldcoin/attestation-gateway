@@ -1,5 +1,11 @@
+use aide::OperationIo;
+use axum::response::IntoResponse;
 use schemars::JsonSchema;
-use std::fmt::Display;
+use serde::Deserialize;
+use std::{
+    fmt::Display,
+    time::{Duration, SystemTime},
+};
 
 #[derive(Debug)]
 pub enum Platform {
@@ -18,7 +24,6 @@ impl Display for Platform {
 
 #[allow(clippy::enum_variant_names)] // Only World App is supported right now (postfix)
 #[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum BundleIdentifier {
     // World App
     #[serde(rename = "com.worldcoin")]
@@ -44,7 +49,7 @@ impl BundleIdentifier {
     }
 }
 
-impl std::fmt::Display for BundleIdentifier {
+impl Display for BundleIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::AndroidProdWorldApp => write!(f, "com.worldcoin"),
@@ -72,24 +77,79 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum RequestError {
-    //  IntegrityFailed,
-    InternalServerError,
-    InvalidBundleIdentifier,
-    InvalidToken,
+#[derive(Debug, OperationIo)]
+pub struct RequestError {
+    pub code: ErrorCode,
+    pub internal_details: Option<String>,
 }
 
-impl std::fmt::Display for RequestError {
+impl Display for RequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            //   Self::IntegrityFailed => write!(f, "integrity_failed"),
-            Self::InternalServerError => write!(f, "internal_server_error"),
-            // Received an integrity token for a package name that does not match the provided bundle identifier
-            Self::InvalidBundleIdentifier => write!(f, "invalid_bundle_identifier"),
-            Self::InvalidToken => write!(f, "invalid_token"),
+        write!(
+            f,
+            "Error Code: `{}`. Internal details: {:?}",
+            self.code, self.internal_details
+        )
+    }
+}
+
+impl IntoResponse for RequestError {
+    fn into_response(self) -> axum::response::Response {
+        #[derive(serde::Serialize)]
+        struct ErrorResponse {
+            code: String,
         }
+
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(ErrorResponse {
+                code: self.code.to_string(),
+            }),
+        )
+            .into_response()
     }
 }
 
 impl std::error::Error for RequestError {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ErrorCode {
+    ExpiredToken,
+    IntegrityFailed,
+    InternalServerError,
+    InvalidBundleIdentifier,
+    InvalidToken,
+    UnexpectedTokenFormat,
+}
+
+impl std::fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ExpiredToken => write!(f, "expired_token"),
+            Self::IntegrityFailed => write!(f, "integrity_failed"),
+            Self::InternalServerError => write!(f, "internal_server_error"),
+            // Received an integrity token for a package name that does not match the provided bundle identifier
+            Self::InvalidBundleIdentifier => write!(f, "invalid_bundle_identifier"),
+            Self::InvalidToken => write!(f, "invalid_token"),
+            Self::UnexpectedTokenFormat => write!(f, "unexpected_token_format"),
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum StringOrInt {
+    String(String),
+    Number(u64),
+}
+
+pub fn deserialize_system_time_from_millis<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<SystemTime, D::Error> {
+    let timestamp_millis = match StringOrInt::deserialize(deserializer)? {
+        StringOrInt::String(s) => s.parse().map_err(serde::de::Error::custom),
+        StringOrInt::Number(i) => Ok(i),
+    }?;
+
+    Ok(SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp_millis))
+}
