@@ -23,7 +23,7 @@ impl Display for Platform {
 }
 
 #[allow(clippy::enum_variant_names)] // Only World App is supported right now (postfix)
-#[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum BundleIdentifier {
     // World App
     #[serde(rename = "com.worldcoin")]
@@ -45,6 +45,17 @@ impl BundleIdentifier {
                 Platform::Android
             }
             Self::IOSProdWorldApp | Self::IOSStageWorldApp => Platform::AppleIOS,
+        }
+    }
+
+    pub const fn certificate_sha256_digest(&self) -> Option<&str> {
+        match self {
+            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp => {
+                // cspell:disable-next-line
+                Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
+            }
+            Self::AndroidDevWorldApp => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
+            Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
         }
     }
 }

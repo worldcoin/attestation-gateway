@@ -11,7 +11,6 @@ pub async fn handler(
     // Verify the integrity token
     match request.bundle_identifier.platform() {
         Platform::Android => {
-            // TODO: Error response text
             android::verify_token(
                 &request.integrity_token,
                 &request.bundle_identifier,

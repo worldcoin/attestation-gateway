@@ -1,14 +1,16 @@
 use std::time::{Duration, SystemTime};
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
-use integrity_token_data::{AppIntegrityVerdict, PlayIntegrityToken};
+use integrity_token_data::{
+    AppIntegrityVerdict, AppLicensingVerdict, PlayIntegrityToken, PlayProtectVerdict,
+};
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
 mod integrity_token_data;
 
-// TODO const TOKEN_MAX_AGE: u64 = 10 * 600;
-const TOKEN_MAX_AGE: u64 = 10_000_000_000_000;
+// TODO const ALLOWED_TIMESTAMP_WINDOW: u64 = 10 * 600;
+const ALLOWED_TIMESTAMP_WINDOW: u64 = 10_000_000_000_000;
 
 pub fn verify_token(
     integrity_token: &str,
@@ -49,11 +51,20 @@ pub fn verify_token(
             internal_details: Some("Could not calculate timestamp_millis difference".to_string()),
         })?;
 
-    if duration.as_secs() > TOKEN_MAX_AGE {
+    if duration.as_secs() > ALLOWED_TIMESTAMP_WINDOW {
         return Err(RequestError {
             code: ErrorCode::ExpiredToken,
             internal_details: Some(
                 "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string(),
+            ),
+        });
+    }
+
+    if integrity_payload.request_details.nonce != request_hash {
+        return Err(RequestError {
+            code: ErrorCode::IntegrityFailed,
+            internal_details: Some(
+                "Provided `request_hash` does not match request_details.nonce".to_string(),
             ),
         });
     }
@@ -70,13 +81,79 @@ pub fn verify_token(
         });
     }
 
-    if integrity_payload.app_integrity.app_recognition_verdict
-        != AppIntegrityVerdict::PlayRecognized
+    if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
+        // Only in Production: App should come from Play Store
+        if integrity_payload.app_integrity.app_recognition_verdict
+            != AppIntegrityVerdict::PlayRecognized
+        {
+            return Err(RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some(
+                    "AppIntegrityVerdict does not match PlayRecognized".to_string(),
+                ),
+            });
+        }
+    }
+
+    if let Some(digest) = bundle_identifier.certificate_sha256_digest() {
+        if !integrity_payload
+            .app_integrity
+            .certificate_sha_256_digest
+            .contains(&digest.to_string())
+        {
+            return Err(RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some(
+                    "certificate_sha_256_digest does not match the expected value".to_string(),
+                ),
+            });
+        }
+    } else {
+        return Err(RequestError {
+            code: ErrorCode::InternalServerError,
+            internal_details: Some("certificate_sha_256_digest is None".to_string()),
+        });
+    }
+
+    // certificate_sha_256_digest is not checked
+
+    // SECTION --- Device integrity checks ---
+
+    if !integrity_payload
+        .device_integrity
+        .device_recognition_verdict
+        .contains(&"MEETS_DEVICE_INTEGRITY".to_string())
     {
         return Err(RequestError {
             code: ErrorCode::IntegrityFailed,
-            internal_details: Some("AppIntegrityVerdict does not match PlayRecognized".to_string()),
+            internal_details: Some(
+                "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY".to_string(),
+            ),
         });
+    }
+
+    // SECTION --- Account details checks ---
+
+    if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
+        // Only in Production: App should come from Play Store
+        if integrity_payload.account_details.app_licensing_verdict != AppLicensingVerdict::Licensed
+        {
+            return Err(RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some("AppLicensingVerdict does not match Licensed".to_string()),
+            });
+        }
+    }
+
+    // SECTION --- Environment details ---
+
+    if let Some(value) = integrity_payload.environment_details {
+        if value.play_protect_verdict == Some(PlayProtectVerdict::HighRisk) {
+            return Err(RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some("PlayProtectVerdict reported as HighRisk".to_string()),
+            });
+        }
     }
 
     Ok(())

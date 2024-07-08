@@ -45,10 +45,28 @@ pub struct AppAccessRiskVerdict {
     pub apps_detected: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PlayProtectVerdict {
+    #[serde(rename = "NO_ISSUES")]
+    NoIssues,
+    #[serde(rename = "NO_DATA")]
+    NoData,
+    #[serde(rename = "POSSIBLE_RISK")]
+    PossibleRisk,
+    #[serde(rename = "MEDIUM_RISK")]
+    MediumRisk,
+    #[serde(rename = "HIGH_RISK")]
+    HighRisk,
+    #[serde(rename = "UNEVALUATED")]
+    Unevaluated,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentDetails {
     pub app_access_risk_verdict: AppAccessRiskVerdict,
+    #[serde(rename = "playProtectVerdict")]
+    pub play_protect_verdict: Option<PlayProtectVerdict>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -69,7 +87,7 @@ impl Display for AppIntegrityVerdict {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AppLicensingVerdict {
     Licensed,
