@@ -149,7 +149,7 @@ impl PlayIntegrityToken {
         Ok(token)
     }
 
-    pub fn validate_all_claims(
+    fn validate_all_claims(
         &self,
         bundle_identifier: &BundleIdentifier,
         request_hash: &str,
@@ -172,7 +172,7 @@ impl PlayIntegrityToken {
         Ok(())
     }
 
-    pub fn validate_request_details(
+    fn validate_request_details(
         &self,
         bundle_identifier: &BundleIdentifier,
         request_hash: &str,
@@ -217,7 +217,7 @@ impl PlayIntegrityToken {
         Ok(())
     }
 
-    pub fn validate_app_integrity(
+    fn validate_app_integrity(
         &self,
         bundle_identifier: &BundleIdentifier,
     ) -> Result<(), RequestError> {
@@ -266,7 +266,7 @@ impl PlayIntegrityToken {
         Ok(())
     }
 
-    pub fn validate_device_integrity(&self) -> Result<(), RequestError> {
+    fn validate_device_integrity(&self) -> Result<(), RequestError> {
         if !self
             .device_integrity
             .device_recognition_verdict
@@ -283,7 +283,7 @@ impl PlayIntegrityToken {
         Ok(())
     }
 
-    pub fn validate_account_details(
+    fn validate_account_details(
         &self,
         bundle_identifier: &BundleIdentifier,
     ) -> Result<(), RequestError> {
@@ -301,7 +301,7 @@ impl PlayIntegrityToken {
         Ok(())
     }
 
-    pub fn validate_environment_details(&self) -> Result<(), RequestError> {
+    fn validate_environment_details(&self) -> Result<(), RequestError> {
         if let Some(value) = &self.environment_details {
             if value.play_protect_verdict == Some(PlayProtectVerdict::HighRisk) {
                 return Err(RequestError {

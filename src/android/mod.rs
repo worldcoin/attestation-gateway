@@ -7,6 +7,12 @@ use josekit::jws::ES256;
 
 mod integrity_token_data;
 
+/// Verifies an Android Play Integrity token and returns a parsed `PlayIntegrityToken`
+///
+/// # Errors
+///
+/// If the token is invalid, expired, or otherwise fails verification, a `RequestErrorWithIntegrityToken` is returned,
+/// when the token passes basic parsing but integrity checks fail, the failed payload is returned in the `failed_integrity_token` attribute of the error.
 pub fn verify_token(
     integrity_token: &str,
     bundle_identifier: &BundleIdentifier,
@@ -60,7 +66,7 @@ fn decrypt_outer_jwe(integrity_token: &str) -> Result<Vec<u8>, RequestError> {
 /// Verifies the signature of the inner JWS (as well as expiration) and parses the payload into a `PlayIntegrityToken` struct
 /// <https://developer.android.com/google/play/integrity/classic#kotlin>
 ///
-fn verify_and_parse_inner_jws(compact_jws: &Vec<u8>) -> Result<String, RequestError> {
+fn verify_and_parse_inner_jws(compact_jws: &[u8]) -> Result<String, RequestError> {
     // FIXME: These are temporary keys for local development
     let verifier_key = b"-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/ESc
@@ -189,7 +195,7 @@ LWUzsm73Mx4njtA2Caop0UIzoVKbh41NoBZ+BKnuH/a97Qti2nDPcjUX
         let mut header = JwsHeader::new();
         header.set_token_type("JWT");
 
-        let signer = ES256.signer_from_pem(&verifier_private_key).unwrap();
+        let signer = ES256.signer_from_pem(verifier_private_key).unwrap();
 
         let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
 
@@ -197,7 +203,7 @@ LWUzsm73Mx4njtA2Caop0UIzoVKbh41NoBZ+BKnuH/a97Qti2nDPcjUX
             .with_test_writer()
             .finish();
 
-        let result = verify_and_parse_inner_jws(&jws.into_bytes().to_vec());
+        let result = verify_and_parse_inner_jws(&jws.into_bytes());
 
         assert!(
             matches!(
@@ -233,11 +239,11 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
         let mut header = JwsHeader::new();
         header.set_token_type("JWT");
 
-        let signer = ES256.signer_from_pem(&verifier_private_key).unwrap();
+        let signer = ES256.signer_from_pem(verifier_private_key).unwrap();
 
         let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
 
-        let result = verify_and_parse_inner_jws(&jws.into_bytes().to_vec());
+        let result = verify_and_parse_inner_jws(&jws.into_bytes());
 
         assert!(
             matches!(
@@ -267,11 +273,11 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
         let mut header = JwsHeader::new();
         header.set_token_type("JWT");
 
-        let signer = ES256.signer_from_pem(&verifier_private_key).unwrap();
+        let signer = ES256.signer_from_pem(verifier_private_key).unwrap();
 
         let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
 
-        let result = verify_and_parse_inner_jws(&jws.into_bytes().to_vec());
+        let result = verify_and_parse_inner_jws(&jws.into_bytes());
 
         assert!(
             matches!(

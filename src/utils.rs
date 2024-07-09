@@ -39,6 +39,7 @@ pub enum BundleIdentifier {
 }
 
 impl BundleIdentifier {
+    #[must_use]
     pub const fn platform(&self) -> Platform {
         match self {
             Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
@@ -48,6 +49,7 @@ impl BundleIdentifier {
         }
     }
 
+    #[must_use]
     pub const fn certificate_sha256_digest(&self) -> Option<&str> {
         match self {
             Self::AndroidProdWorldApp | Self::AndroidStageWorldApp => {
@@ -154,6 +156,11 @@ enum StringOrInt {
     Number(u64),
 }
 
+/// Deserialize a `SystemTime` from a timestamp in milliseconds.
+///
+/// # Errors
+///
+/// This function will return an error if the timestamp is not a valid integer or string.
 pub fn deserialize_system_time_from_millis<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<SystemTime, D::Error> {
