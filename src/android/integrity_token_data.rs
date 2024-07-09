@@ -353,6 +353,117 @@ mod tests {
     }
 
     #[test]
+    fn creating_a_play_integrity_token_validates_it_automatically() {
+        // cspell:disable
+        let token_payload_str = r#"
+        {
+            "requestDetails": {
+                "requestPackageName": "com.worldcoin.staging",
+                "nonce": "aGVsbG8gd29scmQgdGhlcmU",
+                "timestampMillis": "1720506932737"
+            },
+            "appIntegrity": {
+                "appRecognitionVerdict": "PLAY_RECOGNIZED",
+                "packageName": "com.worldcoin.staging",
+                "certificateSha256Digest": [
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"
+                ],
+                "versionCode": "25700"
+            },
+            "deviceIntegrity": {
+                "deviceRecognitionVerdict": [
+                    "MEETS_DEVICE_INTEGRITY"
+                ]
+            },
+            "accountDetails": {
+                "appLicensingVerdict": "LICENSED"
+            },
+            "environmentDetails": {
+                "appAccessRiskVerdict": {
+                    "appsDetected": [
+                        "KNOWN_INSTALLED",
+                        "UNKNOWN_INSTALLED",
+                        "UNKNOWN_CAPTURING"
+                    ]
+                }
+            }
+        }"#;
+        // cspell:enable
+        let token = PlayIntegrityToken::new(
+            token_payload_str,
+            &BundleIdentifier::AndroidStageWorldApp,
+            "invalid_nonce", // <-- This nonce is invalid, it will not match request_details.nonce
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            token.request_error,
+            RequestError {
+                code: ErrorCode::IntegrityFailed,
+                internal_details: Some(
+                    "Provided `request_hash` does not match request_details.nonce".to_string()
+                ),
+            }
+        );
+
+        // When the token fails integrity verification but it's validly parse, the token is returned in failed_integrity_token
+        assert_eq!(
+            token
+                .failed_integrity_token
+                .unwrap()
+                .app_integrity
+                .app_recognition_verdict,
+            AppIntegrityVerdict::PlayRecognized
+        );
+    }
+
+    #[test]
+    fn creating_a_play_integrity_with_invalid_payload_does_not_allocate_it() {
+        let token_payload_with_missing_attributes = r#"
+        {
+            "requestDetails": {
+                "requestPackageName": "com.worldcoin.staging",
+                "nonce": "123",
+                "timestampMillis": "1720506932737"
+            }
+        }"#;
+
+        let token = PlayIntegrityToken::new(
+            token_payload_with_missing_attributes,
+            &BundleIdentifier::AndroidStageWorldApp,
+            "invalid_nonce",
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            token.request_error,
+            RequestError {
+                code: ErrorCode::UnexpectedTokenFormat,
+                internal_details: Some("Failure parsing integrity payload".to_string()),
+            }
+        );
+
+        assert!(token.failed_integrity_token.is_none());
+
+        let token = PlayIntegrityToken::new(
+            "not_even_valid_json",
+            &BundleIdentifier::AndroidStageWorldApp,
+            "invalid_nonce",
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            token.request_error,
+            RequestError {
+                code: ErrorCode::UnexpectedTokenFormat,
+                internal_details: Some("Failure parsing integrity payload".to_string()),
+            }
+        );
+
+        assert!(token.failed_integrity_token.is_none());
+    }
+
+    #[test]
     fn test_validate_request_details() {
         let token = create_test_token();
 

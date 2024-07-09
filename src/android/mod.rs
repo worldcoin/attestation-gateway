@@ -128,7 +128,7 @@ mod tests {
 
     #[traced_test]
     #[test]
-    fn test_invalid_jwe_fails_verification() -> Result<(), ()> {
+    fn test_invalid_jwe_fails_verification() {
         // Generate and encrypt a JWE with an unexpected key
         let other_private_key = b"caba71cf1b1e3896136dc70301c0613f";
 
@@ -162,21 +162,18 @@ mod tests {
         );
 
         assert!(logs_contain("Android JWE failed decryption: "));
-
-        Ok(())
     }
 
     #[test]
-    fn test_invalid_encryption_algorithm() -> Result<(), ()> {
+    fn test_invalid_encryption_algorithm() {
         // TODO
-        Ok(())
     }
 
     // SECTION - JWS tests
 
     #[traced_test]
     #[test]
-    fn test_invalid_jws_signature_verification() -> Result<(), ()> {
+    fn test_invalid_jws_signature_verification() {
         // cspell:disable-next-line
         // Generate new test keys with: `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256``
         let verifier_private_key = "-----BEGIN PRIVATE KEY-----
@@ -214,12 +211,10 @@ LWUzsm73Mx4njtA2Caop0UIzoVKbh41NoBZ+BKnuH/a97Qti2nDPcjUX
         );
 
         assert!(logs_contain("JWS signature could not be verified: "));
-
-        Ok(())
     }
 
     #[test]
-    fn test_expired_jws_fails_verification() -> Result<(), ()> {
+    fn test_expired_jws_fails_verification() {
         // TODO: Replace once we use actual keys
         let verifier_private_key = "-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFU28VNv+wsvcC0rR
@@ -254,12 +249,10 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
             ),
             "JWS signature verification should have failed."
         );
-
-        Ok(())
     }
 
     #[test]
-    fn test_jws_without_a_valid_exp_is_rejected() -> Result<(), ()> {
+    fn test_jws_without_a_valid_exp_is_rejected() {
         // TODO: Replace once we use actual keys
         let verifier_private_key = "-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFU28VNv+wsvcC0rR
@@ -290,7 +283,5 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
             ),
             "JWS parsing should have failed."
         );
-
-        Ok(())
     }
 }
