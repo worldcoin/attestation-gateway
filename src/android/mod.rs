@@ -1,85 +1,40 @@
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
-use integrity_token_data::{AppIntegrityVerdict, PlayIntegrityToken};
+use integrity_token_data::{PlayIntegrityToken, RequestErrorWithIntegrityToken};
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
 mod integrity_token_data;
 
-// TODO const TOKEN_MAX_AGE: u64 = 10 * 600;
-const TOKEN_MAX_AGE: u64 = 10_000_000_000_000;
-
+/// Verifies an Android Play Integrity token and returns a parsed `PlayIntegrityToken`
+///
+/// # Errors
+///
+/// If the token is invalid, expired, or otherwise fails verification, a `RequestErrorWithIntegrityToken` is returned,
+/// when the token passes basic parsing but integrity checks fail, the failed payload is returned in the `failed_integrity_token` attribute of the error.
 pub fn verify_token(
     integrity_token: &str,
     bundle_identifier: &BundleIdentifier,
     request_hash: &str,
-) -> Result<(), RequestError> {
-    let decrypted_jws = decrypt_outer_jwe(integrity_token)?;
+) -> Result<PlayIntegrityToken, RequestErrorWithIntegrityToken> {
+    let decrypted_jws =
+        decrypt_outer_jwe(integrity_token).map_err(handle_request_error_with_integrity_token)?;
 
-    let integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)?;
+    let play_integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)
+        .map_err(handle_request_error_with_integrity_token)?;
 
-    // SECTION --- Request details checks ---
+    PlayIntegrityToken::new(&play_integrity_payload, bundle_identifier, request_hash)
+}
 
-    if integrity_payload.request_details.request_package_name != bundle_identifier.to_string() {
-        return Err(RequestError {
-            code: ErrorCode::InvalidBundleIdentifier,
-            internal_details: Some(
-                "Provided `bundle_identifier` does not match request_details.request_package_name"
-                    .to_string(),
-            ),
-        });
+fn handle_request_error_with_integrity_token(e: RequestError) -> RequestErrorWithIntegrityToken {
+    RequestErrorWithIntegrityToken {
+        request_error: RequestError {
+            code: e.code,
+            internal_details: e.internal_details,
+        },
+        failed_integrity_token: None,
     }
-
-    if integrity_payload.request_details.nonce != request_hash {
-        return Err(RequestError {
-            code: ErrorCode::IntegrityFailed,
-            internal_details: Some(
-                "Provided `request_hash` does not match request_details.nonce".to_string(),
-            ),
-        });
-    }
-
-    tracing::debug!("{:?}", integrity_payload.request_details.timestamp_millis);
-
-    let duration = SystemTime::now()
-        .duration_since(integrity_payload.request_details.timestamp_millis)
-        .map_err(|_| RequestError {
-            code: ErrorCode::UnexpectedTokenFormat,
-            internal_details: Some("Could not calculate timestamp_millis difference".to_string()),
-        })?;
-
-    if duration.as_secs() > TOKEN_MAX_AGE {
-        return Err(RequestError {
-            code: ErrorCode::ExpiredToken,
-            internal_details: Some(
-                "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string(),
-            ),
-        });
-    }
-
-    // SECTION --- App integrity checks ---
-
-    if integrity_payload.app_integrity.package_name != bundle_identifier.to_string() {
-        return Err(RequestError {
-            code: ErrorCode::InvalidBundleIdentifier,
-            internal_details: Some(
-                "Provided `bundle_identifier` does not match app_integrity.package_name"
-                    .to_string(),
-            ),
-        });
-    }
-
-    if integrity_payload.app_integrity.app_recognition_verdict
-        != AppIntegrityVerdict::PlayRecognized
-    {
-        return Err(RequestError {
-            code: ErrorCode::IntegrityFailed,
-            internal_details: Some("AppIntegrityVerdict does not match PlayRecognized".to_string()),
-        });
-    }
-
-    Ok(())
 }
 
 /// Decrypts the outer JWE (JSON Web Encryption) token using the AES secret provided by Google for each bundle identifier
@@ -111,7 +66,7 @@ fn decrypt_outer_jwe(integrity_token: &str) -> Result<Vec<u8>, RequestError> {
 /// Verifies the signature of the inner JWS (as well as expiration) and parses the payload into a `PlayIntegrityToken` struct
 /// <https://developer.android.com/google/play/integrity/classic#kotlin>
 ///
-fn verify_and_parse_inner_jws(compact_jws: &Vec<u8>) -> Result<PlayIntegrityToken, RequestError> {
+fn verify_and_parse_inner_jws(compact_jws: &[u8]) -> Result<String, RequestError> {
     // FIXME: These are temporary keys for local development
     let verifier_key = b"-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/ESc
@@ -161,36 +116,25 @@ v4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==
         });
     };
 
-    let integrity_payload: PlayIntegrityToken =
-        serde_json::from_str(&integrity_payload.to_string()).map_err(|e| {
-            tracing::error!("Received invalid token payload: {e}. Payload: {integrity_payload}");
-
-            RequestError {
-                code: ErrorCode::UnexpectedTokenFormat,
-                internal_details: Some("Failure parsing integrity payload".to_string()),
-            }
-        })?;
-
-    Ok(integrity_payload)
+    Ok(integrity_payload.to_string())
 }
 
 #[cfg(test)]
 mod tests {
 
-    use std::time::{Duration, SystemTime};
-
-    use super::{verify_and_parse_inner_jws, verify_token};
+    use super::{verify_and_parse_inner_jws, verify_token, RequestErrorWithIntegrityToken};
     use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
     use josekit::jwe::{self, JweHeader, A256KW};
     use josekit::jws::{JwsHeader, ES256};
     use josekit::jwt::{self, JwtPayload};
+    use std::time::{Duration, SystemTime};
     use tracing_test::traced_test;
 
     // SECTION - JWE tests
 
     #[traced_test]
     #[test]
-    fn test_invalid_jwe_fails_verification() -> Result<(), ()> {
+    fn test_invalid_jwe_fails_verification() {
         // Generate and encrypt a JWE with an unexpected key
         let other_private_key = b"caba71cf1b1e3896136dc70301c0613f";
 
@@ -212,30 +156,30 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(RequestError {
-                    code: ErrorCode::InvalidToken,
-                    internal_details: Some(ref reason)
+                Err(RequestErrorWithIntegrityToken {
+                    request_error: RequestError {
+                        code: ErrorCode::InvalidToken,
+                        internal_details: Some(ref reason)
+                    },
+                    failed_integrity_token: _
                 }) if reason == "JWE failed decryption"
             ),
             "Token decryption should have failed."
         );
 
         assert!(logs_contain("Android JWE failed decryption: "));
-
-        Ok(())
     }
 
     #[test]
-    fn test_invalid_encryption_algorithm() -> Result<(), ()> {
+    fn test_invalid_encryption_algorithm() {
         // TODO
-        Ok(())
     }
 
     // SECTION - JWS tests
 
     #[traced_test]
     #[test]
-    fn test_invalid_jws_signature_verification() -> Result<(), ()> {
+    fn test_invalid_jws_signature_verification() {
         // cspell:disable-next-line
         // Generate new test keys with: `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256``
         let verifier_private_key = "-----BEGIN PRIVATE KEY-----
@@ -251,7 +195,7 @@ LWUzsm73Mx4njtA2Caop0UIzoVKbh41NoBZ+BKnuH/a97Qti2nDPcjUX
         let mut header = JwsHeader::new();
         header.set_token_type("JWT");
 
-        let signer = ES256.signer_from_pem(&verifier_private_key).unwrap();
+        let signer = ES256.signer_from_pem(verifier_private_key).unwrap();
 
         let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
 
@@ -259,7 +203,7 @@ LWUzsm73Mx4njtA2Caop0UIzoVKbh41NoBZ+BKnuH/a97Qti2nDPcjUX
             .with_test_writer()
             .finish();
 
-        let result = verify_and_parse_inner_jws(&jws.into_bytes().to_vec());
+        let result = verify_and_parse_inner_jws(&jws.into_bytes());
 
         assert!(
             matches!(
@@ -273,12 +217,10 @@ LWUzsm73Mx4njtA2Caop0UIzoVKbh41NoBZ+BKnuH/a97Qti2nDPcjUX
         );
 
         assert!(logs_contain("JWS signature could not be verified: "));
-
-        Ok(())
     }
 
     #[test]
-    fn test_expired_jws_fails_verification() -> Result<(), ()> {
+    fn test_expired_jws_fails_verification() {
         // TODO: Replace once we use actual keys
         let verifier_private_key = "-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFU28VNv+wsvcC0rR
@@ -297,11 +239,11 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
         let mut header = JwsHeader::new();
         header.set_token_type("JWT");
 
-        let signer = ES256.signer_from_pem(&verifier_private_key).unwrap();
+        let signer = ES256.signer_from_pem(verifier_private_key).unwrap();
 
         let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
 
-        let result = verify_and_parse_inner_jws(&jws.into_bytes().to_vec());
+        let result = verify_and_parse_inner_jws(&jws.into_bytes());
 
         assert!(
             matches!(
@@ -313,12 +255,10 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
             ),
             "JWS signature verification should have failed."
         );
-
-        Ok(())
     }
 
     #[test]
-    fn test_jws_without_a_valid_exp_is_rejected() -> Result<(), ()> {
+    fn test_jws_without_a_valid_exp_is_rejected() {
         // TODO: Replace once we use actual keys
         let verifier_private_key = "-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFU28VNv+wsvcC0rR
@@ -333,11 +273,11 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
         let mut header = JwsHeader::new();
         header.set_token_type("JWT");
 
-        let signer = ES256.signer_from_pem(&verifier_private_key).unwrap();
+        let signer = ES256.signer_from_pem(verifier_private_key).unwrap();
 
         let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
 
-        let result = verify_and_parse_inner_jws(&jws.into_bytes().to_vec());
+        let result = verify_and_parse_inner_jws(&jws.into_bytes());
 
         assert!(
             matches!(
@@ -349,7 +289,5 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
             ),
             "JWS parsing should have failed."
         );
-
-        Ok(())
     }
 }

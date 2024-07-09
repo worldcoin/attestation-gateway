@@ -23,7 +23,7 @@ impl Display for Platform {
 }
 
 #[allow(clippy::enum_variant_names)] // Only World App is supported right now (postfix)
-#[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum BundleIdentifier {
     // World App
     #[serde(rename = "com.worldcoin")]
@@ -39,12 +39,25 @@ pub enum BundleIdentifier {
 }
 
 impl BundleIdentifier {
+    #[must_use]
     pub const fn platform(&self) -> Platform {
         match self {
             Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
                 Platform::Android
             }
             Self::IOSProdWorldApp | Self::IOSStageWorldApp => Platform::AppleIOS,
+        }
+    }
+
+    #[must_use]
+    pub const fn certificate_sha256_digest(&self) -> Option<&str> {
+        match self {
+            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp => {
+                // cspell:disable-next-line
+                Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
+            }
+            Self::AndroidDevWorldApp => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
+            Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
         }
     }
 }
@@ -77,7 +90,7 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
-#[derive(Debug, OperationIo)]
+#[derive(Debug, OperationIo, PartialEq, Eq)]
 pub struct RequestError {
     pub code: ErrorCode,
     pub internal_details: Option<String>,
@@ -143,6 +156,11 @@ enum StringOrInt {
     Number(u64),
 }
 
+/// Deserialize a `SystemTime` from a timestamp in milliseconds.
+///
+/// # Errors
+///
+/// This function will return an error if the timestamp is not a valid integer or string.
 pub fn deserialize_system_time_from_millis<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<SystemTime, D::Error> {

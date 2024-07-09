@@ -11,12 +11,25 @@ pub async fn handler(
     // Verify the integrity token
     match request.bundle_identifier.platform() {
         Platform::Android => {
-            // TODO: Error response text
-            android::verify_token(
+            let token = android::verify_token(
                 &request.integrity_token,
                 &request.bundle_identifier,
                 &request.request_hash,
-            )?;
+            )
+            .map_err(|mut e| {
+                if let Some(failed_token) = e.failed_integrity_token.take() {
+                    // TODO: Log to failed tokens repository
+                    println!("Failed token: {failed_token:?}");
+                }
+
+                RequestError {
+                    code: e.request_error.code,
+                    internal_details: e.request_error.internal_details,
+                }
+            });
+
+            // TODO: Use token data here
+            println!("Parsed token: {token:?}");
         }
         Platform::AppleIOS => {}
     }
