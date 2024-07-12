@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
-use integrity_token_data::{PlayIntegrityToken, RequestErrorWithIntegrityToken};
+pub use integrity_token_data::{PlayIntegrityToken, RequestErrorWithIntegrityToken};
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 

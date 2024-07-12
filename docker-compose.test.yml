@@ -1,0 +1,13 @@
+services:
+  local-kms:
+    image: nsmithuk/local-kms
+    container_name: local-kms
+    ports:
+      - "4566:4566"
+    environment:
+      - PORT=4566
+      - KMS_REGION=us-east-1
+      - KMS_ACCOUNT_ID=000012345678
+      - KMS_SEED_PATH=kms-seed.yml
+    volumes:
+      - ./kms-seed.yml:/kms-seed.yml

@@ -1,3 +1,4 @@
+use crate::android::PlayIntegrityToken;
 use aide::OperationIo;
 use axum::response::IntoResponse;
 use schemars::JsonSchema;
@@ -23,7 +24,7 @@ impl Display for Platform {
 }
 
 #[allow(clippy::enum_variant_names)] // Only World App is supported right now (postfix)
-#[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema, PartialEq, Eq, Clone)]
 pub enum BundleIdentifier {
     // World App
     #[serde(rename = "com.worldcoin")]
@@ -170,4 +171,25 @@ pub fn deserialize_system_time_from_millis<'de, D: serde::Deserializer<'de>>(
     }?;
 
     Ok(SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp_millis))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub enum OutEnum {
+    Pass,
+    Fail,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataReport {
+    pub pass: bool,
+    pub out: OutEnum,
+    pub client_error: Option<String>,
+    pub request_hash: String,
+    pub timestamp: SystemTime,
+    pub bundle_identifier: BundleIdentifier,
+    pub aud: String,
+    pub internal_error_details: Option<String>,
+    pub play_integrity: Option<PlayIntegrityToken>,
+    // apple_device_check: None,
 }
