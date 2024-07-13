@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use crate::{
     android, kms_jws,
     utils::{
-        DataReport, OutEnum, Platform, RequestError, TokenGenerationRequest,
+        DataReport, OutEnum, OutputTokenPayload, Platform, RequestError, TokenGenerationRequest,
         TokenGenerationResponse,
     },
 };
@@ -21,7 +21,7 @@ pub async fn handler(
         request_hash: request.request_hash.clone(),
         bundle_identifier: request.bundle_identifier.clone(),
         client_error: request.client_error,
-        aud: request.aud,
+        aud: request.aud.clone(),
         internal_error_details: None,
         play_integrity: None,
     };
@@ -63,9 +63,20 @@ pub async fn handler(
     // TODO: Report to Kinesis
     tracing::debug!("Report: {:?}", report);
 
+    // Generate output attestation token
+    let output_token_payload = OutputTokenPayload {
+        aud: request.aud,
+        request_hash: request.request_hash.clone(),
+        pass: report.pass,
+        out: report.out,
+        error: None, // TODO: Implement in the future
+    }
+    .generate()?;
+
     let attestation_gateway_token = kms_jws::generate_output_token(
         kms_client,
         "arn:aws:kms:us-east-1:000000001111:key/c7956b9c-5235-4e8e-bb35-7310fb80f4ca".to_string(),
+        output_token_payload,
     )
     .await?;
 
@@ -75,3 +86,5 @@ pub async fn handler(
 
     Ok(Json(response))
 }
+
+// NOTE: Integration tests for route handlers are in the `/tests` module

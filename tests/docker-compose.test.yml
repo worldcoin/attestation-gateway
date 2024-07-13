@@ -7,7 +7,12 @@ services:
     environment:
       - PORT=4566
       - KMS_REGION=us-east-1
-      - KMS_ACCOUNT_ID=000012345678
+      - KMS_ACCOUNT_ID=000000001111
       - KMS_SEED_PATH=kms-seed.yml
     volumes:
       - ./kms-seed.yml:/kms-seed.yml
+  redis:
+    image: redis
+    container_name: redis
+    ports:
+      - "6379:6379"

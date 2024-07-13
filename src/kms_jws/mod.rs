@@ -26,6 +26,7 @@ impl JwsSigner for EcdsaJwsSignerWithKms {
         64
     }
 
+    /// Extracts the key ID from the key ARN
     fn key_id(&self) -> Option<&str> {
         let parts: Vec<&str> = self.key_arn.split('/').collect();
         assert!(
@@ -105,12 +106,10 @@ async fn sign_with_kms(
 pub async fn generate_output_token(
     kms_client: aws_sdk_kms::Client,
     key_arn: String,
+    payload: JwtPayload,
 ) -> Result<String, RequestError> {
     let mut header = JwsHeader::new();
     header.set_token_type("JWT");
-
-    let mut payload = JwtPayload::new();
-    payload.set_subject("subject123");
 
     let signer = EcdsaJwsSignerWithKms {
         algorithm: EcdsaJwsAlgorithm::Es256,

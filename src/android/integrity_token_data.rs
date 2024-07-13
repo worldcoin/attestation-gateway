@@ -1,6 +1,8 @@
-use crate::utils::deserialize_system_time_from_millis;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, time::SystemTime};
+use std::{
+    fmt::Display,
+    time::{Duration, SystemTime},
+};
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
 
@@ -121,14 +123,45 @@ pub struct RequestErrorWithIntegrityToken {
     pub failed_integrity_token: Option<Box<PlayIntegrityToken>>,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum StringOrInt {
+    String(String),
+    Number(u64),
+}
+
+/// Deserialize a `SystemTime` from a timestamp in milliseconds.
+///
+/// # Errors
+///
+/// This function will return an error if the timestamp is not a valid integer or string.
+pub fn deserialize_system_time_from_millis<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<SystemTime, D::Error> {
+    let timestamp_millis = match StringOrInt::deserialize(deserializer)? {
+        StringOrInt::String(s) => s.parse().map_err(serde::de::Error::custom),
+        StringOrInt::Number(i) => Ok(i),
+    }?;
+
+    Ok(SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp_millis))
+}
+
 impl PlayIntegrityToken {
+    /// Initializes a `PlayIntegrityToken` struct from a JSON payload. After initial parsing, the relevant claims are validated to determine
+    /// if the token passes the business rules for integrity.
+    ///
+    /// # Errors
+    /// - Returns an `UnexpectedTokenFormat` if the token parsing fails (e.g. invalid JSON, invalid attributes, etc)
+    /// - Returns a general `RequestErrorWithIntegrityToken` if the claim validation fails. The error response includes the parsed payload for logging.
     pub fn new(
-        integrity_token: &str,
+        integrity_token_json_payload: &str,
         bundle_identifier: &BundleIdentifier,
         request_hash: &str,
     ) -> Result<Self, RequestErrorWithIntegrityToken> {
-        let token = serde_json::from_str::<Self>(integrity_token).map_err(|e| {
-            tracing::error!("Received invalid token payload: {e}. Payload: {integrity_token}");
+        let token = serde_json::from_str::<Self>(integrity_token_json_payload).map_err(|e| {
+            tracing::error!(
+                "Received invalid token payload: {e}. Payload: {integrity_token_json_payload}"
+            );
 
             RequestErrorWithIntegrityToken {
                 request_error: RequestError {

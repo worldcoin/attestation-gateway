@@ -26,10 +26,7 @@ async fn main() {
 
     tracing::info!("Starting attestation gateway...");
 
-    // Construct Redis URL
-
     let redis = environment.redis_client().await;
-
     tracing::info!("✅ Connection to Redis established.");
 
     let kms_client = environment.kms_client().await;
@@ -37,29 +34,25 @@ async fn main() {
     server::start(redis, kms_client).await;
 }
 
-async fn build_redis_pool(mut redis_url: String) -> redis::RedisResult<ConnectionManager> {
-    if !redis_url.starts_with("redis://") && !redis_url.starts_with("rediss://") {
-        redis_url = format!("redis://{redis_url}");
-    }
-
+async fn build_redis_pool(redis_url: String) -> redis::RedisResult<ConnectionManager> {
     let client = redis::Client::open(redis_url)?;
-
     ConnectionManager::new(client).await
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum Environment {
-    Testing,
     Production,
     Development,
 }
 
-impl From<&str> for Environment {
-    fn from(s: &str) -> Self {
+impl TryFrom<&str> for Environment {
+    type Error = Box<dyn std::error::Error>;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
-            "testing" => Self::Testing,
-            "production" => Self::Production,
-            "development" => Self::Development,
-            _ => panic!("no, bad."),
+            "production" => Ok(Self::Production),
+            "development" => Ok(Self::Development),
+            _ => Err("invalid `APP_ENV` environment variable".into()),
         }
     }
 }
@@ -69,12 +62,13 @@ impl Environment {
         env::var("APP_ENV")
             .unwrap_or_else(|_| "production".to_string())
             .as_str()
-            .into()
+            .try_into()
+            .unwrap()
     }
 
     pub const fn log_level(&self) -> tracing::Level {
         match self {
-            Self::Testing | Self::Development => tracing::Level::DEBUG,
+            Self::Development => tracing::Level::DEBUG,
             Self::Production => tracing::Level::INFO,
         }
     }
@@ -103,6 +97,11 @@ impl Environment {
             )
         });
 
+        assert!(
+            self != &Self::Production || redis_url.starts_with("rediss://"),
+            "For security reasons, TLS is required for Redis in production. Set `REDIS_USE_TLS` = `true` or the scheme of `REDIS_URL`."
+        );
+
         build_redis_pool(redis_url)
             .await
             .expect("Failed to connect to Redis")
@@ -110,9 +109,6 @@ impl Environment {
 
     pub async fn kms_client(&self) -> aws_sdk_kms::Client {
         let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-
-        tracing::debug!("AWS Config: {:?}", aws_config);
-
         aws_sdk_kms::Client::new(&aws_config)
     }
 }
