@@ -5,6 +5,8 @@ use josekit::{jwt::JwtPayload, JoseError};
 use schemars::JsonSchema;
 use std::{fmt::Display, time::SystemTime};
 
+static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(60 * 10);
+
 #[derive(Debug)]
 pub enum Platform {
     AppleIOS,
@@ -210,7 +212,7 @@ impl OutputTokenPayload {
         let mut payload = JwtPayload::new();
         payload.set_issued_at(&SystemTime::now());
         payload.set_issuer("attestation.worldcoin.org");
-        payload.set_expires_at(&(SystemTime::now() + std::time::Duration::from_secs(1)));
+        payload.set_expires_at(&(SystemTime::now() + OUTPUT_TOKEN_EXPIRATION));
 
         // Claims
         payload
@@ -255,16 +257,14 @@ fn test_output_token_payload_generation() {
     // Assert default claims
     assert_eq!(jwt_payload.issuer(), Some("attestation.worldcoin.org"));
 
-    // Assert `exp` & `iat`
-
-    // jwt_payload.issued_at() must be within 5 seconds of `now`
+    // Assert `exp` & `iat` within a few seconds of `now`
     assert!(jwt_payload.issued_at().unwrap() < (now + std::time::Duration::from_secs(5)));
 
     assert!(
         jwt_payload.issued_at().unwrap()
             < (now + 
                 // expiration time
-                std::time::Duration::from_secs(1) + 
+                OUTPUT_TOKEN_EXPIRATION + 
                 // tolerance time
                 std::time::Duration::from_secs(5))
     );

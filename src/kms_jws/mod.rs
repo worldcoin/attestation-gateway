@@ -1,5 +1,6 @@
 use crate::utils::{ErrorCode, RequestError};
 use aws_sdk_kms::{primitives::Blob, Error};
+use base64::Engine;
 use josekit::{
     jws::{alg::ecdsa::EcdsaJwsAlgorithm, JwsAlgorithm, JwsHeader, JwsSigner},
     jwt::{self, JwtPayload},
@@ -10,15 +11,41 @@ use tokio::runtime::Runtime;
 
 #[derive(Debug, Clone)]
 pub struct EcdsaJwsSignerWithKms {
-    algorithm: EcdsaJwsAlgorithm,
     key_arn: String,
     kms_client: aws_sdk_kms::Client,
+    key_id: String,
+}
+
+impl EcdsaJwsSignerWithKms {
+    /// Initializes a new `EcdsaJwsSignerWithKms` instance while parsing the `key_arn` to generate the `key_id`
+    /// Extracts the key ID from the key ARN
+    fn new(key_arn: String, kms_client: aws_sdk_kms::Client) -> Self {
+        let parts: Vec<&str> = key_arn.split('/').collect();
+        assert!(
+            !(!parts.len() == 2 && parts[1].contains('-')),
+            "Unexpected key ARN."
+        );
+
+        let mut hasher = openssl::sha::Sha224::new();
+        hasher.update(parts[1].as_bytes());
+        let key_hash = hasher.finish();
+        let key_id = format!(
+            "key_{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key_hash)
+        );
+
+        Self {
+            key_arn,
+            kms_client,
+            key_id,
+        }
+    }
 }
 
 /// Implement the `JwsSigner` trait for `EcdsaJwsSignerWithKms` to be able to have a custom `sign` method which relies on KMS instead of local keys
 impl JwsSigner for EcdsaJwsSignerWithKms {
     fn algorithm(&self) -> &dyn JwsAlgorithm {
-        &self.algorithm
+        &EcdsaJwsAlgorithm::Es256
     }
 
     fn signature_len(&self) -> usize {
@@ -26,14 +53,8 @@ impl JwsSigner for EcdsaJwsSignerWithKms {
         64
     }
 
-    /// Extracts the key ID from the key ARN
     fn key_id(&self) -> Option<&str> {
-        let parts: Vec<&str> = self.key_arn.split('/').collect();
-        assert!(
-            !(!parts.len() == 2 && parts[1].contains('-')),
-            "Unexpected key ARN."
-        );
-        Some(parts[1])
+        Some(&self.key_id)
     }
 
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, JoseError> {
@@ -111,11 +132,7 @@ pub async fn generate_output_token(
     let mut header = JwsHeader::new();
     header.set_token_type("JWT");
 
-    let signer = EcdsaJwsSignerWithKms {
-        algorithm: EcdsaJwsAlgorithm::Es256,
-        key_arn,
-        kms_client,
-    };
+    let signer = EcdsaJwsSignerWithKms::new(key_arn, kms_client);
 
     let jwt =
         tokio::task::spawn_blocking(move || jwt::encode_with_signer(&payload, &header, &signer))
@@ -137,3 +154,6 @@ pub async fn generate_output_token(
 
     Ok(jwt)
 }
+
+#[cfg(test)]
+mod tests;
