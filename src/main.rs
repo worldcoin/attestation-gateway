@@ -61,7 +61,7 @@ impl Environment {
     pub fn from_env() -> Self {
         env::var("APP_ENV")
             .unwrap_or_else(|_| "production".to_string())
-            .as_str()
+            .trim()
             .try_into()
             .unwrap()
     }
