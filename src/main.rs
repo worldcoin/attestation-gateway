@@ -52,7 +52,7 @@ impl TryFrom<&str> for Environment {
         match s {
             "production" => Ok(Self::Production),
             "development" => Ok(Self::Development),
-            _ => Err("invalid `APP_ENV` environment variable".into()),
+            _ => Err(format!("invalid `APP_ENV` environment variable: {s}").into()),
         }
     }
 }
