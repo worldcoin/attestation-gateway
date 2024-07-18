@@ -109,9 +109,9 @@ async fn test_generate_output_token() {
     // Assert expiration
     assert!(
         payload.expires_at().unwrap()
-            < (SystemTime::now() + 
+            < (SystemTime::now() +
                 // expiration time (this is set in utils.rs)
-                std::time::Duration::from_secs(600) + 
+                std::time::Duration::from_secs(600) +
                 // tolerance time
                 std::time::Duration::from_secs(5))
     );

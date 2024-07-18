@@ -262,9 +262,9 @@ fn test_output_token_payload_generation() {
 
     assert!(
         jwt_payload.issued_at().unwrap()
-            < (now + 
+            < (now +
                 // expiration time
-                OUTPUT_TOKEN_EXPIRATION + 
+                OUTPUT_TOKEN_EXPIRATION +
                 // tolerance time
                 std::time::Duration::from_secs(5))
     );
@@ -276,7 +276,9 @@ fn test_output_token_payload_generation() {
     );
     assert_eq!(
         jwt_payload.claim("jti"),
-        Some(&josekit::Value::String("this_is_not_a_hash_with_enough_entropy".to_string()))
+        Some(&josekit::Value::String(
+            "this_is_not_a_hash_with_enough_entropy".to_string()
+        ))
     );
     assert_eq!(jwt_payload.claim("pass"), Some(&josekit::Value::Bool(true)));
     assert_eq!(
