@@ -131,6 +131,7 @@ dependencies = [
  "mime",
  "openssl",
  "redis",
+ "regex",
  "schemars",
  "serde",
  "serde_json",

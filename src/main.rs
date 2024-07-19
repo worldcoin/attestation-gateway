@@ -1,7 +1,9 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
+use crate::utils::GlobalConfig;
 use dotenvy::dotenv;
 use redis::aio::ConnectionManager;
+use regex::Regex;
 use std::env;
 
 mod android;
@@ -9,6 +11,8 @@ mod kms_jws;
 mod routes;
 mod server;
 mod utils;
+
+const ARN_REGEX_PATTERN: &str = r"^arn:aws:\w+:[a-z0-9\-]+:\d+:\w+\/[\w\-]+$";
 
 #[tokio::main]
 async fn main() {
@@ -31,12 +35,32 @@ async fn main() {
 
     let kms_client = environment.kms_client().await;
 
-    server::start(redis, kms_client).await;
+    server::start(redis, kms_client, load_config()).await;
 }
 
 async fn build_redis_pool(redis_url: String) -> redis::RedisResult<ConnectionManager> {
     let client = redis::Client::open(redis_url)?;
     ConnectionManager::new(client).await
+}
+
+/// Loads the global configuration from env vars
+///
+/// # Panics
+/// If required environment variables are not set or do not look correct
+#[must_use]
+pub fn load_config() -> GlobalConfig {
+    let output_token_kms_key_arn = env::var("OUTPUT_TOKEN_KMS_KEY_ARN")
+        .expect("env var `OUTPUT_TOKEN_KMS_KEY_ARN` is required");
+    let re = Regex::new(ARN_REGEX_PATTERN).unwrap();
+
+    assert!(
+        re.is_match(&output_token_kms_key_arn),
+        "Invalid format for OUTPUT_TOKEN_KMS_KEY_ARN. Expected format: `{ARN_REGEX_PATTERN}`",
+    );
+
+    GlobalConfig {
+        output_token_kms_key_arn,
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
