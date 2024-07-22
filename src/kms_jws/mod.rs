@@ -138,14 +138,14 @@ pub async fn generate_output_token(
         tokio::task::spawn_blocking(move || jwt::encode_with_signer(&payload, &header, &signer))
             .await
             .map_err(|e| {
-                tracing::error!("Error generating JWS signature in tokio task: {:?}", e);
+                tracing::error!(?e, "Error generating JWS signature in tokio task.");
                 RequestError {
                     code: ErrorCode::InternalServerError,
                     internal_details: Some("Error generating JWS signature".to_string()),
                 }
             })?
             .map_err(|e| {
-                tracing::error!("Error generating JWS signature: {:?}", e);
+                tracing::error!(?e, "Error generating JWS signature.");
                 RequestError {
                     code: ErrorCode::InternalServerError,
                     internal_details: Some("Error generating JWS signature".to_string()),

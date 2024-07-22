@@ -160,7 +160,9 @@ impl PlayIntegrityToken {
     ) -> Result<Self, RequestErrorWithIntegrityToken> {
         let token = serde_json::from_str::<Self>(integrity_token_json_payload).map_err(|e| {
             tracing::error!(
-                "Received invalid token payload: {e}. Payload: {integrity_token_json_payload}"
+                ?e,
+                ?integrity_token_json_payload,
+                "Received invalid token payload"
             );
 
             RequestErrorWithIntegrityToken {
