@@ -7,6 +7,11 @@ use std::{fmt::Display, time::SystemTime};
 
 static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 
+#[derive(Debug, Clone)]
+pub struct GlobalConfig {
+    pub output_token_kms_key_arn: String,
+}
+
 #[derive(Debug)]
 pub enum Platform {
     AppleIOS,

@@ -5,13 +5,14 @@ use std::time::SystemTime;
 use crate::{
     android, kms_jws,
     utils::{
-        DataReport, OutEnum, OutputTokenPayload, Platform, RequestError, TokenGenerationRequest,
-        TokenGenerationResponse,
+        DataReport, GlobalConfig, OutEnum, OutputTokenPayload, Platform, RequestError,
+        TokenGenerationRequest, TokenGenerationResponse,
     },
 };
 
 pub async fn handler(
     Extension(kms_client): Extension<aws_sdk_kms::Client>,
+    Extension(global_config): Extension<GlobalConfig>,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
     let mut report = DataReport {
@@ -75,7 +76,7 @@ pub async fn handler(
 
     let attestation_gateway_token = kms_jws::generate_output_token(
         kms_client,
-        "arn:aws:kms:us-east-1:000000001111:key/c7956b9c-5235-4e8e-bb35-7310fb80f4ca".to_string(),
+        global_config.output_token_kms_key_arn.clone(),
         output_token_payload,
     )
     .await?;

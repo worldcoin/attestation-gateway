@@ -124,7 +124,7 @@ mod tests {
 
     use super::{verify_and_parse_inner_jws, verify_token, RequestErrorWithIntegrityToken};
     use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
-    use josekit::jwe::{self, JweHeader, A256KW};
+    use josekit::jwe::{self, JweHeader, A128KW, A256KW};
     use josekit::jws::{JwsHeader, ES256};
     use josekit::jwt::{self, JwtPayload};
     use std::time::{Duration, SystemTime};
@@ -170,9 +170,43 @@ mod tests {
         assert!(logs_contain("Android JWE failed decryption: "));
     }
 
+    #[traced_test]
     #[test]
     fn test_invalid_encryption_algorithm() {
-        // TODO
+        let other_private_key = b"caba71cf1b1e389c";
+
+        // NOTE: We're trying a different encryption algorithm
+        let encrypter = A128KW.encrypter_from_bytes(other_private_key).unwrap();
+
+        let mut headers = JweHeader::new();
+        headers.set_algorithm("A128KW");
+        // cspell:disable-next-line
+        headers.set_content_encryption("A256GCM");
+
+        let test_jwe = jwe::serialize_compact(b"test", &headers, &encrypter).unwrap();
+
+        let _subscriber = tracing_subscriber::fmt::Subscriber::builder()
+            .with_test_writer()
+            .finish();
+
+        let result = verify_token(&test_jwe, &BundleIdentifier::AndroidStageWorldApp, "test");
+
+        // Now we assert the JWE failed decryption
+        assert!(
+            matches!(
+                result,
+                Err(RequestErrorWithIntegrityToken {
+                    request_error: RequestError {
+                        code: ErrorCode::InvalidToken,
+                        internal_details: Some(ref reason)
+                    },
+                    failed_integrity_token: _
+                }) if reason == "JWE failed decryption"
+            ),
+            "Token decryption should have failed."
+        );
+
+        assert!(logs_contain("Android JWE failed decryption: Invalid JWE format: The JWE alg header claim is not A256KW: A128KW"));
     }
 
     // SECTION - JWS tests

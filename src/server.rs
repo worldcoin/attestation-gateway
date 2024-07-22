@@ -5,9 +5,13 @@ use axum::Extension;
 use redis::aio::ConnectionManager;
 use tokio::net::TcpListener;
 
-use crate::routes;
+use crate::{routes, utils::GlobalConfig};
 
-pub async fn start(redis: ConnectionManager, kms_client: aws_sdk_kms::Client) {
+pub async fn start(
+    redis: ConnectionManager,
+    kms_client: aws_sdk_kms::Client,
+    global_config: GlobalConfig,
+) {
     let mut openapi = OpenApi {
         info: Info {
             title: "Attestation Gateway".to_string(),
@@ -20,7 +24,8 @@ pub async fn start(redis: ConnectionManager, kms_client: aws_sdk_kms::Client) {
         .finish_api(&mut openapi)
         .layer(Extension(redis))
         .layer(Extension(openapi))
-        .layer(Extension(kms_client));
+        .layer(Extension(kms_client))
+        .layer(Extension(global_config));
 
     let address = SocketAddr::from((
         [0, 0, 0, 0],
