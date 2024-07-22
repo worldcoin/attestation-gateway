@@ -19,7 +19,7 @@ axum-jsonschema = { version = "0.8.0", features = ["aide"] }
 base64 = "0.22.1"
 dotenvy = "0.15.7"
 josekit = "0.8.6"
-openssl = "0.10.64"
+openssl = "0.10.66"
 redis = { version = "0.25.4", features = ["tokio-comp", "connection-manager", "tokio-native-tls-comp"] }
 regex = "1.10.5"
 schemars = "0.8.21"
