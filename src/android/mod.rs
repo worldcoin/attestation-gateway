@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
-use integrity_token_data::{PlayIntegrityToken, RequestErrorWithIntegrityToken};
+pub use integrity_token_data::{PlayIntegrityToken, RequestErrorWithIntegrityToken};
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
@@ -45,7 +45,7 @@ fn decrypt_outer_jwe(integrity_token: &str) -> Result<Vec<u8>, RequestError> {
 
     // Decrypt the outer JWE
     let decrypter = A256KW.decrypter_from_bytes(private_key).map_err(|e| {
-        tracing::error!("A256KW error: {e}");
+        tracing::error!(?e, "A256KW error.");
         RequestError {
             code: ErrorCode::InternalServerError,
             internal_details: Some("A256KW error".to_string()),
@@ -74,7 +74,7 @@ v4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==
 -----END PUBLIC KEY-----";
 
     let verifier = ES256.verifier_from_pem(verifier_key).map_err(|e| {
-        tracing::error!("ES256 error: {e}");
+        tracing::error!(?e, "ES256 error.");
 
         RequestError {
             code: ErrorCode::InternalServerError,
@@ -84,7 +84,7 @@ v4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==
 
     let (jws, _) = josekit::jwt::decode_with_verifier(compact_jws, &verifier).map_err(|e| {
         // This is **not** expected because the JWE is encrypted with a symmetric secret
-        tracing::error!("JWS signature could not be verified: {e}.");
+        tracing::error!(?e, "JWS signature could not be verified.");
 
         RequestError {
             code: ErrorCode::InternalServerError,
@@ -216,7 +216,7 @@ LWUzsm73Mx4njtA2Caop0UIzoVKbh41NoBZ+BKnuH/a97Qti2nDPcjUX
             "JWS signature verification should have failed."
         );
 
-        assert!(logs_contain("JWS signature could not be verified: "));
+        assert!(logs_contain("JWS signature could not be verified."));
     }
 
     #[test]

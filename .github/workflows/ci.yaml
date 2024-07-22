@@ -6,8 +6,8 @@ on:
   pull_request:
 
 jobs:
-  build:
-    name: Format, Clippy, Build, and Test
+  lint:
+    name: Format, Clippy & Build
     runs-on: ubuntu-latest
 
     steps:
@@ -57,6 +57,57 @@ jobs:
       - name: Build the project
         run: cargo build --release
 
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-index-
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+
+      - name: Install dependencies
+        run: cargo fetch
+
+      - name: Run local service dependencies
+        run: |
+          docker compose -f tests/docker-compose.test.yml up -d
+
+          # Wait for the application to start
+          sleep 5
+
+          docker logs local-kms
+
       - name: Run tests
         run: cargo test --all
 
@@ -90,7 +141,7 @@ jobs:
 
       - name: Run Docker container
         run: |
-          docker run -d -p 8000:8000 --network host --env-file .env.example --name attestation-gateway-ci-container attestation-gateway-ci:latest
+          docker run -d --network host --env-file .env.example --name attestation-gateway-ci-container attestation-gateway-ci:latest
 
           # Wait for the application to start
           sleep 10

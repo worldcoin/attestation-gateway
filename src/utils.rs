@@ -1,11 +1,11 @@
+use crate::android::PlayIntegrityToken;
 use aide::OperationIo;
 use axum::response::IntoResponse;
+use josekit::{jwt::JwtPayload, JoseError};
 use schemars::JsonSchema;
-use serde::Deserialize;
-use std::{
-    fmt::Display,
-    time::{Duration, SystemTime},
-};
+use std::{fmt::Display, time::SystemTime};
+
+static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 
 #[derive(Debug)]
 pub enum Platform {
@@ -23,7 +23,7 @@ impl Display for Platform {
 }
 
 #[allow(clippy::enum_variant_names)] // Only World App is supported right now (postfix)
-#[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema, PartialEq, Eq, Clone)]
 pub enum BundleIdentifier {
     // World App
     #[serde(rename = "com.worldcoin")]
@@ -149,25 +149,141 @@ impl std::fmt::Display for ErrorCode {
     }
 }
 
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-enum StringOrInt {
-    String(String),
-    Number(u64),
+#[derive(Debug, serde::Serialize)]
+pub enum OutEnum {
+    Pass,
+    Fail,
 }
 
-/// Deserialize a `SystemTime` from a timestamp in milliseconds.
-///
-/// # Errors
-///
-/// This function will return an error if the timestamp is not a valid integer or string.
-pub fn deserialize_system_time_from_millis<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<SystemTime, D::Error> {
-    let timestamp_millis = match StringOrInt::deserialize(deserializer)? {
-        StringOrInt::String(s) => s.parse().map_err(serde::de::Error::custom),
-        StringOrInt::Number(i) => Ok(i),
-    }?;
+impl Display for OutEnum {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Pass => write!(f, "pass"),
+            Self::Fail => write!(f, "fail"),
+        }
+    }
+}
 
-    Ok(SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp_millis))
+/// `DataReport` is used to serialize the output logged to Kinesis for analytics and debugging purposes.
+/// The `request_hash` has a retention period of 30 days.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataReport {
+    pub pass: bool,
+    pub out: OutEnum,
+    pub client_error: Option<String>,
+    pub request_hash: String,
+    pub timestamp: SystemTime,
+    pub bundle_identifier: BundleIdentifier,
+    pub aud: String,
+    pub internal_error_details: Option<String>,
+    pub play_integrity: Option<PlayIntegrityToken>,
+    // apple_device_check: None,
+}
+
+#[derive(Debug)]
+pub struct OutputTokenPayload {
+    pub aud: String,
+    pub request_hash: String,
+    pub pass: bool,
+    pub out: OutEnum,
+    pub error: Option<String>,
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn handle_jose_error(e: JoseError) -> RequestError {
+    tracing::error!(
+        "Error generating `JWTPayload` for `OutputTokenPayload`: {:?}",
+        e
+    );
+
+    RequestError {
+        code: ErrorCode::InternalServerError,
+        internal_details: Some("Error generating output token".to_string()),
+    }
+}
+
+impl OutputTokenPayload {
+    /// Generates a JWT payload for the output token.
+    ///
+    /// # Errors
+    /// Will return a `JoseError` if the payload generation fails
+    pub fn generate(&self) -> Result<JwtPayload, RequestError> {
+        let mut payload = JwtPayload::new();
+        payload.set_issued_at(&SystemTime::now());
+        payload.set_issuer("attestation.worldcoin.org");
+        payload.set_expires_at(&(SystemTime::now() + OUTPUT_TOKEN_EXPIRATION));
+
+        // Claims
+        payload
+            .set_claim("aud", Some(josekit::Value::String(self.aud.clone())))
+            .map_err(handle_jose_error)?;
+        payload
+            .set_claim(
+                "jti",
+                Some(josekit::Value::String(self.request_hash.clone())),
+            )
+            .map_err(handle_jose_error)?;
+        payload
+            .set_claim("pass", Some(josekit::Value::Bool(self.pass)))
+            .map_err(handle_jose_error)?;
+        payload
+            .set_claim("out", Some(josekit::Value::String(self.out.to_string())))
+            .map_err(handle_jose_error)?;
+        if let Some(error) = &self.error {
+            payload
+                .set_claim("error", Some(josekit::Value::String(error.clone())))
+                .map_err(handle_jose_error)?;
+        }
+
+        Ok(payload)
+    }
+}
+
+#[test]
+fn test_output_token_payload_generation() {
+    let now = SystemTime::now();
+
+    let payload = OutputTokenPayload {
+        aud: "my-aud.com".to_string(),
+        request_hash: "this_is_not_a_hash_with_enough_entropy".to_string(),
+        pass: true,
+        out: OutEnum::Pass,
+        error: None,
+    };
+
+    let jwt_payload = payload.generate().unwrap();
+
+    // Assert default claims
+    assert_eq!(jwt_payload.issuer(), Some("attestation.worldcoin.org"));
+
+    // Assert `exp` & `iat` within a few seconds of `now`
+    assert!(jwt_payload.issued_at().unwrap() < (now + std::time::Duration::from_secs(5)));
+
+    assert!(
+        jwt_payload.issued_at().unwrap()
+            < (now +
+                // expiration time
+                OUTPUT_TOKEN_EXPIRATION +
+                // tolerance time
+                std::time::Duration::from_secs(5))
+    );
+
+    // Assert remainder of claims
+    assert_eq!(
+        jwt_payload.claim("aud"),
+        Some(&josekit::Value::String("my-aud.com".to_string()))
+    );
+    assert_eq!(
+        jwt_payload.claim("jti"),
+        Some(&josekit::Value::String(
+            "this_is_not_a_hash_with_enough_entropy".to_string()
+        ))
+    );
+    assert_eq!(jwt_payload.claim("pass"), Some(&josekit::Value::Bool(true)));
+    assert_eq!(
+        jwt_payload.claim("out"),
+        Some(&josekit::Value::String("pass".to_string()))
+    );
+    assert_eq!(jwt_payload.claim("error"), None);
 }

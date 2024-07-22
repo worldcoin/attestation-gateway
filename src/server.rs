@@ -7,7 +7,7 @@ use tokio::net::TcpListener;
 
 use crate::routes;
 
-pub async fn start(redis: ConnectionManager) {
+pub async fn start(redis: ConnectionManager, kms_client: aws_sdk_kms::Client) {
     let mut openapi = OpenApi {
         info: Info {
             title: "Attestation Gateway".to_string(),
@@ -19,7 +19,8 @@ pub async fn start(redis: ConnectionManager) {
     let app = routes::handler()
         .finish_api(&mut openapi)
         .layer(Extension(redis))
-        .layer(Extension(openapi));
+        .layer(Extension(openapi))
+        .layer(Extension(kms_client));
 
     let address = SocketAddr::from((
         [0, 0, 0, 0],

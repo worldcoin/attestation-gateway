@@ -5,3 +5,5 @@ Tiltfile
 .github/
 .vscode/
 .env
+.env.example
+tests/

@@ -3,7 +3,15 @@
   "language": "en-US",
   "allowCompoundWords": true,
   "ignorePaths": ["CODEOWNERS"],
-  "words": ["decrypter", "dotenv", "encrypter", "rustc", "schemars", "serde"],
+  "words": [
+    "decrypter",
+    "dotenv",
+    "encrypter",
+    "rustc",
+    "schemars",
+    "secp256r1",
+    "serde"
+  ],
   "enabledLanguageIds": [
     "jsonc",
     "markdown",
