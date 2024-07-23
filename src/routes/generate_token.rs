@@ -1,20 +1,40 @@
 use axum::Extension;
 use axum_jsonschema::Json;
+use redis::{aio::ConnectionManager, AsyncCommands};
 use std::time::SystemTime;
 
 use crate::{
     android, kms_jws,
     utils::{
-        DataReport, GlobalConfig, OutEnum, OutputTokenPayload, Platform, RequestError,
-        TokenGenerationRequest, TokenGenerationResponse,
+        handle_redis_error, DataReport, ErrorCode, GlobalConfig, OutEnum, OutputTokenPayload,
+        Platform, RequestError, TokenGenerationRequest, TokenGenerationResponse,
     },
 };
 
+static REQUEST_HASH_REDIS_KEY_PREFIX: &str = "request_hash:";
+
 pub async fn handler(
     Extension(kms_client): Extension<aws_sdk_kms::Client>,
+    Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
+    // Check the request hash is unique
+    if redis
+        .exists::<_, bool>(format!(
+            "{REQUEST_HASH_REDIS_KEY_PREFIX}{:?}",
+            request.request_hash.clone()
+        ))
+        .await
+        .map_err(handle_redis_error)?
+    {
+        return Err(RequestError {
+            code: ErrorCode::DuplicateRequestHash,
+            internal_details: Some("Duplicate request hash".to_string()),
+        });
+    };
+
+    // Prepare output report for logging (analytics & debugging)
     let mut report = DataReport {
         pass: false,
         out: OutEnum::Fail,
@@ -27,7 +47,7 @@ pub async fn handler(
         play_integrity: None,
     };
 
-    // Verify the integrity token
+    // Verify the Apple/Google integrity token
     match request.bundle_identifier.platform() {
         Platform::Android => {
             match android::verify_token(
@@ -80,6 +100,16 @@ pub async fn handler(
         output_token_payload,
     )
     .await?;
+
+    // Store the request hash in Redis to prevent duplicate use
+    redis
+        .set_ex::<_, _, ()>(
+            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:?}", request.request_hash),
+            true,
+            60 * 60 * 24, // 24 hours
+        )
+        .await
+        .map_err(handle_redis_error)?;
 
     let response = TokenGenerationResponse {
         attestation_gateway_token,

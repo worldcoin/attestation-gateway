@@ -39,7 +39,7 @@ async fn main() {
 }
 
 async fn build_redis_pool(redis_url: String) -> redis::RedisResult<ConnectionManager> {
-    let client = redis::Client::open(redis_url)?;
+    let client: redis::Client = redis::Client::open(redis_url)?;
     ConnectionManager::new(client).await
 }
 

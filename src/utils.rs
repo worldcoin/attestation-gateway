@@ -2,6 +2,7 @@ use crate::android::PlayIntegrityToken;
 use aide::OperationIo;
 use axum::response::IntoResponse;
 use josekit::{jwt::JwtPayload, JoseError};
+use redis::RedisError;
 use schemars::JsonSchema;
 use std::{fmt::Display, time::SystemTime};
 
@@ -132,6 +133,7 @@ impl std::error::Error for RequestError {}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ErrorCode {
+    DuplicateRequestHash,
     ExpiredToken,
     IntegrityFailed,
     InternalServerError,
@@ -143,6 +145,7 @@ pub enum ErrorCode {
 impl std::fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::DuplicateRequestHash => write!(f, "duplicate_request_hash"),
             Self::ExpiredToken => write!(f, "expired_token"),
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
@@ -205,6 +208,15 @@ fn handle_jose_error(e: JoseError) -> RequestError {
     RequestError {
         code: ErrorCode::InternalServerError,
         internal_details: Some("Error generating output token".to_string()),
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+pub fn handle_redis_error(e: RedisError) -> RequestError {
+    tracing::error!("Redis error: {e}");
+    RequestError {
+        code: ErrorCode::InternalServerError,
+        internal_details: Some("Redis error occurred.".to_string()),
     }
 }
 
