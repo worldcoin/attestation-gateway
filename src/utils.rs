@@ -82,13 +82,14 @@ impl Display for BundleIdentifier {
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct TokenGenerationRequest {
-    pub integrity_token: String,
+    pub integrity_token: Option<String>,
     pub client_error: Option<String>,
     pub aud: String,
     pub bundle_identifier: BundleIdentifier,
     pub request_hash: String,
     pub apple_initial_attestation: Option<String>,
     pub apple_public_key: Option<String>,
+    pub apple_assertion: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, JsonSchema)]
@@ -133,11 +134,12 @@ impl std::error::Error for RequestError {}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ErrorCode {
+    BadRequest,
     DuplicateRequestHash,
     ExpiredToken,
     IntegrityFailed,
     InternalServerError,
-    InvalidBundleIdentifier,
+    InvalidBundleIdentifier, // Received an integrity token for a package name that does not match the provided bundle identifier
     InvalidToken,
     UnexpectedTokenFormat,
 }
@@ -145,11 +147,11 @@ pub enum ErrorCode {
 impl std::fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::BadRequest => write!(f, "bad_request"),
             Self::DuplicateRequestHash => write!(f, "duplicate_request_hash"),
             Self::ExpiredToken => write!(f, "expired_token"),
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
-            // Received an integrity token for a package name that does not match the provided bundle identifier
             Self::InvalidBundleIdentifier => write!(f, "invalid_bundle_identifier"),
             Self::InvalidToken => write!(f, "invalid_token"),
             Self::UnexpectedTokenFormat => write!(f, "unexpected_token_format"),

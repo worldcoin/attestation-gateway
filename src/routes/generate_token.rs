@@ -50,8 +50,18 @@ pub async fn handler(
     // Verify the Apple/Google integrity token
     match request.bundle_identifier.platform() {
         Platform::Android => {
+            if request.integrity_token.is_none() {
+                // NOTE: We don't log this to Kinesis because it's a client error
+                return Err(RequestError {
+                    code: ErrorCode::BadRequest,
+                    internal_details: Some(
+                        "Missing integrity_token for an Android integrity check".to_string(),
+                    ),
+                });
+            }
+
             match android::verify_token(
-                &request.integrity_token,
+                &request.integrity_token.unwrap(),
                 &request.bundle_identifier,
                 &request.request_hash,
             ) {
@@ -78,7 +88,18 @@ pub async fn handler(
                 }
             }
         }
-        Platform::AppleIOS => {}
+        Platform::AppleIOS => {
+            if request.apple_assertion.is_none() || request.apple_public_key.is_none() {
+                // NOTE: We don't log this to Kinesis because it's a client error
+                return Err(RequestError {
+                    code: ErrorCode::BadRequest,
+                    internal_details: Some(
+                        "Missing apple_assertion or apple_public_key for an Apple integrity check"
+                            .to_string(),
+                    ),
+                });
+            }
+        }
     }
 
     // TODO: Report to Kinesis

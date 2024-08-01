@@ -189,19 +189,19 @@ impl PlayIntegrityToken {
         bundle_identifier: &BundleIdentifier,
         request_hash: &str,
     ) -> Result<(), RequestError> {
-        // SECTION --- Request details checks ---
+        // Step 1: Request details checks
         self.validate_request_details(bundle_identifier, request_hash)?;
 
-        // SECTION --- App integrity checks ---
+        // Step 2: App integrity checks
         self.validate_app_integrity(bundle_identifier)?;
 
-        // SECTION --- Device integrity checks ---
+        // Step 3: Device integrity checks
         self.validate_device_integrity()?;
 
-        // SECTION --- Account details checks ---
+        // Step 4: Account details checks
         self.validate_account_details(bundle_identifier)?;
 
-        // SECTION --- Environment details ---
+        // Step 5: Environment details
         self.validate_environment_details()?;
 
         Ok(())

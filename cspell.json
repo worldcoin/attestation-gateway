@@ -4,6 +4,7 @@
   "allowCompoundWords": true,
   "ignorePaths": ["CODEOWNERS"],
   "words": [
+    "cbor",
     "decrypter",
     "dotenv",
     "encrypter",
