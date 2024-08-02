@@ -97,18 +97,34 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientError {
+    pub code: ErrorCode,
+    pub internal_debug_info: String,
+}
+
+impl Display for ClientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Error Code: `{}`. Internal debug info: {:?}",
+            self.code, self.internal_debug_info,
+        )
+    }
+}
+
 #[derive(Debug, OperationIo, PartialEq, Eq)]
 pub struct RequestError {
     pub code: ErrorCode,
-    pub internal_details: Option<String>,
+    pub details: Option<String>,
 }
 
 impl Display for RequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Error Code: `{}`. Internal details: {:?}",
-            self.code, self.internal_details
+            "Error Code: `{}`. Details: {:?}",
+            self.code, self.details,
         )
     }
 }
@@ -118,12 +134,14 @@ impl IntoResponse for RequestError {
         #[derive(serde::Serialize)]
         struct ErrorResponse {
             code: String,
+            details: Option<String>,
         }
-
+        // TODO: Server error should return 500
         (
             axum::http::StatusCode::BAD_REQUEST,
             axum::Json(ErrorResponse {
                 code: self.code.to_string(),
+                details: self.details,
             }),
         )
             .into_response()
@@ -132,16 +150,14 @@ impl IntoResponse for RequestError {
 
 impl std::error::Error for RequestError {}
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ErrorCode {
     BadRequest,
     DuplicateRequestHash,
     ExpiredToken,
     IntegrityFailed,
     InternalServerError,
-    InvalidBundleIdentifier, // Received an integrity token for a package name that does not match the provided bundle identifier
     InvalidToken,
-    UnexpectedTokenFormat,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -152,9 +168,7 @@ impl std::fmt::Display for ErrorCode {
             Self::ExpiredToken => write!(f, "expired_token"),
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
-            Self::InvalidBundleIdentifier => write!(f, "invalid_bundle_identifier"),
             Self::InvalidToken => write!(f, "invalid_token"),
-            Self::UnexpectedTokenFormat => write!(f, "unexpected_token_format"),
         }
     }
 }
@@ -186,7 +200,7 @@ pub struct DataReport {
     pub timestamp: SystemTime,
     pub bundle_identifier: BundleIdentifier,
     pub aud: String,
-    pub internal_error_details: Option<String>,
+    pub internal_debug_info: Option<String>,
     pub play_integrity: Option<PlayIntegrityToken>,
     // apple_device_check: None,
 }
@@ -206,19 +220,20 @@ fn handle_jose_error(e: JoseError) -> RequestError {
         "Error generating `JWTPayload` for `OutputTokenPayload`: {:?}",
         e
     );
-
+    // FIXME (moved to public details)
     RequestError {
         code: ErrorCode::InternalServerError,
-        internal_details: Some("Error generating output token".to_string()),
+        details: Some("Error generating output token".to_string()),
     }
 }
 
 #[allow(clippy::needless_pass_by_value)]
 pub fn handle_redis_error(e: RedisError) -> RequestError {
     tracing::error!("Redis error: {e}");
+    // FIXME (moved to public details)
     RequestError {
         code: ErrorCode::InternalServerError,
-        internal_details: Some("Redis error occurred.".to_string()),
+        details: Some("Redis error occurred.".to_string()),
     }
 }
 

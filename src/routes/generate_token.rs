@@ -6,12 +6,15 @@ use std::time::SystemTime;
 use crate::{
     android, kms_jws,
     utils::{
-        handle_redis_error, DataReport, ErrorCode, GlobalConfig, OutEnum, OutputTokenPayload,
-        Platform, RequestError, TokenGenerationRequest, TokenGenerationResponse,
+        handle_redis_error, ClientError, DataReport, ErrorCode, GlobalConfig, OutEnum,
+        OutputTokenPayload, Platform, RequestError, TokenGenerationRequest,
+        TokenGenerationResponse,
     },
 };
 
 static REQUEST_HASH_REDIS_KEY_PREFIX: &str = "request_hash:";
+
+// NOTE: Integration tests for route handlers are in the `/tests` module
 
 pub async fn handler(
     Extension(kms_client): Extension<aws_sdk_kms::Client>,
@@ -19,81 +22,26 @@ pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
-    // Check the request hash is unique
-    if redis
-        .exists::<_, bool>(format!(
-            "{REQUEST_HASH_REDIS_KEY_PREFIX}{:?}",
-            request.request_hash.clone()
-        ))
-        .await
-        .map_err(handle_redis_error)?
-    {
-        return Err(RequestError {
-            code: ErrorCode::DuplicateRequestHash,
-            internal_details: Some("Duplicate request hash".to_string()),
-        });
-    };
+    let aud = request.aud.clone();
+    let request_hash = request.request_hash.clone();
 
-    // Prepare output report for logging (analytics & debugging)
-    let mut report = DataReport {
-        pass: false,
-        out: OutEnum::Fail,
-        timestamp: SystemTime::now(),
-        request_hash: request.request_hash.clone(),
-        bundle_identifier: request.bundle_identifier.clone(),
-        client_error: request.client_error,
-        aud: request.aud.clone(),
-        internal_error_details: None,
-        play_integrity: None,
-    };
-
-    // Verify the Apple/Google integrity token
+    // Platform-specific request validation
     match request.bundle_identifier.platform() {
         Platform::Android => {
             if request.integrity_token.is_none() {
-                // NOTE: We don't log this to Kinesis because it's a client error
                 return Err(RequestError {
                     code: ErrorCode::BadRequest,
-                    internal_details: Some(
+                    details: Some(
                         "Missing integrity_token for an Android integrity check".to_string(),
                     ),
                 });
             }
-
-            match android::verify_token(
-                &request.integrity_token.unwrap(),
-                &request.bundle_identifier,
-                &request.request_hash,
-            ) {
-                Ok(token) => {
-                    report.play_integrity = Some(token);
-                    report.pass = true;
-                    report.out = OutEnum::Pass;
-                }
-                Err(e) => {
-                    if let Some(failed_token) = e.failed_integrity_token {
-                        let unwrapped_token: android::PlayIntegrityToken = *failed_token;
-                        report.play_integrity = Some(unwrapped_token);
-                    }
-
-                    report.internal_error_details = e.request_error.internal_details;
-
-                    // TODO: Report to Kinesis
-                    tracing::debug!("Report: {:?}", report);
-
-                    return Err(RequestError {
-                        code: e.request_error.code,
-                        internal_details: report.internal_error_details,
-                    });
-                }
-            }
         }
         Platform::AppleIOS => {
             if request.apple_assertion.is_none() || request.apple_public_key.is_none() {
-                // NOTE: We don't log this to Kinesis because it's a client error
                 return Err(RequestError {
                     code: ErrorCode::BadRequest,
-                    internal_details: Some(
+                    details: Some(
                         "Missing apple_assertion or apple_public_key for an Apple integrity check"
                             .to_string(),
                     ),
@@ -102,13 +50,52 @@ pub async fn handler(
         }
     }
 
-    // TODO: Report to Kinesis
+    // Check the request hash is unique
+    if redis
+        .exists::<_, bool>(format!(
+            "{REQUEST_HASH_REDIS_KEY_PREFIX}{:?}",
+            request_hash.clone()
+        ))
+        .await
+        .map_err(handle_redis_error)?
+    {
+        return Err(RequestError {
+            code: ErrorCode::DuplicateRequestHash,
+            details: None,
+        });
+    };
+
+    let report = verify_android_or_apple_integrity(request).map_err(|e| {
+        // Check if we have a ClientError in the error chain and return to the client without further logging
+        if let Some(client_error) = e.downcast_ref::<ClientError>() {
+            return RequestError {
+                code: client_error.code.clone(),
+                details: None,
+            };
+        }
+
+        tracing::error!(?e, "Error verifying Android or Apple integrity");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    })?;
+
+    // FIXME: Report to Kinesis
     tracing::debug!("Report: {:?}", report);
+
+    // TODO: Initial roll out does not include generating failure tokens
+    if !report.pass {
+        return Err(RequestError {
+            code: ErrorCode::IntegrityFailed,
+            details: None,
+        });
+    }
 
     // Generate output attestation token
     let output_token_payload = OutputTokenPayload {
-        aud: request.aud,
-        request_hash: request.request_hash.clone(),
+        aud,
+        request_hash: request_hash.clone(),
         pass: report.pass,
         out: report.out,
         error: None, // TODO: Implement in the future
@@ -120,12 +107,19 @@ pub async fn handler(
         global_config.output_token_kms_key_arn.clone(),
         output_token_payload,
     )
-    .await?;
+    .await
+    .map_err(|e| {
+        tracing::error!(?e, "Error generating output token");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    })?;
 
     // Store the request hash in Redis to prevent duplicate use
     redis
         .set_ex::<_, _, ()>(
-            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:?}", request.request_hash),
+            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:?}", request_hash.clone()),
             true,
             60 * 60 * 24, // 24 hours
         )
@@ -139,4 +133,42 @@ pub async fn handler(
     Ok(Json(response))
 }
 
-// NOTE: Integration tests for route handlers are in the `/tests` module
+fn verify_android_or_apple_integrity(request: TokenGenerationRequest) -> eyre::Result<DataReport> {
+    // Prepare output report for logging (analytics & debugging)
+    // Only integrity failures and successes are logged to Kinesis. Client and server errors are logged regularly to Datadog.
+    let mut report = DataReport {
+        pass: false,
+        out: OutEnum::Fail,
+        timestamp: SystemTime::now(),
+        request_hash: request.request_hash.clone(),
+        bundle_identifier: request.bundle_identifier.clone(),
+        client_error: request.client_error,
+        aud: request.aud.clone(),
+        internal_debug_info: None,
+        play_integrity: None,
+    };
+
+    match request.bundle_identifier.platform() {
+        Platform::Android => {
+            let android_result = android::verify_token(
+                &request.integrity_token.unwrap(), // Safe to unwrap because we've already validated this in the handler
+                &request.bundle_identifier,
+                &request.request_hash,
+            )?;
+            report.play_integrity = Some(android_result.parsed_play_integrity_token);
+            report.pass = android_result.success;
+            report.out = if android_result.success {
+                OutEnum::Pass
+            } else {
+                OutEnum::Fail
+            };
+            if android_result.client_error.is_some() {
+                report.internal_debug_info =
+                    Some(android_result.client_error.unwrap().internal_debug_info);
+            }
+        }
+        Platform::AppleIOS => {}
+    }
+
+    Ok(report)
+}

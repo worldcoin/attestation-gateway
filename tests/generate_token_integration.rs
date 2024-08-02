@@ -6,7 +6,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use tower::ServiceExt; // for `collect`
+use tower::ServiceExt; // for response.`collect`
 use tracing_subscriber::FmtSubscriber;
 
 use attestation_gateway::utils::{BundleIdentifier, TokenGenerationRequest};
@@ -54,7 +54,7 @@ async fn get_api_router() -> aide::axum::ApiRouter {
 }
 
 #[tokio::test]
-async fn test_token_generation() {
+async fn test_e2e_success_android() {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(tracing::Level::TRACE)
         .finish();
@@ -63,13 +63,14 @@ async fn test_token_generation() {
     let api_router = get_api_router().await;
 
     let token_generation_request = TokenGenerationRequest {
-        integrity_token: VALID_INTEGRITY_TOKEN.to_string(),
+        integrity_token: Some(VALID_INTEGRITY_TOKEN.to_string()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
         request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
+        apple_assertion: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -133,17 +134,18 @@ async fn test_token_generation_fails_on_invalid_bundle_identifier() {
 }
 
 #[tokio::test]
-async fn test_token_generation_fails_on_duplicate_redis_key() {
+async fn test_token_generation_fails_on_duplicate_request_hash() {
     let api_router = get_api_router().await;
 
     let token_generation_request = TokenGenerationRequest {
-        integrity_token: VALID_INTEGRITY_TOKEN.to_string(),
+        integrity_token: Some(VALID_INTEGRITY_TOKEN.to_string()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
         request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
+        apple_assertion: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
