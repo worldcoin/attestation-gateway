@@ -26,6 +26,7 @@ pub async fn handler(
     let request_hash = request.request_hash.clone();
 
     // Platform-specific request validation
+    // FIXME: Tests
     match request.bundle_identifier.platform() {
         Platform::Android => {
             if request.integrity_token.is_none() {
@@ -65,21 +66,22 @@ pub async fn handler(
         });
     };
 
-    let report = verify_android_or_apple_integrity(request).map_err(|e| {
-        // Check if we have a ClientError in the error chain and return to the client without further logging
-        if let Some(client_error) = e.downcast_ref::<ClientError>() {
-            return RequestError {
-                code: client_error.code.clone(),
-                details: None,
-            };
-        }
+    let report =
+        verify_android_or_apple_integrity(request, global_config.clone()).map_err(|e| {
+            // Check if we have a ClientError in the error chain and return to the client without further logging
+            if let Some(client_error) = e.downcast_ref::<ClientError>() {
+                return RequestError {
+                    code: client_error.code.clone(),
+                    details: None,
+                };
+            }
 
-        tracing::error!(?e, "Error verifying Android or Apple integrity");
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: None,
-        }
-    })?;
+            tracing::error!(?e, "Error verifying Android or Apple integrity");
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: None,
+            }
+        })?;
 
     // FIXME: Report to Kinesis
     tracing::debug!("Report: {:?}", report);
@@ -133,7 +135,10 @@ pub async fn handler(
     Ok(Json(response))
 }
 
-fn verify_android_or_apple_integrity(request: TokenGenerationRequest) -> eyre::Result<DataReport> {
+fn verify_android_or_apple_integrity(
+    request: TokenGenerationRequest,
+    config: GlobalConfig,
+) -> eyre::Result<DataReport> {
     // Prepare output report for logging (analytics & debugging)
     // Only integrity failures and successes are logged to Kinesis. Client and server errors are logged regularly to Datadog.
     let mut report = DataReport {
@@ -150,10 +155,11 @@ fn verify_android_or_apple_integrity(request: TokenGenerationRequest) -> eyre::R
 
     match request.bundle_identifier.platform() {
         Platform::Android => {
-            let android_result = android::verify_token(
+            let android_result = android::verify(
                 &request.integrity_token.unwrap(), // Safe to unwrap because we've already validated this in the handler
                 &request.bundle_identifier,
                 &request.request_hash,
+                config.android_outer_jwe_private_key,
             )?;
             report.play_integrity = Some(android_result.parsed_play_integrity_token);
             report.pass = android_result.success;

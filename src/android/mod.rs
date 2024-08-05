@@ -7,6 +7,7 @@ use josekit::jws::ES256;
 
 mod integrity_token_data;
 
+// make me universal
 #[derive(Debug)]
 pub struct VerificationOutput {
     pub success: bool,
@@ -18,13 +19,14 @@ pub struct VerificationOutput {
 ///
 /// # Errors
 ///
-/// Returns server errors if something unexpected goes wrong during parsing and verification
-pub fn verify_token(
+/// Returns server errors if something unexpected goes wrong during parsing and verification (integrity failures are returned as part of the `VerificationOutput`)
+pub fn verify(
     integrity_token: &str,
     bundle_identifier: &BundleIdentifier,
     request_hash: &str,
+    android_outer_jwe_private_key: String,
 ) -> eyre::Result<VerificationOutput> {
-    let decrypted_jws = decrypt_outer_jwe(integrity_token)?;
+    let decrypted_jws = decrypt_outer_jwe(integrity_token, android_outer_jwe_private_key)?;
 
     let play_integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)?;
 
@@ -53,12 +55,12 @@ pub fn verify_token(
 
 /// Decrypts the outer JWE (JSON Web Encryption) token using the AES secret provided by Google for each bundle identifier
 /// <https://developer.android.com/google/play/integrity/classic#kotlin>
-fn decrypt_outer_jwe(integrity_token: &str) -> eyre::Result<Vec<u8>> {
-    // FIXME: These are temporary keys for local development
-    let private_key = b"7d5b44298bf959af149a0086d79334e6";
-
+fn decrypt_outer_jwe(
+    integrity_token: &str,
+    android_outer_jwe_private_key: String,
+) -> eyre::Result<Vec<u8>> {
     // Decrypt the outer JWE
-    let decrypter = A256KW.decrypter_from_bytes(private_key)?;
+    let decrypter = A256KW.decrypter_from_bytes(android_outer_jwe_private_key)?;
 
     let (compact_jws, _) = jwe::deserialize_compact(integrity_token, &decrypter).map_err(|_| {
         eyre::eyre!(ClientError {
@@ -109,19 +111,24 @@ v4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==
 #[cfg(test)]
 mod tests {
 
-    use super::{verify_and_parse_inner_jws, verify_token};
+    use super::{verify, verify_and_parse_inner_jws};
     use crate::utils::{BundleIdentifier, ClientError, ErrorCode};
     use josekit::jwe::{self, JweHeader, A128KW, A256KW};
     use josekit::jws::{JwsHeader, ES256};
     use josekit::jwt::{self, JwtPayload};
     use std::time::{Duration, SystemTime};
 
+    fn helper_get_test_key() -> String {
+        dotenvy::from_filename(".env.example").unwrap();
+        std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").unwrap()
+    }
+
     // SECTION - JWE tests
 
     #[test]
     fn test_invalid_jwe_fails_verification() {
         // Generate and encrypt a JWE with an unexpected key
-        let other_private_key = b"caba71cf1b1e3896136dc70301c0613f";
+        let other_private_key = "caba71cf1b1e3896136dc70301c0613f";
 
         let encrypter = A256KW.encrypter_from_bytes(other_private_key).unwrap();
 
@@ -131,8 +138,13 @@ mod tests {
 
         let test_jwe = jwe::serialize_compact(b"test", &headers, &encrypter).unwrap();
 
-        let error_report =
-            verify_token(&test_jwe, &BundleIdentifier::AndroidStageWorldApp, "test").unwrap_err();
+        let error_report = verify(
+            &test_jwe,
+            &BundleIdentifier::AndroidStageWorldApp,
+            "test",
+            helper_get_test_key(),
+        )
+        .unwrap_err();
 
         assert_eq!(
             error_report.downcast::<ClientError>().unwrap(),
@@ -145,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_invalid_encryption_algorithm() {
-        let other_private_key = b"caba71cf1b1e389c";
+        let other_private_key = "caba71cf1b1e389c";
 
         // NOTE: We're trying a different encryption algorithm
         let encrypter = A128KW.encrypter_from_bytes(other_private_key).unwrap();
@@ -157,8 +169,13 @@ mod tests {
 
         let test_jwe = jwe::serialize_compact(b"test", &headers, &encrypter).unwrap();
 
-        let error_report =
-            verify_token(&test_jwe, &BundleIdentifier::AndroidStageWorldApp, "test").unwrap_err();
+        let error_report = verify(
+            &test_jwe,
+            &BundleIdentifier::AndroidStageWorldApp,
+            "test",
+            helper_get_test_key(),
+        )
+        .unwrap_err();
 
         assert_eq!(
             error_report.downcast::<ClientError>().unwrap(),

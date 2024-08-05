@@ -11,6 +11,7 @@ static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_
 #[derive(Debug, Clone)]
 pub struct GlobalConfig {
     pub output_token_kms_key_arn: String,
+    pub android_outer_jwe_private_key: String,
 }
 
 #[derive(Debug)]
@@ -134,14 +135,16 @@ impl IntoResponse for RequestError {
         #[derive(serde::Serialize)]
         struct ErrorResponse {
             code: String,
-            details: Option<String>,
+            details: String,
         }
         // TODO: Server error should return 500
         (
-            axum::http::StatusCode::BAD_REQUEST,
+            self.code.get_http_status_code(),
             axum::Json(ErrorResponse {
                 code: self.code.to_string(),
-                details: self.details,
+                details: self
+                    .details
+                    .unwrap_or_else(|| self.code.get_default_error_message().to_string()),
             }),
         )
             .into_response()
@@ -169,6 +172,29 @@ impl std::fmt::Display for ErrorCode {
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
             Self::InvalidToken => write!(f, "invalid_token"),
+        }
+    }
+}
+
+impl ErrorCode {
+    const fn get_http_status_code(&self) -> axum::http::StatusCode {
+        match self {
+            Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
+            Self::BadRequest | Self::ExpiredToken | Self::IntegrityFailed | Self::InvalidToken => {
+                axum::http::StatusCode::BAD_REQUEST
+            }
+        }
+    }
+
+    const fn get_default_error_message(&self) -> &'static str {
+        match self {
+            Self::BadRequest => "The request is malformed.",
+            Self::DuplicateRequestHash => "The `request_hash` has already been used.",
+            Self::ExpiredToken => "The integrity token has expired. Please generate a new one.",
+            Self::IntegrityFailed => "Integrity checks have not passed.",
+            Self::InternalServerError => "Internal server error. Please try again.",
+            Self::InvalidToken => "The provided token is invalid or malformed.",
         }
     }
 }
@@ -220,20 +246,38 @@ fn handle_jose_error(e: JoseError) -> RequestError {
         "Error generating `JWTPayload` for `OutputTokenPayload`: {:?}",
         e
     );
-    // FIXME (moved to public details)
     RequestError {
         code: ErrorCode::InternalServerError,
-        details: Some("Error generating output token".to_string()),
+        details: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{handle_jose_error, ErrorCode, JoseError};
+    use tracing_test::traced_test;
+
+    #[test]
+    #[traced_test]
+    fn test_handle_jose_error() {
+        let error = JoseError::InvalidClaim(anyhow::anyhow!("Invalid claim"));
+
+        let result = handle_jose_error(error);
+
+        assert_eq!(result.code, ErrorCode::InternalServerError);
+
+        assert!(logs_contain(
+            "Error generating `JWTPayload` for `OutputTokenPayload`:"
+        ));
     }
 }
 
 #[allow(clippy::needless_pass_by_value)]
 pub fn handle_redis_error(e: RedisError) -> RequestError {
     tracing::error!("Redis error: {e}");
-    // FIXME (moved to public details)
     RequestError {
         code: ErrorCode::InternalServerError,
-        details: Some("Redis error occurred.".to_string()),
+        details: None,
     }
 }
 
