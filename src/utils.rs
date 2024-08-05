@@ -67,6 +67,19 @@ impl BundleIdentifier {
             Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
         }
     }
+
+    #[must_use]
+    pub const fn apple_app_id(&self) -> Option<&str> {
+        match self {
+            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
+                None
+            }
+            // cspell:disable
+            Self::IOSStageWorldApp => Some("35RXKB6738.org.worldcoin.insight.staging"),
+            Self::IOSProdWorldApp => Some("35RXKB6738.org.worldcoin.insight"),
+            // cspell:enable
+        }
+    }
 }
 
 impl Display for BundleIdentifier {

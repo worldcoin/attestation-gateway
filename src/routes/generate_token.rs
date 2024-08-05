@@ -164,6 +164,8 @@ fn verify_android_or_apple_integrity(
             &request.apple_assertion.unwrap(),
             &request.apple_public_key.unwrap(),
             request.apple_initial_attestation.as_ref(),
+            &request.request_hash,
+            &request.bundle_identifier,
         )?,
     };
 
