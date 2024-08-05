@@ -70,7 +70,7 @@ pub async fn handler(
             // Check if we have a ClientError in the error chain and return to the client without further logging
             if let Some(client_error) = e.downcast_ref::<ClientError>() {
                 return RequestError {
-                    code: client_error.code.clone(),
+                    code: client_error.code,
                     details: None,
                 };
             }
@@ -174,9 +174,9 @@ fn verify_android_or_apple_integrity(
     } else {
         OutEnum::Fail
     };
-    if verify_result.client_error.is_some() {
-        report.internal_debug_info = Some(verify_result.client_error.unwrap().internal_debug_info);
-    }
+    report.internal_debug_info = verify_result
+        .client_error
+        .map(|err| err.internal_debug_info);
 
     Ok(report)
 }

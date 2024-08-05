@@ -22,7 +22,7 @@ pub fn verify(
 
     let play_integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)?;
 
-    let parsed_token = PlayIntegrityToken::new(&play_integrity_payload)?;
+    let parsed_token = PlayIntegrityToken::from_json(&play_integrity_payload)?;
 
     let validation_result = parsed_token.validate_all_claims(bundle_identifier, request_hash);
 

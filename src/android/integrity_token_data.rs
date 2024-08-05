@@ -145,7 +145,7 @@ impl PlayIntegrityToken {
     ///
     /// # Errors
     /// Will return a `serde_json` error if parsing fails.
-    pub fn new(integrity_token_json_payload: &str) -> eyre::Result<Self> {
+    pub fn from_json(integrity_token_json_payload: &str) -> eyre::Result<Self> {
         Ok(serde_json::from_str::<Self>(integrity_token_json_payload)?)
     }
 
@@ -377,26 +377,23 @@ mod tests {
         }"#;
         // cspell:enable
 
-        let token = PlayIntegrityToken::new(token_payload_str).unwrap();
+        let token = PlayIntegrityToken::from_json(token_payload_str).unwrap();
 
         let result = token.validate_all_claims(
             &BundleIdentifier::AndroidStageWorldApp,
             "invalid_nonce", // <-- This nonce is invalid, it will not match request_details.nonce
         );
 
-        if let Some(e) = result.err() {
-            if let Some(client_error) = e.downcast_ref::<ClientError>() {
-                assert_eq!(client_error.code, ErrorCode::IntegrityFailed);
-                assert_eq!(
-                    client_error.internal_debug_info,
-                    "Provided `request_hash` does not match request_details.nonce"
-                );
-            } else {
-                panic!("Unexpected non-client error: {e}");
-            }
-        } else {
-            panic!("Expected an error, but got success");
-        }
+        let client_error = result
+            .expect_err("Expected an error, but got success")
+            .downcast::<ClientError>()
+            .expect("Unexpected non-client error");
+
+        assert_eq!(client_error.code, ErrorCode::IntegrityFailed);
+        assert_eq!(
+            client_error.internal_debug_info,
+            "Provided `request_hash` does not match request_details.nonce"
+        );
     }
 
     #[test]
@@ -411,7 +408,7 @@ mod tests {
         }"#;
 
         let error_report =
-            PlayIntegrityToken::new(token_payload_with_missing_attributes).unwrap_err();
+            PlayIntegrityToken::from_json(token_payload_with_missing_attributes).unwrap_err();
 
         assert_eq!(
             "missing field `appIntegrity` at line 8 column 9",
@@ -419,7 +416,7 @@ mod tests {
         );
 
         // note the `unwrap_err` here, as the payload is not valid JSON
-        let _ = PlayIntegrityToken::new("not_even_valid_json").unwrap_err();
+        let _ = PlayIntegrityToken::from_json("not_even_valid_json").unwrap_err();
     }
 
     #[test]

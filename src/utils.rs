@@ -142,14 +142,13 @@ impl IntoResponse for RequestError {
             code: String,
             details: String,
         }
-        // TODO: Server error should return 500
         (
-            self.code.get_http_status_code(),
+            self.code.as_http_status_code(),
             axum::Json(ErrorResponse {
                 code: self.code.to_string(),
                 details: self
                     .details
-                    .unwrap_or_else(|| self.code.get_default_error_message().to_string()),
+                    .unwrap_or_else(|| self.code.as_default_error_message().to_string()),
             }),
         )
             .into_response()
@@ -158,7 +157,7 @@ impl IntoResponse for RequestError {
 
 impl std::error::Error for RequestError {}
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ErrorCode {
     BadRequest,
     DuplicateRequestHash,
@@ -182,7 +181,7 @@ impl std::fmt::Display for ErrorCode {
 }
 
 impl ErrorCode {
-    const fn get_http_status_code(&self) -> axum::http::StatusCode {
+    const fn as_http_status_code(self) -> axum::http::StatusCode {
         match self {
             Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
@@ -192,7 +191,7 @@ impl ErrorCode {
         }
     }
 
-    const fn get_default_error_message(&self) -> &'static str {
+    const fn as_default_error_message(self) -> &'static str {
         match self {
             Self::BadRequest => "The request is malformed.",
             Self::DuplicateRequestHash => "The `request_hash` has already been used.",
