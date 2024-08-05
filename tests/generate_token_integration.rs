@@ -253,7 +253,7 @@ async fn test_server_error_is_properly_logged() {
         integrity_token: Some(VALID_INTEGRITY_TOKEN.to_string()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "test_server_error_is_properly_logged_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
