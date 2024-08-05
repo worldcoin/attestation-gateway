@@ -143,12 +143,12 @@ impl IntoResponse for RequestError {
             details: String,
         }
         (
-            self.code.as_http_status_code(),
+            self.code.into_http_status_code(),
             axum::Json(ErrorResponse {
                 code: self.code.to_string(),
                 details: self
                     .details
-                    .unwrap_or_else(|| self.code.as_default_error_message().to_string()),
+                    .unwrap_or_else(|| self.code.into_default_error_message().to_string()),
             }),
         )
             .into_response()
@@ -181,7 +181,7 @@ impl std::fmt::Display for ErrorCode {
 }
 
 impl ErrorCode {
-    const fn as_http_status_code(self) -> axum::http::StatusCode {
+    const fn into_http_status_code(self) -> axum::http::StatusCode {
         match self {
             Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
@@ -191,7 +191,7 @@ impl ErrorCode {
         }
     }
 
-    const fn as_default_error_message(self) -> &'static str {
+    const fn into_default_error_message(self) -> &'static str {
         match self {
             Self::BadRequest => "The request is malformed.",
             Self::DuplicateRequestHash => "The `request_hash` has already been used.",
