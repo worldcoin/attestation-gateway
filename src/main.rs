@@ -7,6 +7,7 @@ use regex::Regex;
 use std::env;
 
 mod android;
+mod apple;
 mod kms_jws;
 mod routes;
 mod server;
@@ -58,8 +59,12 @@ pub fn load_config() -> GlobalConfig {
         "Invalid format for OUTPUT_TOKEN_KMS_KEY_ARN. Expected format: `{ARN_REGEX_PATTERN}`",
     );
 
+    let android_outer_jwe_private_key = env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
+        .expect("env var `ANDROID_OUTER_JWE_PRIVATE_KEY` is required");
+
     GlobalConfig {
         output_token_kms_key_arn,
+        android_outer_jwe_private_key,
     }
 }
 

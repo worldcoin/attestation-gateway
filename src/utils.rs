@@ -11,6 +11,7 @@ static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_
 #[derive(Debug, Clone)]
 pub struct GlobalConfig {
     pub output_token_kms_key_arn: String,
+    pub android_outer_jwe_private_key: String,
 }
 
 #[derive(Debug)]
@@ -82,13 +83,14 @@ impl Display for BundleIdentifier {
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct TokenGenerationRequest {
-    pub integrity_token: String,
+    pub integrity_token: Option<String>,
     pub client_error: Option<String>,
     pub aud: String,
     pub bundle_identifier: BundleIdentifier,
     pub request_hash: String,
     pub apple_initial_attestation: Option<String>,
     pub apple_public_key: Option<String>,
+    pub apple_assertion: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, JsonSchema)]
@@ -96,18 +98,39 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
+/// Represents an error that is attributable to the client and represents expected behavior for the API.
+/// For example, when an expired integrity token is passed.
+/// `ClientError`s are not logged by default and result in a 4xx status code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientError {
+    pub code: ErrorCode,
+    pub internal_debug_info: String,
+}
+
+impl Display for ClientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Error Code: `{}`. Internal debug info: {:?}",
+            self.code, self.internal_debug_info,
+        )
+    }
+}
+
+/// Represents an error response that can be returned directly to the client.
+/// This struct can represent both server and client errors.
 #[derive(Debug, OperationIo, PartialEq, Eq)]
 pub struct RequestError {
     pub code: ErrorCode,
-    pub internal_details: Option<String>,
+    pub details: Option<String>,
 }
 
 impl Display for RequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Error Code: `{}`. Internal details: {:?}",
-            self.code, self.internal_details
+            "Error Code: `{}`. Details: {:?}",
+            self.code, self.details,
         )
     }
 }
@@ -117,12 +140,15 @@ impl IntoResponse for RequestError {
         #[derive(serde::Serialize)]
         struct ErrorResponse {
             code: String,
+            details: String,
         }
-
         (
-            axum::http::StatusCode::BAD_REQUEST,
+            self.code.into_http_status_code(),
             axum::Json(ErrorResponse {
                 code: self.code.to_string(),
+                details: self
+                    .details
+                    .unwrap_or_else(|| self.code.into_default_error_message().to_string()),
             }),
         )
             .into_response()
@@ -131,28 +157,48 @@ impl IntoResponse for RequestError {
 
 impl std::error::Error for RequestError {}
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ErrorCode {
+    BadRequest,
     DuplicateRequestHash,
     ExpiredToken,
     IntegrityFailed,
     InternalServerError,
-    InvalidBundleIdentifier,
     InvalidToken,
-    UnexpectedTokenFormat,
 }
 
 impl std::fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::BadRequest => write!(f, "bad_request"),
             Self::DuplicateRequestHash => write!(f, "duplicate_request_hash"),
             Self::ExpiredToken => write!(f, "expired_token"),
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
-            // Received an integrity token for a package name that does not match the provided bundle identifier
-            Self::InvalidBundleIdentifier => write!(f, "invalid_bundle_identifier"),
             Self::InvalidToken => write!(f, "invalid_token"),
-            Self::UnexpectedTokenFormat => write!(f, "unexpected_token_format"),
+        }
+    }
+}
+
+impl ErrorCode {
+    const fn into_http_status_code(self) -> axum::http::StatusCode {
+        match self {
+            Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
+            Self::BadRequest | Self::ExpiredToken | Self::IntegrityFailed | Self::InvalidToken => {
+                axum::http::StatusCode::BAD_REQUEST
+            }
+        }
+    }
+
+    const fn into_default_error_message(self) -> &'static str {
+        match self {
+            Self::BadRequest => "The request is malformed.",
+            Self::DuplicateRequestHash => "The `request_hash` has already been used.",
+            Self::ExpiredToken => "The integrity token has expired. Please generate a new one.",
+            Self::IntegrityFailed => "Integrity checks have not passed.",
+            Self::InternalServerError => "Internal server error. Please try again.",
+            Self::InvalidToken => "The provided token is invalid or malformed.",
         }
     }
 }
@@ -172,6 +218,13 @@ impl Display for OutEnum {
     }
 }
 
+#[derive(Debug)]
+pub struct VerificationOutput {
+    pub success: bool,
+    pub parsed_play_integrity_token: Option<PlayIntegrityToken>,
+    pub client_error: Option<ClientError>,
+}
+
 /// `DataReport` is used to serialize the output logged to Kinesis for analytics and debugging purposes.
 /// The `request_hash` has a retention period of 30 days.
 #[derive(Debug, serde::Serialize)]
@@ -184,7 +237,7 @@ pub struct DataReport {
     pub timestamp: SystemTime,
     pub bundle_identifier: BundleIdentifier,
     pub aud: String,
-    pub internal_error_details: Option<String>,
+    pub internal_debug_info: Option<String>,
     pub play_integrity: Option<PlayIntegrityToken>,
     // apple_device_check: None,
 }
@@ -204,10 +257,9 @@ fn handle_jose_error(e: JoseError) -> RequestError {
         "Error generating `JWTPayload` for `OutputTokenPayload`: {:?}",
         e
     );
-
     RequestError {
         code: ErrorCode::InternalServerError,
-        internal_details: Some("Error generating output token".to_string()),
+        details: None,
     }
 }
 
@@ -216,7 +268,7 @@ pub fn handle_redis_error(e: RedisError) -> RequestError {
     tracing::error!("Redis error: {e}");
     RequestError {
         code: ErrorCode::InternalServerError,
-        internal_details: Some("Redis error occurred.".to_string()),
+        details: None,
     }
 }
 
@@ -257,50 +309,70 @@ impl OutputTokenPayload {
     }
 }
 
-#[test]
-fn test_output_token_payload_generation() {
-    let now = SystemTime::now();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing_test::traced_test;
 
-    let payload = OutputTokenPayload {
-        aud: "my-aud.com".to_string(),
-        request_hash: "this_is_not_a_hash_with_enough_entropy".to_string(),
-        pass: true,
-        out: OutEnum::Pass,
-        error: None,
-    };
+    #[test]
+    #[traced_test]
+    fn test_handle_jose_error() {
+        let error = JoseError::InvalidClaim(anyhow::anyhow!("Invalid claim"));
 
-    let jwt_payload = payload.generate().unwrap();
+        let result = handle_jose_error(error);
 
-    // Assert default claims
-    assert_eq!(jwt_payload.issuer(), Some("attestation.worldcoin.org"));
+        assert_eq!(result.code, ErrorCode::InternalServerError);
 
-    // Assert `exp` & `iat` within a few seconds of `now`
-    assert!(jwt_payload.issued_at().unwrap() < (now + std::time::Duration::from_secs(5)));
+        assert!(logs_contain(
+            "Error generating `JWTPayload` for `OutputTokenPayload`:"
+        ));
+    }
 
-    assert!(
-        jwt_payload.issued_at().unwrap()
-            < (now +
+    #[test]
+    fn test_output_token_payload_generation() {
+        let now = SystemTime::now();
+
+        let payload = OutputTokenPayload {
+            aud: "my-aud.com".to_string(),
+            request_hash: "this_is_not_a_hash_with_enough_entropy".to_string(),
+            pass: true,
+            out: OutEnum::Pass,
+            error: None,
+        };
+
+        let jwt_payload = payload.generate().unwrap();
+
+        // Assert default claims
+        assert_eq!(jwt_payload.issuer(), Some("attestation.worldcoin.org"));
+
+        // Assert `exp` & `iat` within a few seconds of `now`
+        assert!(jwt_payload.issued_at().unwrap() < (now + std::time::Duration::from_secs(5)));
+
+        assert!(
+            jwt_payload.issued_at().unwrap()
+                < (now +
                 // expiration time
                 OUTPUT_TOKEN_EXPIRATION +
                 // tolerance time
                 std::time::Duration::from_secs(5))
-    );
+        );
 
-    // Assert remainder of claims
-    assert_eq!(
-        jwt_payload.claim("aud"),
-        Some(&josekit::Value::String("my-aud.com".to_string()))
-    );
-    assert_eq!(
-        jwt_payload.claim("jti"),
-        Some(&josekit::Value::String(
-            "this_is_not_a_hash_with_enough_entropy".to_string()
-        ))
-    );
-    assert_eq!(jwt_payload.claim("pass"), Some(&josekit::Value::Bool(true)));
-    assert_eq!(
-        jwt_payload.claim("out"),
-        Some(&josekit::Value::String("pass".to_string()))
-    );
-    assert_eq!(jwt_payload.claim("error"), None);
+        // Assert remainder of claims
+        assert_eq!(
+            jwt_payload.claim("aud"),
+            Some(&josekit::Value::String("my-aud.com".to_string()))
+        );
+        assert_eq!(
+            jwt_payload.claim("jti"),
+            Some(&josekit::Value::String(
+                "this_is_not_a_hash_with_enough_entropy".to_string()
+            ))
+        );
+        assert_eq!(jwt_payload.claim("pass"), Some(&josekit::Value::Bool(true)));
+        assert_eq!(
+            jwt_payload.claim("out"),
+            Some(&josekit::Value::String("pass".to_string()))
+        );
+        assert_eq!(jwt_payload.claim("error"), None);
+    }
 }

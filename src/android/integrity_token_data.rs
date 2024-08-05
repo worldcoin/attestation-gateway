@@ -4,9 +4,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use crate::utils::{BundleIdentifier, ErrorCode, RequestError};
+use crate::utils::{BundleIdentifier, ClientError, ErrorCode};
 
-// TODO const ALLOWED_TIMESTAMP_WINDOW: u64 = 10 * 600;
+// FIXME const ALLOWED_TIMESTAMP_WINDOW: u64 = 10 * 600;
 const ALLOWED_TIMESTAMP_WINDOW: u64 = 10_000_000;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -117,12 +117,6 @@ pub struct PlayIntegrityToken {
     pub environment_details: Option<EnvironmentDetails>,
 }
 
-#[derive(Debug)]
-pub struct RequestErrorWithIntegrityToken {
-    pub request_error: RequestError,
-    pub failed_integrity_token: Option<Box<PlayIntegrityToken>>,
-}
-
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
 enum StringOrInt {
@@ -147,61 +141,37 @@ pub fn deserialize_system_time_from_millis<'de, D: serde::Deserializer<'de>>(
 }
 
 impl PlayIntegrityToken {
-    /// Initializes a `PlayIntegrityToken` struct from a JSON payload. After initial parsing, the relevant claims are validated to determine
-    /// if the token passes the business rules for integrity.
+    /// Initializes a `PlayIntegrityToken` struct from a JSON payload.
     ///
     /// # Errors
-    /// - Returns an `UnexpectedTokenFormat` if the token parsing fails (e.g. invalid JSON, invalid attributes, etc)
-    /// - Returns a general `RequestErrorWithIntegrityToken` if the claim validation fails. The error response includes the parsed payload for logging.
-    pub fn new(
-        integrity_token_json_payload: &str,
-        bundle_identifier: &BundleIdentifier,
-        request_hash: &str,
-    ) -> Result<Self, RequestErrorWithIntegrityToken> {
-        let token = serde_json::from_str::<Self>(integrity_token_json_payload).map_err(|e| {
-            tracing::error!(
-                ?e,
-                ?integrity_token_json_payload,
-                "Received invalid token payload"
-            );
-
-            RequestErrorWithIntegrityToken {
-                request_error: RequestError {
-                    code: ErrorCode::UnexpectedTokenFormat,
-                    internal_details: Some("Failure parsing integrity payload".to_string()),
-                },
-                failed_integrity_token: None,
-            }
-        })?;
-
-        if let Err(e) = token.validate_all_claims(bundle_identifier, request_hash) {
-            return Err(RequestErrorWithIntegrityToken {
-                request_error: e,
-                failed_integrity_token: Some(Box::new(token)),
-            });
-        }
-
-        Ok(token)
+    /// Will return a `serde_json` error if parsing fails.
+    pub fn from_json(integrity_token_json_payload: &str) -> eyre::Result<Self> {
+        Ok(serde_json::from_str::<Self>(integrity_token_json_payload)?)
     }
 
-    fn validate_all_claims(
+    ///  Validates all relevant claims are validated to determine if the token passes the business rules for integrity.
+    ///
+    /// # Errors
+    /// - Returns a `ClientError` if business rules fail for the payload of the integrity token.
+    /// - Returns an `eyre::Error` if there are any unexpected issues verifying the token.
+    pub fn validate_all_claims(
         &self,
         bundle_identifier: &BundleIdentifier,
         request_hash: &str,
-    ) -> Result<(), RequestError> {
-        // SECTION --- Request details checks ---
+    ) -> eyre::Result<()> {
+        // Step 1: Request details checks
         self.validate_request_details(bundle_identifier, request_hash)?;
 
-        // SECTION --- App integrity checks ---
+        // Step 2: App integrity checks
         self.validate_app_integrity(bundle_identifier)?;
 
-        // SECTION --- Device integrity checks ---
+        // Step 3: Device integrity checks
         self.validate_device_integrity()?;
 
-        // SECTION --- Account details checks ---
+        // Step 4: Account details checks
         self.validate_account_details(bundle_identifier)?;
 
-        // SECTION --- Environment details ---
+        // Step 5: Environment details
         self.validate_environment_details()?;
 
         Ok(())
@@ -211,70 +181,55 @@ impl PlayIntegrityToken {
         &self,
         bundle_identifier: &BundleIdentifier,
         request_hash: &str,
-    ) -> Result<(), RequestError> {
+    ) -> eyre::Result<()> {
         if self.request_details.request_package_name != bundle_identifier.to_string() {
-            return Err(RequestError {
-                code: ErrorCode::InvalidBundleIdentifier,
-                internal_details: Some(
-                    "Provided `bundle_identifier` does not match request_details.request_package_name"
-                        .to_string(),
-                ),
-            });
+            return Err(
+                eyre::eyre!(ClientError {
+                    code: ErrorCode::IntegrityFailed,
+                    internal_debug_info: "Provided `bundle_identifier` does not match request_details.request_package_name".to_string(),
+                })
+            );
         }
 
-        let duration = SystemTime::now()
-            .duration_since(self.request_details.timestamp_millis)
-            .map_err(|_| RequestError {
-                code: ErrorCode::UnexpectedTokenFormat,
-                internal_details: Some(
-                    "Could not calculate timestamp_millis difference".to_string(),
-                ),
-            })?;
+        let duration = SystemTime::now().duration_since(self.request_details.timestamp_millis)?;
 
         if duration.as_secs() > ALLOWED_TIMESTAMP_WINDOW {
-            return Err(RequestError {
+            return Err(eyre::eyre!(ClientError {
                 code: ErrorCode::ExpiredToken,
-                internal_details: Some(
+                internal_debug_info:
                     "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string(),
-                ),
-            });
+            }));
         }
 
         if self.request_details.nonce != request_hash {
-            return Err(RequestError {
+            return Err(eyre::eyre!(ClientError {
                 code: ErrorCode::IntegrityFailed,
-                internal_details: Some(
-                    "Provided `request_hash` does not match request_details.nonce".to_string(),
-                ),
-            });
+                internal_debug_info: "Provided `request_hash` does not match request_details.nonce"
+                    .to_string(),
+            }));
         }
 
         Ok(())
     }
 
-    fn validate_app_integrity(
-        &self,
-        bundle_identifier: &BundleIdentifier,
-    ) -> Result<(), RequestError> {
+    fn validate_app_integrity(&self, bundle_identifier: &BundleIdentifier) -> eyre::Result<()> {
         if self.app_integrity.package_name != bundle_identifier.to_string() {
-            return Err(RequestError {
-                code: ErrorCode::InvalidBundleIdentifier,
-                internal_details: Some(
+            return Err(eyre::eyre!(ClientError {
+                code: ErrorCode::IntegrityFailed,
+                internal_debug_info:
                     "Provided `bundle_identifier` does not match app_integrity.package_name"
                         .to_string(),
-                ),
-            });
+            }));
         }
 
         if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
             // Only in Production: App should come from Play Store
             if self.app_integrity.app_recognition_verdict != AppIntegrityVerdict::PlayRecognized {
-                return Err(RequestError {
+                return Err(eyre::eyre!(ClientError {
                     code: ErrorCode::IntegrityFailed,
-                    internal_details: Some(
-                        "AppIntegrityVerdict does not match PlayRecognized".to_string(),
-                    ),
-                });
+                    internal_debug_info: "AppIntegrityVerdict does not match PlayRecognized"
+                        .to_string(),
+                }));
             }
         }
 
@@ -284,65 +239,54 @@ impl PlayIntegrityToken {
                 .certificate_sha_256_digest
                 .contains(&digest.to_string())
             {
-                return Err(RequestError {
+                return Err(eyre::eyre!(ClientError {
                     code: ErrorCode::IntegrityFailed,
-                    internal_details: Some(
+                    internal_debug_info:
                         "certificate_sha_256_digest does not match the expected value".to_string(),
-                    ),
-                });
+                }));
             }
         } else {
-            return Err(RequestError {
-                code: ErrorCode::InternalServerError,
-                internal_details: Some("certificate_sha_256_digest is None".to_string()),
-            });
+            return Err(eyre::eyre!("certificate_sha_256_digest is None"));
         }
 
         Ok(())
     }
 
-    fn validate_device_integrity(&self) -> Result<(), RequestError> {
+    fn validate_device_integrity(&self) -> eyre::Result<()> {
         if !self
             .device_integrity
             .device_recognition_verdict
             .contains(&"MEETS_DEVICE_INTEGRITY".to_string())
         {
-            return Err(RequestError {
+            return Err(eyre::eyre!(ClientError {
                 code: ErrorCode::IntegrityFailed,
-                internal_details: Some(
-                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY"
-                        .to_string(),
-                ),
-            });
+                internal_debug_info:
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY".to_string(),
+            }));
         }
         Ok(())
     }
 
-    fn validate_account_details(
-        &self,
-        bundle_identifier: &BundleIdentifier,
-    ) -> Result<(), RequestError> {
+    fn validate_account_details(&self, bundle_identifier: &BundleIdentifier) -> eyre::Result<()> {
         if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
             // Only in Production: App should come from Play Store
             if self.account_details.app_licensing_verdict != AppLicensingVerdict::Licensed {
-                return Err(RequestError {
+                return Err(eyre::eyre!(ClientError {
                     code: ErrorCode::IntegrityFailed,
-                    internal_details: Some(
-                        "AppLicensingVerdict does not match Licensed".to_string(),
-                    ),
-                });
+                    internal_debug_info: "AppLicensingVerdict does not match LICENSED".to_string(),
+                }));
             }
         }
         Ok(())
     }
 
-    fn validate_environment_details(&self) -> Result<(), RequestError> {
+    fn validate_environment_details(&self) -> eyre::Result<()> {
         if let Some(value) = &self.environment_details {
             if value.play_protect_verdict == Some(PlayProtectVerdict::HighRisk) {
-                return Err(RequestError {
+                return Err(eyre::eyre!(ClientError {
                     code: ErrorCode::IntegrityFailed,
-                    internal_details: Some("PlayProtectVerdict reported as HighRisk".to_string()),
-                });
+                    internal_debug_info: "PlayProtectVerdict reported as HighRisk".to_string(),
+                }));
             }
         }
 
@@ -388,7 +332,15 @@ mod tests {
     }
 
     #[test]
-    fn creating_a_play_integrity_token_validates_it_automatically() {
+    fn parse_and_validate_a_valid_token() {
+        let token = create_test_token();
+        token
+            .validate_all_claims(&BundleIdentifier::AndroidStageWorldApp, "valid_nonce")
+            .unwrap();
+    }
+
+    #[test]
+    fn test_validate_all_claims() {
         // cspell:disable
         let token_payload_str = r#"
         {
@@ -424,36 +376,28 @@ mod tests {
             }
         }"#;
         // cspell:enable
-        let token = PlayIntegrityToken::new(
-            token_payload_str,
+
+        let token = PlayIntegrityToken::from_json(token_payload_str).unwrap();
+
+        let result = token.validate_all_claims(
             &BundleIdentifier::AndroidStageWorldApp,
             "invalid_nonce", // <-- This nonce is invalid, it will not match request_details.nonce
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            token.request_error,
-            RequestError {
-                code: ErrorCode::IntegrityFailed,
-                internal_details: Some(
-                    "Provided `request_hash` does not match request_details.nonce".to_string()
-                ),
-            }
         );
 
-        // When the token fails integrity verification but it's validly parse, the token is returned in failed_integrity_token
+        let client_error = result
+            .expect_err("Expected an error, but got success")
+            .downcast::<ClientError>()
+            .expect("Unexpected non-client error");
+
+        assert_eq!(client_error.code, ErrorCode::IntegrityFailed);
         assert_eq!(
-            token
-                .failed_integrity_token
-                .unwrap()
-                .app_integrity
-                .app_recognition_verdict,
-            AppIntegrityVerdict::PlayRecognized
+            client_error.internal_debug_info,
+            "Provided `request_hash` does not match request_details.nonce"
         );
     }
 
     #[test]
-    fn creating_a_play_integrity_with_invalid_payload_does_not_allocate_it() {
+    fn creating_a_play_integrity_with_invalid_payload_fails() {
         let token_payload_with_missing_attributes = r#"
         {
             "requestDetails": {
@@ -463,39 +407,16 @@ mod tests {
             }
         }"#;
 
-        let token = PlayIntegrityToken::new(
-            token_payload_with_missing_attributes,
-            &BundleIdentifier::AndroidStageWorldApp,
-            "invalid_nonce",
-        )
-        .unwrap_err();
+        let error_report =
+            PlayIntegrityToken::from_json(token_payload_with_missing_attributes).unwrap_err();
 
         assert_eq!(
-            token.request_error,
-            RequestError {
-                code: ErrorCode::UnexpectedTokenFormat,
-                internal_details: Some("Failure parsing integrity payload".to_string()),
-            }
+            "missing field `appIntegrity` at line 8 column 9",
+            error_report.to_string()
         );
 
-        assert!(token.failed_integrity_token.is_none());
-
-        let token = PlayIntegrityToken::new(
-            "not_even_valid_json",
-            &BundleIdentifier::AndroidStageWorldApp,
-            "invalid_nonce",
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            token.request_error,
-            RequestError {
-                code: ErrorCode::UnexpectedTokenFormat,
-                internal_details: Some("Failure parsing integrity payload".to_string()),
-            }
-        );
-
-        assert!(token.failed_integrity_token.is_none());
+        // note the `unwrap_err` here, as the payload is not valid JSON
+        let _ = PlayIntegrityToken::from_json("not_even_valid_json").unwrap_err();
     }
 
     #[test]
@@ -510,11 +431,12 @@ mod tests {
         let error = token
             .validate_request_details(&BundleIdentifier::AndroidProdWorldApp, "valid_nonce")
             .unwrap_err();
+
         assert_eq!(
-            error,
-            RequestError {
-                code: ErrorCode::InvalidBundleIdentifier,
-                internal_details: Some("Provided `bundle_identifier` does not match request_details.request_package_name".to_string()),
+            error.downcast::<ClientError>().unwrap(),
+            ClientError {
+                code: ErrorCode::IntegrityFailed,
+                internal_debug_info: "Provided `bundle_identifier` does not match request_details.request_package_name".to_string(),
             }
         );
 
@@ -525,12 +447,11 @@ mod tests {
             .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "valid_nonce")
             .unwrap_err();
         assert_eq!(
-            error,
-            RequestError {
+            error.downcast::<ClientError>().unwrap(),
+            ClientError {
                 code: ErrorCode::ExpiredToken,
-                internal_details: Some(
+                internal_debug_info:
                     "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string()
-                ),
             }
         );
 
@@ -539,12 +460,11 @@ mod tests {
             .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "invalid_nonce")
             .unwrap_err();
         assert_eq!(
-            error,
-            RequestError {
+            error.downcast::<ClientError>().unwrap(),
+            ClientError {
                 code: ErrorCode::IntegrityFailed,
-                internal_details: Some(
-                    "Provided `request_hash` does not match request_details.nonce".to_string()
-                ),
+                internal_debug_info: "Provided `request_hash` does not match request_details.nonce"
+                    .to_string()
             }
         );
     }
@@ -563,13 +483,12 @@ mod tests {
             .validate_app_integrity(&BundleIdentifier::AndroidProdWorldApp)
             .unwrap_err();
         assert_eq!(
-            error,
-            RequestError {
-                code: ErrorCode::InvalidBundleIdentifier,
-                internal_details: Some(
+            error.downcast::<ClientError>().unwrap(),
+            ClientError {
+                code: ErrorCode::IntegrityFailed,
+                internal_debug_info:
                     "Provided `bundle_identifier` does not match app_integrity.package_name"
                         .to_string()
-                ),
             }
         );
 
@@ -581,12 +500,11 @@ mod tests {
             .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
             .unwrap_err();
         assert_eq!(
-            error,
-            RequestError {
+            error.downcast::<ClientError>().unwrap(),
+            ClientError {
                 code: ErrorCode::IntegrityFailed,
-                internal_details: Some(
-                    "certificate_sha_256_digest does not match the expected value".to_string()
-                ),
+                internal_debug_info: "certificate_sha_256_digest does not match the expected value"
+                    .to_string()
             }
         );
     }
@@ -603,13 +521,11 @@ mod tests {
         invalid_token.device_integrity.device_recognition_verdict = vec![];
         let error = invalid_token.validate_device_integrity().unwrap_err();
         assert_eq!(
-            error,
-            RequestError {
+            error.downcast::<ClientError>().unwrap(),
+            ClientError {
                 code: ErrorCode::IntegrityFailed,
-                internal_details: Some(
-                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY"
-                        .to_string()
-                ),
+                internal_debug_info:
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY".to_string()
             }
         );
     }
@@ -629,10 +545,10 @@ mod tests {
             .validate_account_details(&bundle_identifier)
             .unwrap_err();
         assert_eq!(
-            error,
-            RequestError {
+            error.downcast::<ClientError>().unwrap(),
+            ClientError {
                 code: ErrorCode::IntegrityFailed,
-                internal_details: Some("AppLicensingVerdict does not match Licensed".to_string()),
+                internal_debug_info: "AppLicensingVerdict does not match LICENSED".to_string(),
             }
         );
     }
@@ -654,10 +570,10 @@ mod tests {
         });
         let error = invalid_token.validate_environment_details().unwrap_err();
         assert_eq!(
-            error,
-            RequestError {
+            error.downcast::<ClientError>().unwrap(),
+            ClientError {
                 code: ErrorCode::IntegrityFailed,
-                internal_details: Some("PlayProtectVerdict reported as HighRisk".to_string()),
+                internal_debug_info: "PlayProtectVerdict reported as HighRisk".to_string(),
             }
         );
 

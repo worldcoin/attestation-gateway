@@ -1,5 +1,4 @@
-use crate::utils::{ErrorCode, RequestError};
-use aws_sdk_kms::{primitives::Blob, Error};
+use aws_sdk_kms::primitives::Blob;
 use base64::Engine;
 use josekit::{
     jws::{alg::ecdsa::EcdsaJwsAlgorithm, JwsAlgorithm, JwsHeader, JwsSigner},
@@ -58,7 +57,7 @@ impl JwsSigner for EcdsaJwsSignerWithKms {
     }
 
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, JoseError> {
-        (|| -> anyhow::Result<Vec<u8>> {
+        (|| -> eyre::Result<Vec<u8>> {
             // NOTE: We skip hashing because KMS will hash the message
 
             let rt = Runtime::new().unwrap();
@@ -93,7 +92,8 @@ impl JwsSigner for EcdsaJwsSignerWithKms {
 
             Ok(signature)
         })()
-        .map_err(JoseError::InvalidSignature)
+        // Convert eyre error to anyhow which is required for JoseError
+        .map_err(|e| JoseError::InvalidSignature(anyhow::anyhow!(e)))
     }
 
     fn box_clone(&self) -> Box<dyn JwsSigner> {
@@ -105,7 +105,7 @@ async fn sign_with_kms(
     client: &aws_sdk_kms::Client,
     key_id: &str,
     message: &[u8],
-) -> Result<Vec<u8>, Error> {
+) -> eyre::Result<Vec<u8>> {
     let result = client
         .sign()
         .key_id(key_id)
@@ -115,8 +115,10 @@ async fn sign_with_kms(
         .send()
         .await?;
 
-    // TODO: Improve error handling
-    Ok(result.signature.unwrap().as_ref().to_vec())
+    result.signature.map_or_else(
+        || Err(eyre::eyre!("No signature returned from KMS")),
+        |signature| Ok(signature.as_ref().to_vec()),
+    )
 }
 
 /// Generate the output JWS token from the Attestation Gateway using the provided KMS client and key ARN
@@ -128,7 +130,7 @@ pub async fn generate_output_token(
     kms_client: aws_sdk_kms::Client,
     key_arn: String,
     payload: JwtPayload,
-) -> Result<String, RequestError> {
+) -> eyre::Result<String> {
     let mut header = JwsHeader::new();
     header.set_token_type("JWT");
 
@@ -136,21 +138,7 @@ pub async fn generate_output_token(
 
     let jwt =
         tokio::task::spawn_blocking(move || jwt::encode_with_signer(&payload, &header, &signer))
-            .await
-            .map_err(|e| {
-                tracing::error!(?e, "Error generating JWS signature in tokio task.");
-                RequestError {
-                    code: ErrorCode::InternalServerError,
-                    internal_details: Some("Error generating JWS signature".to_string()),
-                }
-            })?
-            .map_err(|e| {
-                tracing::error!(?e, "Error generating JWS signature.");
-                RequestError {
-                    code: ErrorCode::InternalServerError,
-                    internal_details: Some("Error generating JWS signature".to_string()),
-                }
-            })?;
+            .await??;
 
     Ok(jwt)
 }
