@@ -1,19 +1,11 @@
 use std::time::SystemTime;
 
-use crate::utils::{BundleIdentifier, ClientError, ErrorCode};
+use crate::utils::{BundleIdentifier, ClientError, ErrorCode, VerificationOutput};
 pub use integrity_token_data::PlayIntegrityToken;
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
 mod integrity_token_data;
-
-// make me universal
-#[derive(Debug)]
-pub struct VerificationOutput {
-    pub success: bool,
-    pub parsed_play_integrity_token: PlayIntegrityToken,
-    pub client_error: Option<ClientError>,
-}
 
 /// Verifies an Android Play Integrity token and returns a parsed `PlayIntegrityToken`
 ///
@@ -39,7 +31,7 @@ pub fn verify(
             // We do this additional error handling to return the parsed token in the response and be able to log it for analytics purposes
             return Ok(VerificationOutput {
                 success: false,
-                parsed_play_integrity_token: parsed_token,
+                parsed_play_integrity_token: Some(parsed_token),
                 client_error: Some(client_error.clone()),
             });
         }
@@ -48,7 +40,7 @@ pub fn verify(
 
     Ok(VerificationOutput {
         success: true,
-        parsed_play_integrity_token: parsed_token,
+        parsed_play_integrity_token: Some(parsed_token),
         client_error: None,
     })
 }

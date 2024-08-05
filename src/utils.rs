@@ -214,6 +214,13 @@ impl Display for OutEnum {
     }
 }
 
+#[derive(Debug)]
+pub struct VerificationOutput {
+    pub success: bool,
+    pub parsed_play_integrity_token: Option<PlayIntegrityToken>,
+    pub client_error: Option<ClientError>,
+}
+
 /// `DataReport` is used to serialize the output logged to Kinesis for analytics and debugging purposes.
 /// The `request_hash` has a retention period of 30 days.
 #[derive(Debug, serde::Serialize)]
@@ -249,26 +256,6 @@ fn handle_jose_error(e: JoseError) -> RequestError {
     RequestError {
         code: ErrorCode::InternalServerError,
         details: None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{handle_jose_error, ErrorCode, JoseError};
-    use tracing_test::traced_test;
-
-    #[test]
-    #[traced_test]
-    fn test_handle_jose_error() {
-        let error = JoseError::InvalidClaim(anyhow::anyhow!("Invalid claim"));
-
-        let result = handle_jose_error(error);
-
-        assert_eq!(result.code, ErrorCode::InternalServerError);
-
-        assert!(logs_contain(
-            "Error generating `JWTPayload` for `OutputTokenPayload`:"
-        ));
     }
 }
 
@@ -318,50 +305,70 @@ impl OutputTokenPayload {
     }
 }
 
-#[test]
-fn test_output_token_payload_generation() {
-    let now = SystemTime::now();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing_test::traced_test;
 
-    let payload = OutputTokenPayload {
-        aud: "my-aud.com".to_string(),
-        request_hash: "this_is_not_a_hash_with_enough_entropy".to_string(),
-        pass: true,
-        out: OutEnum::Pass,
-        error: None,
-    };
+    #[test]
+    #[traced_test]
+    fn test_handle_jose_error() {
+        let error = JoseError::InvalidClaim(anyhow::anyhow!("Invalid claim"));
 
-    let jwt_payload = payload.generate().unwrap();
+        let result = handle_jose_error(error);
 
-    // Assert default claims
-    assert_eq!(jwt_payload.issuer(), Some("attestation.worldcoin.org"));
+        assert_eq!(result.code, ErrorCode::InternalServerError);
 
-    // Assert `exp` & `iat` within a few seconds of `now`
-    assert!(jwt_payload.issued_at().unwrap() < (now + std::time::Duration::from_secs(5)));
+        assert!(logs_contain(
+            "Error generating `JWTPayload` for `OutputTokenPayload`:"
+        ));
+    }
 
-    assert!(
-        jwt_payload.issued_at().unwrap()
-            < (now +
+    #[test]
+    fn test_output_token_payload_generation() {
+        let now = SystemTime::now();
+
+        let payload = OutputTokenPayload {
+            aud: "my-aud.com".to_string(),
+            request_hash: "this_is_not_a_hash_with_enough_entropy".to_string(),
+            pass: true,
+            out: OutEnum::Pass,
+            error: None,
+        };
+
+        let jwt_payload = payload.generate().unwrap();
+
+        // Assert default claims
+        assert_eq!(jwt_payload.issuer(), Some("attestation.worldcoin.org"));
+
+        // Assert `exp` & `iat` within a few seconds of `now`
+        assert!(jwt_payload.issued_at().unwrap() < (now + std::time::Duration::from_secs(5)));
+
+        assert!(
+            jwt_payload.issued_at().unwrap()
+                < (now +
                 // expiration time
                 OUTPUT_TOKEN_EXPIRATION +
                 // tolerance time
                 std::time::Duration::from_secs(5))
-    );
+        );
 
-    // Assert remainder of claims
-    assert_eq!(
-        jwt_payload.claim("aud"),
-        Some(&josekit::Value::String("my-aud.com".to_string()))
-    );
-    assert_eq!(
-        jwt_payload.claim("jti"),
-        Some(&josekit::Value::String(
-            "this_is_not_a_hash_with_enough_entropy".to_string()
-        ))
-    );
-    assert_eq!(jwt_payload.claim("pass"), Some(&josekit::Value::Bool(true)));
-    assert_eq!(
-        jwt_payload.claim("out"),
-        Some(&josekit::Value::String("pass".to_string()))
-    );
-    assert_eq!(jwt_payload.claim("error"), None);
+        // Assert remainder of claims
+        assert_eq!(
+            jwt_payload.claim("aud"),
+            Some(&josekit::Value::String("my-aud.com".to_string()))
+        );
+        assert_eq!(
+            jwt_payload.claim("jti"),
+            Some(&josekit::Value::String(
+                "this_is_not_a_hash_with_enough_entropy".to_string()
+            ))
+        );
+        assert_eq!(jwt_payload.claim("pass"), Some(&josekit::Value::Bool(true)));
+        assert_eq!(
+            jwt_payload.claim("out"),
+            Some(&josekit::Value::String("pass".to_string()))
+        );
+        assert_eq!(jwt_payload.claim("error"), None);
+    }
 }

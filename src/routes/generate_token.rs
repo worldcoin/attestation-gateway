@@ -4,7 +4,7 @@ use redis::{aio::ConnectionManager, AsyncCommands};
 use std::time::SystemTime;
 
 use crate::{
-    android, kms_jws,
+    android, apple, kms_jws,
     utils::{
         handle_redis_error, ClientError, DataReport, ErrorCode, GlobalConfig, OutEnum,
         OutputTokenPayload, Platform, RequestError, TokenGenerationRequest,
@@ -153,27 +153,30 @@ fn verify_android_or_apple_integrity(
         play_integrity: None,
     };
 
-    match request.bundle_identifier.platform() {
-        Platform::Android => {
-            let android_result = android::verify(
-                &request.integrity_token.unwrap(), // Safe to unwrap because we've already validated this in the handler
-                &request.bundle_identifier,
-                &request.request_hash,
-                config.android_outer_jwe_private_key,
-            )?;
-            report.play_integrity = Some(android_result.parsed_play_integrity_token);
-            report.pass = android_result.success;
-            report.out = if android_result.success {
-                OutEnum::Pass
-            } else {
-                OutEnum::Fail
-            };
-            if android_result.client_error.is_some() {
-                report.internal_debug_info =
-                    Some(android_result.client_error.unwrap().internal_debug_info);
-            }
-        }
-        Platform::AppleIOS => {}
+    let verify_result = match request.bundle_identifier.platform() {
+        Platform::Android => android::verify(
+            &request.integrity_token.unwrap(), // Safe to unwrap because we've already validated this in the handler
+            &request.bundle_identifier,
+            &request.request_hash,
+            config.android_outer_jwe_private_key,
+        )?,
+
+        Platform::AppleIOS => apple::verify(
+            &request.apple_assertion.unwrap(),
+            &request.apple_public_key.unwrap(),
+            request.apple_initial_attestation.as_ref(),
+        )?,
+    };
+
+    report.play_integrity = verify_result.parsed_play_integrity_token;
+    report.pass = verify_result.success;
+    report.out = if verify_result.success {
+        OutEnum::Pass
+    } else {
+        OutEnum::Fail
+    };
+    if verify_result.client_error.is_some() {
+        report.internal_debug_info = Some(verify_result.client_error.unwrap().internal_debug_info);
     }
 
     Ok(report)
