@@ -98,6 +98,9 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
+/// Represents an error that is attributable to the client and represents expected behavior for the API.
+/// For example, when an expired integrity token is passed.
+/// `ClientError`s are not logged by default and result in a 4xx status code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientError {
     pub code: ErrorCode,
@@ -114,6 +117,8 @@ impl Display for ClientError {
     }
 }
 
+/// Represents an error response that can be returned directly to the client.
+/// This struct can represent both server and client errors.
 #[derive(Debug, OperationIo, PartialEq, Eq)]
 pub struct RequestError {
     pub code: ErrorCode,

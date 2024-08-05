@@ -55,13 +55,7 @@ async fn get_api_router() -> aide::axum::ApiRouter {
 }
 
 #[tokio::test]
-async fn test_e2e_success_android() {
-    // TODO: Document
-    // let subscriber = FmtSubscriber::builder()
-    //     .with_max_level(tracing::Level::TRACE)
-    //     .finish();
-    // let _ = tracing::subscriber::set_global_default(subscriber);
-
+async fn test_android_e2e_success() {
     let api_router = get_api_router().await;
 
     let token_generation_request = TokenGenerationRequest {
@@ -132,6 +126,49 @@ async fn test_token_generation_fails_on_invalid_bundle_identifier() {
     assert_eq!(
         body["schema_validation"][0]["instance_location"],
         "/bundle_identifier".to_string()
+    );
+}
+
+#[tokio::test]
+async fn test_android_token_generation_with_invalid_attributes() {
+    let api_router = get_api_router().await;
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: None,
+        apple_assertion: None,
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    // First request succeeds
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "code": "bad_request",
+            "details": "`integrity_token` is required for this bundle identifier."
+        })
     );
 }
 
@@ -250,4 +287,47 @@ async fn test_server_error_is_properly_logged() {
     );
 
     assert!(logs_contain("Error verifying Android or Apple integrity e=Invalid key format: The key size must be 32: 7"));
+}
+
+#[tokio::test]
+async fn test_apple_token_generation_with_invalid_attributes() {
+    let api_router = get_api_router().await;
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
+        apple_assertion: None,
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    // First request succeeds
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "code": "bad_request",
+            "details": "`apple_assertion` and `apple_public_key` is required for this bundle identifier."
+        })
+    );
 }

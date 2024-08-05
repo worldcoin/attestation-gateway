@@ -26,14 +26,13 @@ pub async fn handler(
     let request_hash = request.request_hash.clone();
 
     // Platform-specific request validation
-    // FIXME: Tests
     match request.bundle_identifier.platform() {
         Platform::Android => {
             if request.integrity_token.is_none() {
                 return Err(RequestError {
                     code: ErrorCode::BadRequest,
                     details: Some(
-                        "Missing integrity_token for an Android integrity check".to_string(),
+                        "`integrity_token` is required for this bundle identifier.".to_string(),
                     ),
                 });
             }
@@ -43,7 +42,7 @@ pub async fn handler(
                 return Err(RequestError {
                     code: ErrorCode::BadRequest,
                     details: Some(
-                        "Missing apple_assertion or apple_public_key for an Apple integrity check"
+                        "`apple_assertion` and `apple_public_key` is required for this bundle identifier."
                             .to_string(),
                     ),
                 });
