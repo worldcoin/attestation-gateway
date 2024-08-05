@@ -13,7 +13,7 @@ categories = ["web-programming"]
 aide = { version = "0.13.4", features = ["axum", "macros", "scalar"] }
 anyhow = "1.0.86"
 aws-config = "1.5.4"
-aws-sdk-kms = "1.35.0"
+aws-sdk-kms = "1.37.0"
 axum = "0.7.5"
 axum-jsonschema = { version = "0.8.0", features = ["aide"] }
 base64 = "0.22.1"
