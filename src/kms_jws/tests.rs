@@ -18,18 +18,21 @@ N71quXN3f0P/tprs2Fp2FEasM7m7XZ2xlDK3wcEAs1QEIoQjjwnhcptQ6A==
 static TEST_KEY_ARN: &str =
     "arn:aws:kms:us-east-1:000000001111:key/c7956b9c-5235-4e8e-bb35-7310fb80f4ca";
 
-async fn get_kms_client() -> aws_sdk_kms::Client {
+async fn get_aws_config() -> aws_config::SdkConfig {
     // Required to load default AWS Config variables
     dotenvy::from_filename(".env.example").unwrap();
 
     let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
 
-    let config = aws_sdk_kms::config::Builder::from(&aws_config)
-        .region(aws_config::Region::new("us-east-1"))
+    aws_config
+        .into_builder()
         .endpoint_url("http://localhost:4566")
-        .build();
+        .build()
+}
 
-    aws_sdk_kms::Client::from_conf(config)
+async fn get_kms_client() -> aws_sdk_kms::Client {
+    let aws_config = get_aws_config().await;
+    aws_sdk_kms::Client::new(&aws_config)
 }
 
 #[tokio::test]
@@ -76,7 +79,7 @@ async fn test_sign_with_kms() {
 #[tokio::test]
 /// Integration test (requires docker-compose.test.yml to be running)
 async fn test_generate_output_token() {
-    let client = get_kms_client().await;
+    let aws_config = get_aws_config().await;
 
     let output_token_payload = OutputTokenPayload {
         aud: "example.worldcoin.org".to_string(),
@@ -88,9 +91,10 @@ async fn test_generate_output_token() {
     .generate()
     .unwrap();
 
-    let jwt = super::generate_output_token(client, TEST_KEY_ARN.to_string(), output_token_payload)
-        .await
-        .unwrap();
+    let jwt =
+        super::generate_output_token(&aws_config, TEST_KEY_ARN.to_string(), output_token_payload)
+            .await
+            .unwrap();
 
     // Verify and parse the JWT
 

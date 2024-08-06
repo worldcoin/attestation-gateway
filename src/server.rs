@@ -9,7 +9,7 @@ use crate::{routes, utils::GlobalConfig};
 
 pub async fn start(
     redis: ConnectionManager,
-    kms_client: aws_sdk_kms::Client,
+    aws_config: aws_config::SdkConfig,
     global_config: GlobalConfig,
 ) {
     let mut openapi = OpenApi {
@@ -24,7 +24,7 @@ pub async fn start(
         .finish_api(&mut openapi)
         .layer(Extension(redis))
         .layer(Extension(openapi))
-        .layer(Extension(kms_client))
+        .layer(Extension(aws_config))
         .layer(Extension(global_config));
 
     let address = SocketAddr::from((

@@ -12,6 +12,7 @@ static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_
 pub struct GlobalConfig {
     pub output_token_kms_key_arn: String,
     pub android_outer_jwe_private_key: String,
+    pub apple_keys_dynamo_table_name: String,
 }
 
 #[derive(Debug)]
@@ -253,8 +254,9 @@ pub enum ErrorCode {
     ExpiredToken,
     IntegrityFailed,
     InternalServerError,
-    InvalidToken,
     InvalidAttestationForApp,
+    InvalidInitialAttestation,
+    InvalidToken,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -265,8 +267,9 @@ impl std::fmt::Display for ErrorCode {
             Self::ExpiredToken => write!(f, "expired_token"),
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
-            Self::InvalidToken => write!(f, "invalid_token"),
             Self::InvalidAttestationForApp => write!(f, "invalid_attestation_for_app"),
+            Self::InvalidInitialAttestation => write!(f, "invalid_initial_attestation"),
+            Self::InvalidToken => write!(f, "invalid_token"),
         }
     }
 }
@@ -279,8 +282,9 @@ impl ErrorCode {
             Self::BadRequest
             | Self::ExpiredToken
             | Self::IntegrityFailed
-            | Self::InvalidToken
-            | Self::InvalidAttestationForApp => axum::http::StatusCode::BAD_REQUEST,
+            | Self::InvalidAttestationForApp
+            | Self::InvalidInitialAttestation
+            | Self::InvalidToken => axum::http::StatusCode::BAD_REQUEST,
         }
     }
 
@@ -291,8 +295,10 @@ impl ErrorCode {
             Self::ExpiredToken => "The integrity token has expired. Please generate a new one.",
             Self::IntegrityFailed => "Integrity checks have not passed.",
             Self::InternalServerError => "Internal server error. Please try again.",
-            Self::InvalidToken => "The provided token is invalid or malformed.",
             Self::InvalidAttestationForApp => "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object.",
+            Self::InvalidInitialAttestation => "This key has already gone through initial attestation. Use assertion instead.",
+            Self::InvalidToken => "The provided token is invalid or malformed.",
+          
         }
     }
 }

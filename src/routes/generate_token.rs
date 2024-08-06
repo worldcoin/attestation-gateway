@@ -17,7 +17,7 @@ static REQUEST_HASH_REDIS_KEY_PREFIX: &str = "request_hash:";
 // NOTE: Integration tests for route handlers are in the `/tests` module
 
 pub async fn handler(
-    Extension(kms_client): Extension<aws_sdk_kms::Client>,
+    Extension(aws_config): Extension<aws_config::SdkConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Json(request): Json<TokenGenerationRequest>,
@@ -49,6 +49,7 @@ pub async fn handler(
         &request.aud,
         &request.client_error,
         global_config.clone(),
+        &aws_config,
     )
     .map_err(|e| {
         // Check if we have a ClientError in the error chain and return to the client without further logging
@@ -88,7 +89,7 @@ pub async fn handler(
     .generate()?;
 
     let attestation_gateway_token = kms_jws::generate_output_token(
-        kms_client,
+        &aws_config,
         global_config.output_token_kms_key_arn.clone(),
         output_token_payload,
     )
@@ -125,6 +126,7 @@ fn verify_android_or_apple_integrity(
     aud: &str,
     client_error: &Option<String>,
     config: GlobalConfig,
+    aws_config: &aws_config::SdkConfig,
 ) -> eyre::Result<DataReport> {
     // Prepare output report for logging (analytics & debugging)
     // Only integrity failures and successes are logged to Kinesis. Client and server errors are logged regularly to Datadog.
@@ -153,6 +155,8 @@ fn verify_android_or_apple_integrity(
             &apple_initial_attestation,
             bundle_identifier,
             request_hash,
+            &aws_config,
+            &config.apple_keys_dynamo_table_name,
         )?,
 
         IntegrityVerificationInput::AppleAssertion {

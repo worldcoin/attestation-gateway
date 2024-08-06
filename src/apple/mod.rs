@@ -16,6 +16,8 @@ use x509_parser::{
     prelude::{FromDer, X509Certificate},
 };
 
+mod dynamo;
+
 /// Verifies an Apple initial attestation and saves the key to Dynamo DB
 ///
 /// # Errors
@@ -24,6 +26,8 @@ pub fn verify_initial_attestation(
     apple_initial_attestation: &String,
     bundle_identifier: &BundleIdentifier,
     request_hash: &String,
+    aws_config: &aws_config::SdkConfig,
+    apple_keys_dynamo_table_name: &String,
 ) -> eyre::Result<VerificationOutput> {
     let _attestation_result = decode_and_validate_initial_attestation(
         apple_initial_attestation,
@@ -34,7 +38,20 @@ pub fn verify_initial_attestation(
         AAGUID::from_bundle_identifier(bundle_identifier)?,
     )?;
 
-    Err(eyre::eyre!("Not implemented"))
+    dynamo::insert_apple_public_key(
+        aws_config,
+        apple_keys_dynamo_table_name,
+        attestation_result.key_id,
+        attestation_result.public_key,
+        attestation_result.receipt,
+    )
+    .await?;
+
+    Ok(VerificationOutput {
+        success: true,
+        parsed_play_integrity_token: None,
+        client_error: None,
+    })
 }
 
 /// Verifies an Apple assertion (and optionally the initially attestation if this is a new public key)
@@ -224,8 +241,8 @@ fn decode_and_validate_initial_attestation(
     }
 
     Ok(InitialAttestationOutput {
-        public_key: hex::encode(public_key_der),
-        receipt: hex::encode(attestation.att_stmt.receipt.as_ref()),
+        public_key: general_purpose::STANDARD_NO_PAD.encode(public_key_der),
+        receipt: general_purpose::STANDARD_NO_PAD.encode(attestation.att_stmt.receipt.as_ref()),
         key_id: general_purpose::STANDARD.encode(credential_id),
     })
 }

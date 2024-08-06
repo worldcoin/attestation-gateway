@@ -127,12 +127,14 @@ async fn sign_with_kms(
 ///
 /// This function will return a `RequestError` if the JWS signature generation fails
 pub async fn generate_output_token(
-    kms_client: aws_sdk_kms::Client,
+    aws_config: &aws_config::SdkConfig,
     key_arn: String,
     payload: JwtPayload,
 ) -> eyre::Result<String> {
     let mut header = JwsHeader::new();
     header.set_token_type("JWT");
+
+    let kms_client = aws_sdk_kms::Client::new(aws_config);
 
     let signer = EcdsaJwsSignerWithKms::new(key_arn, kms_client);
 

@@ -34,9 +34,9 @@ async fn main() {
     let redis = environment.redis_client().await;
     tracing::info!("✅ Connection to Redis established.");
 
-    let kms_client = environment.kms_client().await;
+    let aws_config = environment.aws_config().await;
 
-    server::start(redis, kms_client, load_config()).await;
+    server::start(redis, aws_config, load_config()).await;
 }
 
 async fn build_redis_pool(redis_url: String) -> redis::RedisResult<ConnectionManager> {
@@ -62,9 +62,13 @@ pub fn load_config() -> GlobalConfig {
     let android_outer_jwe_private_key = env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
         .expect("env var `ANDROID_OUTER_JWE_PRIVATE_KEY` is required");
 
+    let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
+        .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
+
     GlobalConfig {
         output_token_kms_key_arn,
         android_outer_jwe_private_key,
+        apple_keys_dynamo_table_name,
     }
 }
 
@@ -136,8 +140,7 @@ impl Environment {
             .expect("Failed to connect to Redis")
     }
 
-    pub async fn kms_client(&self) -> aws_sdk_kms::Client {
-        let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        aws_sdk_kms::Client::new(&aws_config)
+    pub async fn aws_config(&self) -> aws_config::SdkConfig {
+        aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await
     }
 }
