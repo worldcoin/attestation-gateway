@@ -25,30 +25,7 @@ pub async fn handler(
     let aud = request.aud.clone();
     let request_hash = request.request_hash.clone();
 
-    // Platform-specific request validation
-    match request.bundle_identifier.platform() {
-        Platform::Android => {
-            if request.integrity_token.is_none() {
-                return Err(RequestError {
-                    code: ErrorCode::BadRequest,
-                    details: Some(
-                        "`integrity_token` is required for this bundle identifier.".to_string(),
-                    ),
-                });
-            }
-        }
-        Platform::AppleIOS => {
-            if request.apple_assertion.is_none() || request.apple_public_key.is_none() {
-                return Err(RequestError {
-                    code: ErrorCode::BadRequest,
-                    details: Some(
-                        "`apple_assertion` and `apple_public_key` is required for this bundle identifier."
-                            .to_string(),
-                    ),
-                });
-            }
-        }
-    }
+    validate_platform_specific_request(&request)?;
 
     // Check the request hash is unique
     if redis
@@ -134,6 +111,47 @@ pub async fn handler(
     Ok(Json(response))
 }
 
+fn validate_platform_specific_request(
+    request: &TokenGenerationRequest,
+) -> Result<(), RequestError> {
+    match request.bundle_identifier.platform() {
+        Platform::Android => {
+            if request.integrity_token.is_none() {
+                return Err(RequestError {
+                    code: ErrorCode::BadRequest,
+                    details: Some(
+                        "`integrity_token` is required for this bundle identifier.".to_string(),
+                    ),
+                });
+            }
+        }
+        Platform::AppleIOS => {
+            if request.apple_initial_attestation.is_some()
+                && (request.apple_assertion.is_some() || request.apple_public_key.is_some())
+            {
+                return Err(RequestError {
+                    code: ErrorCode::BadRequest,
+                    details: Some(
+                        "For initial attestations `apple_assertion` and `apple_public_key` are not allowed."
+                            .to_string(),
+                    ),
+                });
+            }
+
+            if request.apple_assertion.is_none() || request.apple_public_key.is_none() {
+                return Err(RequestError {
+                    code: ErrorCode::BadRequest,
+                    details: Some(
+                        "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
+                            .to_string(),
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 fn verify_android_or_apple_integrity(
     request: TokenGenerationRequest,
     config: GlobalConfig,
@@ -161,9 +179,9 @@ fn verify_android_or_apple_integrity(
         )?,
 
         Platform::AppleIOS => apple::verify(
-            &request.apple_assertion.unwrap(),
-            &request.apple_public_key.unwrap(),
-            request.apple_initial_attestation.as_ref(),
+            &request.apple_assertion,
+            &request.apple_public_key,
+            &request.apple_initial_attestation,
             &request.request_hash,
             &request.bundle_identifier,
         )?,

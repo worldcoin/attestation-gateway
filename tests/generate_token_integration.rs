@@ -290,7 +290,7 @@ async fn test_server_error_is_properly_logged() {
 }
 
 #[tokio::test]
-async fn test_apple_token_generation_with_invalid_attributes() {
+async fn test_apple_token_generation_with_invalid_attributes_for_initial_attestation() {
     let api_router = get_api_router().await;
 
     let token_generation_request = TokenGenerationRequest {
@@ -299,14 +299,13 @@ async fn test_apple_token_generation_with_invalid_attributes() {
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
         request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
         client_error: None,
-        apple_initial_attestation: None,
+        apple_initial_attestation: Some("ou000000000000000000".to_string()),
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
         apple_assertion: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
 
-    // First request succeeds
     let response = api_router
         .clone()
         .oneshot(
@@ -327,7 +326,49 @@ async fn test_apple_token_generation_with_invalid_attributes() {
         body,
         json!({
             "code": "bad_request",
-            "details": "`apple_assertion` and `apple_public_key` is required for this bundle identifier."
+            "details": "For initial attestations `apple_assertion` and `apple_public_key` are not allowed."
+        })
+    );
+}
+
+#[tokio::test]
+async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
+    let api_router = get_api_router().await;
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
+        apple_assertion: None,
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "code": "bad_request",
+            "details": "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
         })
     );
 }

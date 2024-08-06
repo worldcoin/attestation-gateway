@@ -178,6 +178,7 @@ pub enum ErrorCode {
     IntegrityFailed,
     InternalServerError,
     InvalidToken,
+    InvalidAttestationForApp,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -189,6 +190,7 @@ impl std::fmt::Display for ErrorCode {
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
             Self::InvalidToken => write!(f, "invalid_token"),
+            Self::InvalidAttestationForApp => write!(f, "invalid_attestation_for_app"),
         }
     }
 }
@@ -198,9 +200,11 @@ impl ErrorCode {
         match self {
             Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
-            Self::BadRequest | Self::ExpiredToken | Self::IntegrityFailed | Self::InvalidToken => {
-                axum::http::StatusCode::BAD_REQUEST
-            }
+            Self::BadRequest
+            | Self::ExpiredToken
+            | Self::IntegrityFailed
+            | Self::InvalidToken
+            | Self::InvalidAttestationForApp => axum::http::StatusCode::BAD_REQUEST,
         }
     }
 
@@ -212,6 +216,7 @@ impl ErrorCode {
             Self::IntegrityFailed => "Integrity checks have not passed.",
             Self::InternalServerError => "Internal server error. Please try again.",
             Self::InvalidToken => "The provided token is invalid or malformed.",
+            Self::InvalidAttestationForApp => "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object.",
         }
     }
 }
