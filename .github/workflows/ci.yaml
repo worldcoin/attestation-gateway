@@ -106,7 +106,7 @@ jobs:
           # Wait for the application to start
           sleep 5
 
-          docker logs local-kms
+          docker logs localstack
 
       - name: Run tests
         run: cargo test --all

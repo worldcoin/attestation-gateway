@@ -313,6 +313,8 @@ async fn test_server_error_is_properly_logged() {
 async fn test_apple_initial_attestation_e2e_success() {
     let api_router = get_api_router().await;
 
+    let aws_config = get_aws_config_extension().await;
+
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
@@ -345,7 +347,24 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     assert!(body["attestation_gateway_token"].is_string());
 
-    // FIXME: Verify the key is stored in Dynamo
+    // Verify the key was saved to Dynamo
+    let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
+    let get_item_result = client
+        .get_item()
+        .table_name("attestation-gateway-apple-keys".to_string())
+        .key(
+            "key_id",
+            aws_sdk_dynamodb::types::AttributeValue::S(
+                "key#3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=".to_string(),
+            ),
+        )
+        .send()
+        .await
+        .unwrap();
+    let item = get_item_result.item().unwrap();
+    let public_key = item.get("public_key").unwrap().as_s().unwrap();
+    assert_eq!(public_key, "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
+    assert_eq!(item.get("counter").unwrap().as_n().unwrap(), "0");
 
     // FIXME: Verify the token
 }
