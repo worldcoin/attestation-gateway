@@ -302,7 +302,8 @@ mod tests {
 
         assert!(!result.receipt.is_empty());
         assert!(!result.key_id.is_empty());
-        assert_eq!(result.public_key, "3059301306072a8648ce3d020106082a8648ce3d030107034200041c1ea50e53ecc723444ba25260cfb0e6b2311799cf78dd7d77036548b60653d2c5c7991838a79a8d6aec10f4f795a7f550bd3b4b400d546fb61ebe650a27a20f");
+        // cspell:disable-next-line
+        assert_eq!(result.public_key, "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
     }
 
     #[test]

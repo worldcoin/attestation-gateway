@@ -1,16 +1,19 @@
+name: attestation-gateway-tests
 services:
-  local-kms:
-    image: nsmithuk/local-kms
-    container_name: local-kms
+  localstack:
+    container_name: localstack
+    image: localstack/localstack
     ports:
-      - "4566:4566"
+      - "127.0.0.1:4566:4566" # LocalStack Gateway
+      - "127.0.0.1:4510-4559:4510-4559" # external services port range
     environment:
-      - PORT=4566
-      - KMS_REGION=us-east-1
-      - KMS_ACCOUNT_ID=000000001111
-      - KMS_SEED_PATH=kms-seed.yml
+      # LocalStack configuration: https://docs.localstack.cloud/references/configuration/
+      - SERVICES=kms,dynamodb
+      - DISABLE_EVENTS:1
     volumes:
-      - ./kms-seed.yml:/kms-seed.yml
+      - /var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "./aws-seed.sh:/etc/localstack/init/ready.d/aws-seed.sh"
   redis:
     image: redis
     container_name: redis
