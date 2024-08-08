@@ -17,14 +17,18 @@ aws-sdk-kms = "1.37.0"
 axum = "0.7.5"
 axum-jsonschema = { version = "0.8.0", features = ["aide"] }
 base64 = "0.22.1"
+der-parser = "9.0.0"
 dotenvy = "0.15.7"
 eyre = "0.6.12"
+hex = "0.4.3"
 josekit = "0.8.6"
 openssl = "0.10.66"
 redis = { version = "0.25.4", features = ["tokio-comp", "connection-manager", "tokio-native-tls-comp"] }
 regex = "1.10.5"
 schemars = "0.8.21"
 serde = { version = "1.0.204", features = ["derive"] }
+serde_bytes = "0.11.15"
+serde_cbor = "0.11.2"
 serde_json = "1.0.122"
 tokio = { version = "1.39.2", features = ["full"] }
 tower-http = { version = "0.5.2", features = ["trace"] }
@@ -32,6 +36,7 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt","json"
 ] }
+x509-parser = "0.16.0"
 
 
 [build-dependencies]

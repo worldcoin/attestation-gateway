@@ -67,6 +67,19 @@ impl BundleIdentifier {
             Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
         }
     }
+
+    #[must_use]
+    pub const fn apple_app_id(&self) -> Option<&str> {
+        match self {
+            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
+                None
+            }
+            // cspell:disable
+            Self::IOSStageWorldApp => Some("35RXKB6738.org.worldcoin.insight.staging"),
+            Self::IOSProdWorldApp => Some("35RXKB6738.org.worldcoin.insight"),
+            // cspell:enable
+        }
+    }
 }
 
 impl Display for BundleIdentifier {
@@ -96,6 +109,82 @@ pub struct TokenGenerationRequest {
 #[derive(Debug, serde::Serialize, JsonSchema)]
 pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
+}
+
+pub enum IntegrityVerificationInput {
+    Android {
+        integrity_token: String,
+    },
+    AppleInitialAttestation {
+        apple_initial_attestation: String,
+    },
+    AppleAssertion {
+        apple_assertion: String,
+        apple_public_key: String,
+    },
+}
+
+impl IntegrityVerificationInput {
+    /// Parses a `TokenGenerationRequest` into an `IntegrityVerificationInput` specifically for an Android or Apple integrity check.
+    ///
+    /// # Errors
+    /// Will return a `RequestError` if the request is malformed or missing required fields.
+    ///
+    /// # Panics
+    /// No panics expected.
+    pub fn new(request: &TokenGenerationRequest) -> Result<Self, RequestError> {
+        match request.bundle_identifier.platform() {
+            Platform::Android => {
+                if request.integrity_token.is_none() {
+                    return Err(RequestError {
+                        code: ErrorCode::BadRequest,
+                        details: Some(
+                            "`integrity_token` is required for this bundle identifier.".to_string(),
+                        ),
+                    });
+                }
+
+                Ok(Self::Android {
+                    integrity_token: request.integrity_token.clone().unwrap(), // Safe to unwrap because we've already validated this is not None above
+                })
+            }
+            Platform::AppleIOS => {
+                if request.apple_initial_attestation.is_some() {
+                    if request.apple_assertion.is_some() || request.apple_public_key.is_some() {
+                        return Err(RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some(
+                                "For initial attestations `apple_assertion` and `apple_public_key` are not allowed."
+                                    .to_string(),
+                            ),
+                        });
+                    }
+
+                    return Ok(Self::AppleInitialAttestation {
+                        apple_initial_attestation: request
+                            .apple_initial_attestation
+                            .clone()
+                            .unwrap(),
+                    });
+                }
+
+                if request.apple_assertion.is_none() || request.apple_public_key.is_none() {
+                    return Err(RequestError {
+                        code: ErrorCode::BadRequest,
+                        details: Some(
+                            "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
+                                .to_string(),
+                        ),
+                    });
+                }
+
+                Ok(Self::AppleAssertion {
+                    apple_assertion: request.apple_assertion.clone().unwrap(),
+                    apple_public_key: request.apple_public_key.clone().unwrap(),
+                })
+            }
+        }
+    }
 }
 
 /// Represents an error that is attributable to the client and represents expected behavior for the API.
@@ -165,6 +254,7 @@ pub enum ErrorCode {
     IntegrityFailed,
     InternalServerError,
     InvalidToken,
+    InvalidAttestationForApp,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -176,6 +266,7 @@ impl std::fmt::Display for ErrorCode {
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
             Self::InvalidToken => write!(f, "invalid_token"),
+            Self::InvalidAttestationForApp => write!(f, "invalid_attestation_for_app"),
         }
     }
 }
@@ -185,9 +276,11 @@ impl ErrorCode {
         match self {
             Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
-            Self::BadRequest | Self::ExpiredToken | Self::IntegrityFailed | Self::InvalidToken => {
-                axum::http::StatusCode::BAD_REQUEST
-            }
+            Self::BadRequest
+            | Self::ExpiredToken
+            | Self::IntegrityFailed
+            | Self::InvalidToken
+            | Self::InvalidAttestationForApp => axum::http::StatusCode::BAD_REQUEST,
         }
     }
 
@@ -199,6 +292,7 @@ impl ErrorCode {
             Self::IntegrityFailed => "Integrity checks have not passed.",
             Self::InternalServerError => "Internal server error. Please try again.",
             Self::InvalidToken => "The provided token is invalid or malformed.",
+            Self::InvalidAttestationForApp => "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object.",
         }
     }
 }
