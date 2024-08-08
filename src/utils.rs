@@ -111,6 +111,82 @@ pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
 }
 
+pub enum IntegrityVerificationInput {
+    Android {
+        integrity_token: String,
+    },
+    AppleInitialAttestation {
+        apple_initial_attestation: String,
+    },
+    AppleAssertion {
+        apple_assertion: String,
+        apple_public_key: String,
+    },
+}
+
+impl IntegrityVerificationInput {
+    /// Parses a `TokenGenerationRequest` into an `IntegrityVerificationInput` specifically for an Android or Apple integrity check.
+    ///
+    /// # Errors
+    /// Will return a `RequestError` if the request is malformed or missing required fields.
+    ///
+    /// # Panics
+    /// No panics expected.
+    pub fn new(request: &TokenGenerationRequest) -> Result<Self, RequestError> {
+        match request.bundle_identifier.platform() {
+            Platform::Android => {
+                if request.integrity_token.is_none() {
+                    return Err(RequestError {
+                        code: ErrorCode::BadRequest,
+                        details: Some(
+                            "`integrity_token` is required for this bundle identifier.".to_string(),
+                        ),
+                    });
+                }
+
+                Ok(Self::Android {
+                    integrity_token: request.integrity_token.clone().unwrap(), // Safe to unwrap because we've already validated this is not None above
+                })
+            }
+            Platform::AppleIOS => {
+                if request.apple_initial_attestation.is_some() {
+                    if request.apple_assertion.is_some() || request.apple_public_key.is_some() {
+                        return Err(RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some(
+                                "For initial attestations `apple_assertion` and `apple_public_key` are not allowed."
+                                    .to_string(),
+                            ),
+                        });
+                    }
+
+                    return Ok(Self::AppleInitialAttestation {
+                        apple_initial_attestation: request
+                            .apple_initial_attestation
+                            .clone()
+                            .unwrap(),
+                    });
+                }
+
+                if request.apple_assertion.is_none() || request.apple_public_key.is_none() {
+                    return Err(RequestError {
+                        code: ErrorCode::BadRequest,
+                        details: Some(
+                            "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
+                                .to_string(),
+                        ),
+                    });
+                }
+
+                Ok(Self::AppleAssertion {
+                    apple_assertion: request.apple_assertion.clone().unwrap(),
+                    apple_public_key: request.apple_public_key.clone().unwrap(),
+                })
+            }
+        }
+    }
+}
+
 /// Represents an error that is attributable to the client and represents expected behavior for the API.
 /// For example, when an expired integrity token is passed.
 /// `ClientError`s are not logged by default and result in a 4xx status code.

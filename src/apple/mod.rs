@@ -16,43 +16,45 @@ use x509_parser::{
     prelude::{FromDer, X509Certificate},
 };
 
+/// Verifies an Apple initial attestation and saves the key to Dynamo DB
+///
+/// # Errors
+/// Returns server errors if something unexpected goes wrong during parsing and verification
+pub fn verify_initial_attestation(
+    apple_initial_attestation: &String,
+    bundle_identifier: &BundleIdentifier,
+    request_hash: &String,
+) -> eyre::Result<VerificationOutput> {
+    let _attestation_result = decode_and_validate_initial_attestation(
+        apple_initial_attestation,
+        request_hash,
+        bundle_identifier.apple_app_id().context(format!(
+            "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
+        ))?,
+        AAGUID::from_bundle_identifier(bundle_identifier)?,
+    )?;
+
+    Err(eyre::eyre!("Not implemented"))
+}
+
 /// Verifies an Apple assertion (and optionally the initially attestation if this is a new public key)
 ///
 /// # Errors
 ///
 /// Returns server errors if something unexpected goes wrong during parsing and verification
 pub fn verify(
-    apple_assertion: &Option<String>,
-    apple_public_key: &Option<String>,
-    apple_initial_attestation: &Option<String>,
-    request_hash: &String,
+    apple_assertion: &String,
+    apple_public_key: &String,
     bundle_identifier: &BundleIdentifier,
+    request_hash: &String,
 ) -> eyre::Result<VerificationOutput> {
     tracing::debug!(
-        "TEMP: Verifying Apple attestation or assertion: {:?} - {:?}",
+        "TEMP: Verifying Apple attestation or assertion: {:?} - {:?} - {:?} - {:?}",
         apple_assertion,
-        apple_public_key
+        apple_public_key,
+        request_hash,
+        bundle_identifier,
     );
-
-    if let Some(attestation) = apple_initial_attestation {
-        let attestation_result = verify_initial_attestation(
-            attestation,
-            request_hash,
-            bundle_identifier.apple_app_id().context(format!(
-                "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
-            ))?,
-            AAGUID::from_bundle_identifier(bundle_identifier)?,
-        )?;
-
-        // FIXME: Store public key in DB
-        println!("Public key: {:?}", attestation_result.public_key);
-        println!("Receipt: {:?}", attestation_result.receipt);
-        println!("Key ID: {:?}", attestation_result.key_id);
-
-        // TODO: Parse and verify receipt
-    } else {
-        todo!("Verify public key is in the DB and run assertion verification.")
-    }
 
     Err(eyre::eyre!("Not implemented"))
 }
@@ -78,13 +80,6 @@ enum AAGUID {
     AppAttestDevelop,
 }
 
-#[derive(Debug)]
-struct InitialAttestationOutput {
-    pub public_key: String,
-    pub receipt: String,
-    pub key_id: String,
-}
-
 impl FromStr for AAGUID {
     type Err = eyre::Error;
 
@@ -108,9 +103,16 @@ impl AAGUID {
     }
 }
 
+#[derive(Debug)]
+struct InitialAttestationOutput {
+    pub public_key: String,
+    pub receipt: String,
+    pub key_id: String,
+}
+
 /// Implements the verification of `DeviceCheck` *attestation* for iOS.
 /// <https://developer.apple.com/documentation/devicecheck/validating_apps_that_connect_to_your_server#3576643>
-fn verify_initial_attestation(
+fn decode_and_validate_initial_attestation(
     apple_initial_attestation: &String,
     request_hash: &String,
     expected_app_id: &str,
@@ -273,7 +275,7 @@ mod tests {
         // because the server challenge is not hashed which causes a discrepancy in step 2
         // https://developer.apple.com/documentation/devicecheck/attestation-object-validation-guide
 
-        let result = verify_initial_attestation(
+        let result = decode_and_validate_initial_attestation(
             &TEST_VALID_ATTESTATION.to_string(),
             &"testhash".to_string(),
             BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
@@ -291,7 +293,7 @@ mod tests {
         // cspell:disable-next-line
         let valid_attestation = "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";
 
-        let result = verify_initial_attestation(
+        let result = decode_and_validate_initial_attestation(
             &valid_attestation.to_string(),
             &"test".to_string(),
             BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
@@ -309,7 +311,7 @@ mod tests {
 
     #[test]
     fn test_verify_initial_attestation_failure_on_completely_invalid_token() {
-        let result = verify_initial_attestation(
+        let result = decode_and_validate_initial_attestation(
             &"this_is_not_base64_encoded".to_string(),
             &"test".to_string(),
             BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
@@ -330,7 +332,7 @@ mod tests {
     #[test]
     fn test_verify_initial_attestation_failure_on_invalid_cbor_message() {
         //
-        let result = verify_initial_attestation(
+        let result = decode_and_validate_initial_attestation(
             // This is a valid base64 encoded string but not a valid CBOR message
             // cspell:disable-next-line
             &"dGhpcyBpcyBpbnZhbGlk".to_string(),
@@ -351,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_verify_initial_attestation_failure_nonce_mismatch() {
-        let result = verify_initial_attestation(
+        let result = decode_and_validate_initial_attestation(
             &TEST_VALID_ATTESTATION.to_string(),
             &"a_different_hash".to_string(),
             BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
@@ -369,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_verify_initial_attestation_failure_app_id_mismatch() {
-        let result = verify_initial_attestation(
+        let result = decode_and_validate_initial_attestation(
             &TEST_VALID_ATTESTATION.to_string(),
             &"testhash".to_string(),
             BundleIdentifier::IOSProdWorldApp.apple_app_id().unwrap(),
@@ -388,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_verify_initial_attestation_failure_aaguid_mismatch() {
-        let result = verify_initial_attestation(
+        let result = decode_and_validate_initial_attestation(
             &TEST_VALID_ATTESTATION.to_string(),
             &"testhash".to_string(),
             BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),

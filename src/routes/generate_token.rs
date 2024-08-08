@@ -6,9 +6,9 @@ use std::time::SystemTime;
 use crate::{
     android, apple, kms_jws,
     utils::{
-        handle_redis_error, ClientError, DataReport, ErrorCode, GlobalConfig, OutEnum,
-        OutputTokenPayload, Platform, RequestError, TokenGenerationRequest,
-        TokenGenerationResponse,
+        handle_redis_error, BundleIdentifier, ClientError, DataReport, ErrorCode, GlobalConfig,
+        IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
+        TokenGenerationRequest, TokenGenerationResponse,
     },
 };
 
@@ -25,7 +25,7 @@ pub async fn handler(
     let aud = request.aud.clone();
     let request_hash = request.request_hash.clone();
 
-    validate_platform_specific_request(&request)?;
+    let integrity_verification_input = IntegrityVerificationInput::new(&request)?;
 
     // Check the request hash is unique
     if redis
@@ -42,22 +42,29 @@ pub async fn handler(
         });
     };
 
-    let report =
-        verify_android_or_apple_integrity(request, global_config.clone()).map_err(|e| {
-            // Check if we have a ClientError in the error chain and return to the client without further logging
-            if let Some(client_error) = e.downcast_ref::<ClientError>() {
-                return RequestError {
-                    code: client_error.code,
-                    details: None,
-                };
-            }
-
-            tracing::error!(?e, "Error verifying Android or Apple integrity");
-            RequestError {
-                code: ErrorCode::InternalServerError,
+    let report = verify_android_or_apple_integrity(
+        integrity_verification_input,
+        &request.request_hash,
+        &request.bundle_identifier,
+        &request.aud,
+        &request.client_error,
+        global_config.clone(),
+    )
+    .map_err(|e| {
+        // Check if we have a ClientError in the error chain and return to the client without further logging
+        if let Some(client_error) = e.downcast_ref::<ClientError>() {
+            return RequestError {
+                code: client_error.code,
                 details: None,
-            }
-        })?;
+            };
+        }
+
+        tracing::error!(?e, "Error verifying Android or Apple integrity");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    })?;
 
     // FIXME: Report to Kinesis
     tracing::debug!("Report: {:?}", report);
@@ -111,49 +118,12 @@ pub async fn handler(
     Ok(Json(response))
 }
 
-fn validate_platform_specific_request(
-    request: &TokenGenerationRequest,
-) -> Result<(), RequestError> {
-    match request.bundle_identifier.platform() {
-        Platform::Android => {
-            if request.integrity_token.is_none() {
-                return Err(RequestError {
-                    code: ErrorCode::BadRequest,
-                    details: Some(
-                        "`integrity_token` is required for this bundle identifier.".to_string(),
-                    ),
-                });
-            }
-        }
-        Platform::AppleIOS => {
-            if request.apple_initial_attestation.is_some()
-                && (request.apple_assertion.is_some() || request.apple_public_key.is_some())
-            {
-                return Err(RequestError {
-                    code: ErrorCode::BadRequest,
-                    details: Some(
-                        "For initial attestations `apple_assertion` and `apple_public_key` are not allowed."
-                            .to_string(),
-                    ),
-                });
-            }
-
-            if request.apple_assertion.is_none() || request.apple_public_key.is_none() {
-                return Err(RequestError {
-                    code: ErrorCode::BadRequest,
-                    details: Some(
-                        "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
-                            .to_string(),
-                    ),
-                });
-            }
-        }
-    }
-    Ok(())
-}
-
 fn verify_android_or_apple_integrity(
-    request: TokenGenerationRequest,
+    verification_input: IntegrityVerificationInput,
+    request_hash: &String,
+    bundle_identifier: &BundleIdentifier,
+    aud: &str,
+    client_error: &Option<String>,
     config: GlobalConfig,
 ) -> eyre::Result<DataReport> {
     // Prepare output report for logging (analytics & debugging)
@@ -162,28 +132,37 @@ fn verify_android_or_apple_integrity(
         pass: false,
         out: OutEnum::Fail,
         timestamp: SystemTime::now(),
-        request_hash: request.request_hash.clone(),
-        bundle_identifier: request.bundle_identifier.clone(),
-        client_error: request.client_error,
-        aud: request.aud.clone(),
+        request_hash: request_hash.clone(),
+        bundle_identifier: bundle_identifier.clone(),
+        client_error: client_error.clone(),
+        aud: aud.to_string(),
         internal_debug_info: None,
         play_integrity: None,
     };
 
-    let verify_result = match request.bundle_identifier.platform() {
-        Platform::Android => android::verify(
-            &request.integrity_token.unwrap(), // Safe to unwrap because we've already validated this in the handler
-            &request.bundle_identifier,
-            &request.request_hash,
+    let verify_result = match verification_input {
+        IntegrityVerificationInput::Android { integrity_token } => android::verify(
+            &integrity_token,
+            bundle_identifier,
+            request_hash,
             config.android_outer_jwe_private_key,
         )?,
+        IntegrityVerificationInput::AppleInitialAttestation {
+            apple_initial_attestation,
+        } => apple::verify_initial_attestation(
+            &apple_initial_attestation,
+            bundle_identifier,
+            request_hash,
+        )?,
 
-        Platform::AppleIOS => apple::verify(
-            &request.apple_assertion,
-            &request.apple_public_key,
-            &request.apple_initial_attestation,
-            &request.request_hash,
-            &request.bundle_identifier,
+        IntegrityVerificationInput::AppleAssertion {
+            apple_assertion,
+            apple_public_key,
+        } => apple::verify(
+            &apple_assertion,
+            &apple_public_key,
+            bundle_identifier,
+            request_hash,
         )?,
     };
 
