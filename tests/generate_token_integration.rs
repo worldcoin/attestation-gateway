@@ -359,6 +359,8 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     let items = scan_result.items.unwrap_or_default();
 
+    dbg!(items.clone());
+
     if items.is_empty() {
         panic!("Key was not saved to Dynamo");
     }
