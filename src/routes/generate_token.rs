@@ -25,7 +25,7 @@ pub async fn handler(
     let aud = request.aud.clone();
     let request_hash = request.request_hash.clone();
 
-    let integrity_verification_input = IntegrityVerificationInput::new(&request)?;
+    let integrity_verification_input = IntegrityVerificationInput::from_request(&request)?;
 
     // Check the request hash is unique
     if redis

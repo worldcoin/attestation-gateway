@@ -133,7 +133,7 @@ impl IntegrityVerificationInput {
     ///
     /// # Panics
     /// No panics expected.
-    pub fn new(request: &TokenGenerationRequest) -> Result<Self, RequestError> {
+    pub fn from_request(request: &TokenGenerationRequest) -> Result<Self, RequestError> {
         match request.bundle_identifier.platform() {
             Platform::Android => {
                 if request.integrity_token.is_none() {
