@@ -351,13 +351,6 @@ async fn test_apple_initial_attestation_e2e_success() {
     // Verify the key was saved to Dynamo
     let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
 
-    // Without the scan the get_item fails sporadically in the CI
-    let _ = client
-        .scan()
-        .table_name("attestation-gateway-apple-keys".to_string())
-        .send()
-        .await;
-
     let get_item_result = client
         .get_item()
         .table_name("attestation-gateway-apple-keys".to_string())
