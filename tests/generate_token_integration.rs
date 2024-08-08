@@ -313,6 +313,11 @@ async fn test_server_error_is_properly_logged() {
 async fn test_apple_initial_attestation_e2e_success() {
     let api_router = get_api_router().await;
 
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(tracing::Level::TRACE)
+        .finish();
+    let _ = tracing::subscriber::set_global_default(subscriber);
+
     let aws_config = get_aws_config_extension().await;
 
     let token_generation_request = TokenGenerationRequest {
@@ -341,9 +346,6 @@ async fn test_apple_initial_attestation_e2e_success() {
         .await
         .unwrap();
 
-    // sleep to allow localstack dynamo to save to disk
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
     assert_eq!(response.status(), StatusCode::OK);
 
     let response = response.into_body().collect().await.unwrap().to_bytes();
@@ -353,6 +355,17 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     // Verify the key was saved to Dynamo
     let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
+
+    // FIXME: Remove, debugging only
+    let scan_result = client
+        .scan()
+        .table_name("attestation-gateway-apple-keys".to_string())
+        .send()
+        .await
+        .unwrap();
+    let items = scan_result.items();
+    println!("{:?}", items);
+
     let get_item_result = client
         .get_item()
         .table_name("attestation-gateway-apple-keys".to_string())
