@@ -350,22 +350,20 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     // Verify the key was saved to Dynamo (retried 3 times)
     let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
-    let scan_result = client
-        .scan()
-        .table_name("attestation-gateway-apple-keys")
+    let get_item_result = client
+        .get_item()
+        .table_name("attestation-gateway-apple-keys".to_string())
+        .key(
+            "key_id",
+            aws_sdk_dynamodb::types::AttributeValue::S(
+                "key#3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=".to_string(),
+            ),
+        )
         .send()
         .await
         .unwrap();
 
-    let items = scan_result.items.unwrap_or_default();
-
-    dbg!(items.clone());
-
-    if items.is_empty() {
-        panic!("Key was not saved to Dynamo");
-    }
-
-    let item = &items[0];
+    let item = get_item_result.item.unwrap();
 
     assert_eq!(item.get("public_key").unwrap().as_s().unwrap(), "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
     assert_eq!(item.get("counter").unwrap().as_n().unwrap(), "0");
