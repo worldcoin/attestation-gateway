@@ -348,28 +348,40 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     assert!(response["attestation_gateway_token"].is_string());
 
-    // Verify the key was saved to Dynamo
+    // Verify the key was saved to Dynamo (retried 3 times)
     let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
+    for (i, _) in (0..3).enumerate() {
+        let get_item_result = client
+            .get_item()
+            .table_name("attestation-gateway-apple-keys".to_string())
+            .key(
+                "key_id",
+                aws_sdk_dynamodb::types::AttributeValue::S(
+                    "key#3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=".to_string(),
+                ),
+            )
+            .send()
+            .await
+            .unwrap();
 
-    let get_item_result = client
-        .get_item()
-        .table_name("attestation-gateway-apple-keys".to_string())
-        .key(
-            "key_id",
-            aws_sdk_dynamodb::types::AttributeValue::S(
-                "key#3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=".to_string(),
-            ),
-        )
-        .send()
-        .await
-        .unwrap();
-    let item = get_item_result.item.unwrap();
-    assert_eq!(item.get("public_key").unwrap().as_s().unwrap(), "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
-    assert_eq!(item.get("counter").unwrap().as_n().unwrap(), "0");
-    assert_eq!(
-        item.get("bundle_identifier").unwrap().as_s().unwrap(),
-        "org.worldcoin.insight.staging"
-    );
+        let item = match get_item_result.item {
+            None => {
+                if i == 2 {
+                    panic!("Key was not saved to Dynamo");
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                continue;
+            }
+            Some(item) => item,
+        };
+
+        assert_eq!(item.get("public_key").unwrap().as_s().unwrap(), "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
+        assert_eq!(item.get("counter").unwrap().as_n().unwrap(), "0");
+        assert_eq!(
+            item.get("bundle_identifier").unwrap().as_s().unwrap(),
+            "org.worldcoin.insight.staging"
+        );
+    }
 
     // FIXME: Verify the token
 
