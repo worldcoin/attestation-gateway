@@ -22,14 +22,14 @@ mod dynamo;
 ///
 /// # Errors
 /// Returns server errors if something unexpected goes wrong during parsing and verification
-pub fn verify_initial_attestation(
+pub async fn verify_initial_attestation(
     apple_initial_attestation: &String,
     bundle_identifier: &BundleIdentifier,
     request_hash: &String,
     aws_config: &aws_config::SdkConfig,
     apple_keys_dynamo_table_name: &String,
 ) -> eyre::Result<VerificationOutput> {
-    let _attestation_result = decode_and_validate_initial_attestation(
+    let attestation_result = decode_and_validate_initial_attestation(
         apple_initial_attestation,
         request_hash,
         bundle_identifier.apple_app_id().context(format!(
@@ -41,6 +41,7 @@ pub fn verify_initial_attestation(
     dynamo::insert_apple_public_key(
         aws_config,
         apple_keys_dynamo_table_name,
+        bundle_identifier,
         attestation_result.key_id,
         attestation_result.public_key,
         attestation_result.receipt,

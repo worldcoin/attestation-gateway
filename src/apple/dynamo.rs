@@ -1,10 +1,11 @@
 use aws_sdk_dynamodb::types::AttributeValue;
 
-use crate::utils::{ClientError, ErrorCode};
+use crate::utils::{BundleIdentifier, ClientError, ErrorCode};
 
 pub async fn insert_apple_public_key(
     aws_config: &aws_config::SdkConfig,
     apple_keys_dynamo_table_name: &String,
+    bundle_identifier: &BundleIdentifier,
     key_id: String,
     public_key: String,
     receipt: String,
@@ -16,6 +17,10 @@ pub async fn insert_apple_public_key(
         .item("key_id", AttributeValue::S(format!("key#{key_id}")))
         .item("public_key", AttributeValue::S(public_key))
         .item("receipt", AttributeValue::S(receipt))
+        .item(
+            "bundle_identifier",
+            AttributeValue::S(bundle_identifier.to_string()),
+        )
         .item("counter", AttributeValue::N("0".to_string()))
         .item(
             "created_at",

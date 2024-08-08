@@ -296,7 +296,7 @@ impl ErrorCode {
             Self::IntegrityFailed => "Integrity checks have not passed.",
             Self::InternalServerError => "Internal server error. Please try again.",
             Self::InvalidAttestationForApp => "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object.",
-            Self::InvalidInitialAttestation => "This key has already gone through initial attestation. Use assertion instead.",
+            Self::InvalidInitialAttestation => "This public key has already gone through initial attestation. Use assertion instead.",
             Self::InvalidToken => "The provided token is invalid or malformed.",
         }
     }

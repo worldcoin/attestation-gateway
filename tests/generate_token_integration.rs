@@ -329,12 +329,13 @@ async fn test_apple_initial_attestation_e2e_success() {
     let body = serde_json::to_string(&token_generation_request).unwrap();
 
     let response = api_router
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/g")
                 .method(http::Method::POST)
                 .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
-                .body(Body::from(body))
+                .body(Body::from(body.clone()))
                 .unwrap(),
         )
         .await
@@ -342,10 +343,10 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let body: Value = serde_json::from_slice(&body).unwrap();
+    let response = response.into_body().collect().await.unwrap().to_bytes();
+    let response: Value = serde_json::from_slice(&response).unwrap();
 
-    assert!(body["attestation_gateway_token"].is_string());
+    assert!(response["attestation_gateway_token"].is_string());
 
     // Verify the key was saved to Dynamo
     let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
@@ -362,11 +363,42 @@ async fn test_apple_initial_attestation_e2e_success() {
         .await
         .unwrap();
     let item = get_item_result.item().unwrap();
-    let public_key = item.get("public_key").unwrap().as_s().unwrap();
-    assert_eq!(public_key, "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
+    assert_eq!(item.get("public_key").unwrap().as_s().unwrap(), "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
     assert_eq!(item.get("counter").unwrap().as_n().unwrap(), "0");
+    assert_eq!(
+        item.get("bundle_identifier").unwrap().as_s().unwrap(),
+        "org.worldcoin.insight.staging"
+    );
 
     // FIXME: Verify the token
+
+    // SECTION: Test that the same public key cannot be verified as an initial attestation (we avoid another test to avoid duplicating the same calls)
+
+    // Call this to flush Redis and avoid the duplicate request hash error which is not what we are testing here
+    let _ = get_redis_extension().await;
+
+    let response = api_router
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let response = response.into_body().collect().await.unwrap().to_bytes();
+    let response: Value = serde_json::from_slice(&response).unwrap();
+    assert_eq!(
+        response,
+        json!({
+            "code": "invalid_initial_attestation",
+            "details": "This public key has already gone through initial attestation. Use assertion instead."
+        })
+    );
 }
 
 #[tokio::test]
@@ -400,10 +432,10 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let body: Value = serde_json::from_slice(&body).unwrap();
+    let response = response.into_body().collect().await.unwrap().to_bytes();
+    let response: Value = serde_json::from_slice(&response).unwrap();
     assert_eq!(
-        body,
+        response,
         json!({
             "code": "bad_request",
             "details": "`apple_assertion` and `apple_public_key` are not allowed when `apple_initial_attestation` is provided."
