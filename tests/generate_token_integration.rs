@@ -341,6 +341,9 @@ async fn test_apple_initial_attestation_e2e_success() {
         .await
         .unwrap();
 
+    // sleep to allow localstack dynamo to save to disk
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
     assert_eq!(response.status(), StatusCode::OK);
 
     let response = response.into_body().collect().await.unwrap().to_bytes();
