@@ -353,13 +353,6 @@ async fn test_apple_initial_attestation_e2e_success() {
     let scan_result = client
         .scan()
         .table_name("attestation-gateway-apple-keys")
-        .filter_expression("key_id = :key_id")
-        .expression_attribute_values(
-            ":key_id",
-            aws_sdk_dynamodb::types::AttributeValue::S(
-                "key#3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=".to_string(),
-            ),
-        )
         .send()
         .await
         .unwrap();
