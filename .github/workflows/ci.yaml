@@ -104,9 +104,9 @@ jobs:
           docker compose -f tests/docker-compose.test.yml up -d
 
           # Wait for the application to start
-          sleep 5
+          sleep 10
 
-          docker logs local-kms
+          docker logs localstack
 
       - name: Run tests
         run: cargo test --all

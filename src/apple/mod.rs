@@ -16,16 +16,20 @@ use x509_parser::{
     prelude::{FromDer, X509Certificate},
 };
 
+mod dynamo;
+
 /// Verifies an Apple initial attestation and saves the key to Dynamo DB
 ///
 /// # Errors
 /// Returns server errors if something unexpected goes wrong during parsing and verification
-pub fn verify_initial_attestation(
+pub async fn verify_initial_attestation(
     apple_initial_attestation: &String,
     bundle_identifier: &BundleIdentifier,
     request_hash: &String,
+    aws_config: &aws_config::SdkConfig,
+    apple_keys_dynamo_table_name: &String,
 ) -> eyre::Result<VerificationOutput> {
-    let _attestation_result = decode_and_validate_initial_attestation(
+    let attestation_result = decode_and_validate_initial_attestation(
         apple_initial_attestation,
         request_hash,
         bundle_identifier.apple_app_id().context(format!(
@@ -34,7 +38,21 @@ pub fn verify_initial_attestation(
         AAGUID::from_bundle_identifier(bundle_identifier)?,
     )?;
 
-    Err(eyre::eyre!("Not implemented"))
+    dynamo::insert_apple_public_key(
+        aws_config,
+        apple_keys_dynamo_table_name,
+        bundle_identifier,
+        attestation_result.key_id,
+        attestation_result.public_key,
+        attestation_result.receipt,
+    )
+    .await?;
+
+    Ok(VerificationOutput {
+        success: true,
+        parsed_play_integrity_token: None,
+        client_error: None,
+    })
 }
 
 /// Verifies an Apple assertion (and optionally the initially attestation if this is a new public key)
@@ -224,8 +242,8 @@ fn decode_and_validate_initial_attestation(
     }
 
     Ok(InitialAttestationOutput {
-        public_key: hex::encode(public_key_der),
-        receipt: hex::encode(attestation.att_stmt.receipt.as_ref()),
+        public_key: general_purpose::STANDARD_NO_PAD.encode(public_key_der),
+        receipt: general_purpose::STANDARD_NO_PAD.encode(attestation.att_stmt.receipt.as_ref()),
         key_id: general_purpose::STANDARD.encode(credential_id),
     })
 }
@@ -285,7 +303,8 @@ mod tests {
 
         assert!(!result.receipt.is_empty());
         assert!(!result.key_id.is_empty());
-        assert_eq!(result.public_key, "3059301306072a8648ce3d020106082a8648ce3d030107034200041c1ea50e53ecc723444ba25260cfb0e6b2311799cf78dd7d77036548b60653d2c5c7991838a79a8d6aec10f4f795a7f550bd3b4b400d546fb61ebe650a27a20f");
+        // cspell:disable-next-line
+        assert_eq!(result.public_key, "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
     }
 
     #[test]
