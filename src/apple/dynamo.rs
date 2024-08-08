@@ -38,7 +38,6 @@ pub async fn insert_apple_public_key(
         Err(e) => {
             let e = e.into_service_error();
             if e.is_conditional_check_failed_exception() {
-                // TODO: Convert to ClientError
                 eyre::bail!(ClientError {
                     code: ErrorCode::InvalidInitialAttestation,
                     internal_debug_info: "the attested apple key ID is already registered in DB"

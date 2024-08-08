@@ -155,7 +155,7 @@ impl IntegrityVerificationInput {
                         return Err(RequestError {
                             code: ErrorCode::BadRequest,
                             details: Some(
-                                "For initial attestations `apple_assertion` and `apple_public_key` are not allowed."
+                                "For initial attestations, `apple_assertion` and `apple_public_key` attributes are not allowed."
                                     .to_string(),
                             ),
                         });

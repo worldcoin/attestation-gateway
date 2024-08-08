@@ -51,6 +51,7 @@ pub async fn handler(
         global_config.clone(),
         &aws_config,
     )
+    .await
     .map_err(|e| {
         // Check if we have a ClientError in the error chain and return to the client without further logging
         if let Some(client_error) = e.downcast_ref::<ClientError>() {
@@ -119,7 +120,7 @@ pub async fn handler(
     Ok(Json(response))
 }
 
-fn verify_android_or_apple_integrity(
+async fn verify_android_or_apple_integrity(
     verification_input: IntegrityVerificationInput,
     request_hash: &String,
     bundle_identifier: &BundleIdentifier,
@@ -151,13 +152,16 @@ fn verify_android_or_apple_integrity(
         )?,
         IntegrityVerificationInput::AppleInitialAttestation {
             apple_initial_attestation,
-        } => apple::verify_initial_attestation(
-            &apple_initial_attestation,
-            bundle_identifier,
-            request_hash,
-            &aws_config,
-            &config.apple_keys_dynamo_table_name,
-        )?,
+        } => {
+            apple::verify_initial_attestation(
+                &apple_initial_attestation,
+                bundle_identifier,
+                request_hash,
+                aws_config,
+                &config.apple_keys_dynamo_table_name,
+            )
+            .await?
+        }
 
         IntegrityVerificationInput::AppleAssertion {
             apple_assertion,

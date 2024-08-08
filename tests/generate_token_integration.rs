@@ -439,7 +439,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
         response,
         json!({
             "code": "bad_request",
-            "details": "`apple_assertion` and `apple_public_key` are not allowed when `apple_initial_attestation` is provided."
+            "details": "For initial attestations, `apple_assertion` and `apple_public_key` attributes are not allowed."
         })
     );
 }
