@@ -313,11 +313,6 @@ async fn test_server_error_is_properly_logged() {
 async fn test_apple_initial_attestation_e2e_success() {
     let api_router = get_api_router().await;
 
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(tracing::Level::TRACE)
-        .finish();
-    let _ = tracing::subscriber::set_global_default(subscriber);
-
     let aws_config = get_aws_config_extension().await;
 
     let token_generation_request = TokenGenerationRequest {
@@ -364,6 +359,7 @@ async fn test_apple_initial_attestation_e2e_success() {
         .await
         .unwrap();
     let items = scan_result.items();
+    println!("items");
     println!("{:?}", items);
 
     let get_item_result = client
@@ -378,6 +374,10 @@ async fn test_apple_initial_attestation_e2e_success() {
         .send()
         .await
         .unwrap();
+    println!("item");
+    println!("{:?}", get_item_result.item);
+    println!("item()");
+    println!("{:?}", get_item_result.item());
     let item = get_item_result.item().unwrap();
     assert_eq!(item.get("public_key").unwrap().as_s().unwrap(), "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
     assert_eq!(item.get("counter").unwrap().as_n().unwrap(), "0");
