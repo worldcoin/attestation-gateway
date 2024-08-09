@@ -370,7 +370,7 @@ async fn test_apple_initial_attestation_e2e_success() {
     let item = get_item_result.item.unwrap();
 
     assert_eq!(item.get("public_key").unwrap().as_s().unwrap(), "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
-    assert_eq!(item.get("counter").unwrap().as_n().unwrap(), "0");
+    assert_eq!(item.get("key_counter").unwrap().as_n().unwrap(), "0");
     assert_eq!(
         item.get("bundle_identifier").unwrap().as_s().unwrap(),
         "org.worldcoin.insight.staging"
