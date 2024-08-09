@@ -9,6 +9,7 @@
     "decrypter",
     "dotenv",
     "encrypter",
+    "pkey",
     "rustc",
     "schemars",
     "secp256r1",

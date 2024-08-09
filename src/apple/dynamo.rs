@@ -5,7 +5,7 @@ use crate::utils::{BundleIdentifier, ClientError, ErrorCode};
 pub async fn insert_apple_public_key(
     aws_config: &aws_config::SdkConfig,
     apple_keys_dynamo_table_name: &String,
-    bundle_identifier: &BundleIdentifier,
+    bundle_identifier: BundleIdentifier,
     key_id: String,
     public_key: String,
     receipt: String,
