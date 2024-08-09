@@ -3,6 +3,7 @@ use std::str::FromStr;
 use crate::utils::{BundleIdentifier, ClientError, ErrorCode, VerificationOutput};
 use base64::{engine::general_purpose, Engine as _};
 use der_parser::parse_der;
+use dynamo::{fetch_apple_public_key, update_apple_public_key_counter_plus};
 use eyre::ContextCompat;
 use openssl::{
     hash::MessageDigest,
@@ -19,7 +20,8 @@ use x509_parser::{
     prelude::{FromDer, X509Certificate},
 };
 
-mod dynamo;
+// made public to be used in integration tests
+pub mod dynamo;
 
 /// Verifies an Apple initial attestation and saves the key to Dynamo DB
 ///
@@ -63,27 +65,46 @@ pub async fn verify_initial_attestation(
 /// # Errors
 ///
 /// Returns server errors if something unexpected goes wrong during parsing and verification
-pub fn verify(
+pub async fn verify(
     apple_assertion: String,
     apple_public_key: String,
     bundle_identifier: &BundleIdentifier,
     request_hash: &str,
+    aws_config: &aws_config::SdkConfig,
+    apple_keys_dynamo_table_name: &String,
 ) -> eyre::Result<VerificationOutput> {
-    // Fetch public key and counter from DynamoDB
+    // Fetch public key and counter from DB
+    let key = fetch_apple_public_key(
+        aws_config,
+        apple_keys_dynamo_table_name,
+        apple_public_key.clone(),
+    )
+    .await?;
 
-    let last_counter = 0;
+    if &key.bundle_identifier != bundle_identifier {
+        eyre::bail!(ClientError {
+            code: ErrorCode::InvalidPublicKey,
+            internal_debug_info: "the key_id is not valid for this bundle identifier".to_string(),
+        });
+    }
 
     decode_and_validate_assertion(
         apple_assertion,
-        apple_public_key,
+        key.public_key,
         bundle_identifier.apple_app_id().context(format!(
             "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
         ))?,
         request_hash,
-        last_counter,
+        key.counter,
     )?;
 
-    // Update `counter`
+    // Update the key counter on DB
+    update_apple_public_key_counter_plus(
+        aws_config,
+        apple_keys_dynamo_table_name,
+        apple_public_key,
+    )
+    .await?;
 
     Ok(VerificationOutput {
         success: true,

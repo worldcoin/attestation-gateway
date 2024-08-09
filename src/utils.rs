@@ -256,6 +256,7 @@ pub enum ErrorCode {
     InternalServerError,
     InvalidAttestationForApp,
     InvalidInitialAttestation,
+    InvalidPublicKey,
     InvalidToken,
 }
 
@@ -269,6 +270,7 @@ impl std::fmt::Display for ErrorCode {
             Self::InternalServerError => write!(f, "internal_server_error"),
             Self::InvalidAttestationForApp => write!(f, "invalid_attestation_for_app"),
             Self::InvalidInitialAttestation => write!(f, "invalid_initial_attestation"),
+            Self::InvalidPublicKey => write!(f, "invalid_public_key"),
             Self::InvalidToken => write!(f, "invalid_token"),
         }
     }
@@ -284,6 +286,7 @@ impl ErrorCode {
             | Self::IntegrityFailed
             | Self::InvalidAttestationForApp
             | Self::InvalidInitialAttestation
+            | Self::InvalidPublicKey
             | Self::InvalidToken => axum::http::StatusCode::BAD_REQUEST,
         }
     }
@@ -297,6 +300,7 @@ impl ErrorCode {
             Self::InternalServerError => "Internal server error. Please try again.",
             Self::InvalidAttestationForApp => "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object.",
             Self::InvalidInitialAttestation => "This public key has already gone through initial attestation. Use assertion instead.",
+            Self::InvalidPublicKey => "Public key has not been attested.",
             Self::InvalidToken => "The provided token is invalid or malformed.",
         }
     }

@@ -161,3 +161,22 @@ fn verify_assertion_success() {
 
     assert!(result.is_ok());
 }
+
+#[test]
+fn verify_assertion_success_two() {
+    // cspell:disable-next-line
+    let valid_assertion = "omlzaWduYXR1cmVYRjBEAiBR6EAxMJ5hyeJgItBum9qi0yNnPpl5COOw/m740jfpmQIgeoTihUfmyWMXGGMAOXq83wKD4dJ1Tv9CD1VPVFWN1DtxYXV0aGVudGljYXRvckRhdGFYJdJYCIP3FikJXRKshlK4W68Qb+I/1miZc5AejfQ5oOt1QAAAAAE";
+
+    let result = decode_and_validate_assertion(
+        valid_assertion.to_string(),
+        // notice this is the public key from test_verify_initial_attestation_success
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEh4Bd1IrEnNal/KNplK6VVrByUq4jsVtVVxpMI/mezeQcluflXHikUxYe+xoB/fAL3VnEA5zJlLobpHcfn/4+7w".to_string(),
+        BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
+        "test",
+        0,
+    );
+
+    dbg!(&result);
+
+    assert!(result.is_ok());
+}
