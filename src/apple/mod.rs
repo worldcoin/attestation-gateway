@@ -334,7 +334,14 @@ fn decode_and_validate_assertion(
     request_hash: &str,
     last_counter: u32,
 ) -> eyre::Result<()> {
-    let assertion_bytes = general_purpose::STANDARD_NO_PAD.decode(assertion)?;
+    let assertion_bytes = general_purpose::STANDARD_NO_PAD
+        .decode(assertion)
+        .map_err(|_| {
+            eyre::eyre!(ClientError {
+                code: ErrorCode::InvalidToken,
+                internal_debug_info: "error decoding base64 encoded assertion.".to_string(),
+            })
+        })?;
 
     let assertion: Assertion = serde_cbor::from_slice(&assertion_bytes)?;
 
@@ -356,7 +363,8 @@ fn decode_and_validate_assertion(
     if !verifier.verify(&assertion.signature)? {
         eyre::bail!(ClientError {
             code: ErrorCode::InvalidToken,
-            internal_debug_info: "signature failed validation for public key".to_string(),
+            internal_debug_info:
+                "signature failed validation for public key (request_hash may be wrong)".to_string(),
         });
     }
 

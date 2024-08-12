@@ -9,12 +9,14 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use tower::ServiceExt; // for response.`collect`
+use tower::ServiceExt; // for `response.collect`
 use tracing_test::traced_test;
 
 static VALID_INTEGRITY_TOKEN: &str = "eyJhbGciOiJBMjU2S1ciLCJlbmMiOiJBMjU2R0NNIn0.cNECHTrf6KAJDjDGqkWF4O0uMey-S4rjJYV9GNuyVGZlSOJV_4VaTg.gC6osYvLIhvwroOJ.EYkQCz4FFVNdRozPflriVz23J4AkP3FXnYU-p2IzEp9I5GHsYnEQg8CHCx_bNRBP_kUiWKjUDNW7XV-f1xHp-F8lDhuda-eouMdzdzphbQPw_jCEo3ujN-i6tO8NWUqOX3L8IhYQxDilz3yQ6j5_2ESlrNfm9J2KO9UaK5xAvNvUeplDCuG9DbAjoiqyKo1F7Arezqqo7M0NeMMD3EWVf36Pqx3_Fna14wdUx6mRQeMcZ5wYtQprU7mJXGIPoCGvdNuSzwM1Hcgmey8mp7HLXTQP1EXrogzSoGkTdZomfz0wnrB8WkLT5wDg3eb1lhYbih9SwupTrakAQG9LdBAWEldO_GzX1JW6zI51tZIUlWjyNhNrWJtyYNAYSSbc9dY4qN5ffNd0vhVlMB5DWD6v-ztaPASG3776e_mfgYsCEd_1PsrW3CbuVY-m5fva2qi0ar1Hye5ZSrE267ND_2CIvjqnEjDKji3S3PepTlbPv1_VGzRrra9QpuJKVKxefeoNGwZ-U8jDeJCErfFdOFJaXJ94McnO0IWc6aoEQf3stzqTEsx_T9MIP6n8TGx-w0xG-WJIVu_P1nb5Ybva8F8oqgtZwhuTGnin3ErSlHAn8HpdJ3-2T0BMuvf8ITfBgdSvS_aMJTPfPp3M8K0O-LN-6fGDZc-brKv_i7s-VQZj6w6D-EJ9xwGbXwxOk7mkyIAseUS-SEXNxG1OcC4QT-e47ncyq2C_KzR3-5spdzCg0FdxvqDuBhj8G2rd-LeElXohmITmJ3Ee_VafaFiYGcRzJdr6wfgF-LJoGNr8GMDxcEH9tIAZwDn6f3BearErgn8EJFrNhMDcallTWQX1AoPlCEhaJBB0RB5L0grAqOqkhM5XqrqzYBUIiIP3Cs1LQSmy2Ai2z6iOaKfyOU_rNXq_jhGmvr9u9PBYjnZhnnOoSVmNp8PkGdb8pLrL_LzMuHundTFOZUsbz3tgyqKzh8dae-Yf6D5u_byCUyMscnLL9Q520NfWnXtHVYJCWZOeU9F693MFUUE4aOuEZFfSk998QTSEFf-TagC7vP2rH4Zpux0sCM2hqxjOOvZEyg3Ef8FsBvg9srRIIb_L5mpVa0jasTyqfyDVECxZO4YiqZW5CWPWLDfgT2MkYPOT8VclhZ5ZyJIKu7ZamNGriSZBhHjKQi2g0ap9A75qnyrdq-hEJZo4gqKmUou9f3fQAzT3sCPj1i3PEWVmHQvlt5vbDTqmBBxyLcgSkd0oNrpI-So2jf94syvImh_5OKexCdde5Fj91o8.5_KKK0EuQwEA5tjlpxaRzA";
 
 static APPLE_KEYS_DYNAMO_TABLE_NAME: &str = "attestation-gateway-apple-keys";
+
+// SECTION --- setup & config ---
 
 async fn get_aws_config_extension() -> Extension<aws_config::SdkConfig> {
     // Required to load default AWS Config variables
@@ -76,6 +78,8 @@ async fn get_api_router() -> aide::axum::ApiRouter {
         .layer(get_global_config_extension())
         .layer(get_redis_extension().await)
 }
+
+// SECTION ------------------ android tests ------------------
 
 #[tokio::test]
 async fn test_android_e2e_success() {
@@ -313,6 +317,8 @@ async fn test_server_error_is_properly_logged() {
     assert!(logs_contain("Error verifying Android or Apple integrity e=Invalid key format: The key size must be 32: 7"));
 }
 
+// SECTION --- apple initial attestation tests ---
+
 #[tokio::test]
 async fn test_apple_initial_attestation_e2e_success() {
     let api_router = get_api_router().await;
@@ -378,7 +384,7 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     // FIXME: Verify the token
 
-    // SECTION: Test that the same public key cannot be verified as an initial attestation (we avoid another test to avoid duplicating the same calls)
+    // ANCHOR: Test that the same public key cannot be verified as an initial attestation (we avoid another test to avoid duplicating the same calls)
 
     // Call this to flush Redis and avoid the duplicate request hash error which is not what we are testing here
     let _ = get_redis_extension().await;
@@ -449,47 +455,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
     );
 }
 
-#[tokio::test]
-async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
-    let api_router = get_api_router().await;
-
-    let token_generation_request = TokenGenerationRequest {
-        integrity_token: None,
-        aud: "toolsforhumanity.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
-        client_error: None,
-        apple_initial_attestation: None,
-        apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
-        apple_assertion: None,
-    };
-
-    let body = serde_json::to_string(&token_generation_request).unwrap();
-
-    let response = api_router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/g")
-                .method(http::Method::POST)
-                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
-                .body(Body::from(body.clone()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let body: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(
-        body,
-        json!({
-            "code": "bad_request",
-            "details": "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
-        })
-    );
-}
+// SECTION --- apple assertions tests ---
 
 #[tokio::test]
 async fn test_apple_assertion_e2e_success() {
@@ -554,4 +520,323 @@ async fn test_apple_assertion_e2e_success() {
     .unwrap();
 
     assert_eq!(key.counter, 1);
+}
+
+#[tokio::test]
+async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates_a_client_error() {
+    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
+    let api_router = get_api_router().await;
+
+    let aws_config = get_aws_config_extension().await;
+
+    // Insert key into Dynamo first
+    apple::dynamo::insert_apple_public_key(
+        &aws_config.0,
+        &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
+        BundleIdentifier::IOSStageWorldApp,
+        test_key.to_string(),
+        // public key can also be retrieved from the assertion
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw".to_string(),
+        "receipt".to_string(),
+    ).await.unwrap();
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: Some(test_key.to_string()),
+        apple_assertion: Some("not_even_base64".to_string()),
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = response.into_body().collect().await.unwrap().to_bytes();
+    let response: Value = serde_json::from_slice(&response).unwrap();
+
+    assert_eq!(
+        response,
+        json!({
+            "code": "invalid_token",
+            "details": "The provided token or attestation is invalid or malformed."
+        })
+    );
+}
+
+#[tokio::test]
+async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_client_error() {
+    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
+    let api_router = get_api_router().await;
+
+    let aws_config = get_aws_config_extension().await;
+
+    // Insert key into Dynamo first
+    apple::dynamo::insert_apple_public_key(
+        &aws_config.0,
+        &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
+        BundleIdentifier::IOSStageWorldApp,
+        test_key.to_string(),
+        // public key can also be retrieved from the assertion
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw".to_string(),
+        "receipt".to_string(),
+    ).await.unwrap();
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: Some(test_key.to_string()),
+        // Valid base64 but invalid CBOR message
+        // FIXME: padding
+        apple_assertion: Some("aW52YWxpZA==".to_string()),
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = response.into_body().collect().await.unwrap().to_bytes();
+    let response: Value = serde_json::from_slice(&response).unwrap();
+
+    assert_eq!(
+        response,
+        json!({
+            "code": "invalid_token",
+            "details": "The provided token or attestation is invalid or malformed."
+        })
+    );
+}
+
+#[tokio::test]
+async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
+    let api_router = get_api_router().await;
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
+        apple_assertion: None,
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "code": "bad_request",
+            "details": "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
+        })
+    );
+}
+
+#[tokio::test]
+async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
+    let api_router = get_api_router().await;
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
+        apple_assertion: Some("0x00000000000000000000000000000000".to_string()),
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "code": "invalid_public_key",
+            "details": "Public key has not been attested."
+        })
+    );
+}
+
+#[tokio::test]
+async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertion() {
+    // This assertion can be obtained from `verify_assertion_failure_with_invalid_key`
+    let invalid_assertion = "omlzaWduYXR1cmVYRzBFAiAzg4lX/q4SMY/HZLegpV+1I5eUE1fRldlC4yloghLWsQIhAMSlrYPwou6WJ0JsiVCE00G2+ZCBphnyOO3imjI68yCccWF1dGhlbnRpY2F0b3JEYXRhWEt0aGlzX2lzX25vdF9hX3ZhbGlkX2F1dGhlbnRpY2F0b3JfZGF0YV9idXRfdmVyaWZpY2F0aW9uX3dpbGxfbm90X3JlYWNoX2hlcmU";
+    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
+    let api_router = get_api_router().await;
+
+    let aws_config = get_aws_config_extension().await;
+
+    // Insert key into Dynamo first
+    apple::dynamo::insert_apple_public_key(
+        &aws_config.0,
+        &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
+        BundleIdentifier::IOSStageWorldApp,
+        test_key.to_string(),
+        // public key can also be retrieved from the assertion
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw".to_string(),
+        "receipt".to_string(),
+    ).await.unwrap();
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        request_hash: "testhash".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: Some(test_key.to_string()),
+        apple_assertion: Some(invalid_assertion.to_string()),
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = response.into_body().collect().await.unwrap().to_bytes();
+    let response: Value = serde_json::from_slice(&response).unwrap();
+    assert_eq!(
+        response,
+        json!({
+            "code": "invalid_token",
+            "details": "The provided token or attestation is invalid or malformed."
+        })
+    );
+}
+
+#[tokio::test]
+async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identifier_pair() {
+    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
+    let api_router = get_api_router().await;
+
+    let aws_config = get_aws_config_extension().await;
+
+    // Insert key into Dynamo first
+    apple::dynamo::insert_apple_public_key(
+        &aws_config.0,
+        &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
+        BundleIdentifier::IOSProdWorldApp, // <-- we also change this to test explicitly the `rp_id` check in the assertion
+        test_key.to_string(),
+        // public key can also be retrieved from the assertion
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw".to_string(),
+        "receipt".to_string(),
+    ).await.unwrap();
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        // Notice the bundle identifier is different
+        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        request_hash: "testhash".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: Some(test_key.to_string()),
+        apple_assertion: Some("omlzaWduYXR1cmVYRzBFAiBpd06ZONnjmJ2m/kD/DYQ5G5WQzEaXsuI68fo+746SRAIhAKEqmog8GorUtxeFcAHeB4yYj0xrTzQHenABYSwSDUBWcWF1dGhlbnRpY2F0b3JEYXRhWCXSWAiD9xYpCV0SrIZSuFuvEG/iP9ZomXOQHo30OaDrdUAAAAAB".to_string()),
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = response.into_body().collect().await.unwrap().to_bytes();
+    let response: Value = serde_json::from_slice(&response).unwrap();
+    assert_eq!(
+        response,
+        json!({
+            "code": "invalid_attestation_for_app",
+            "details": "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object."
+        })
+    );
 }

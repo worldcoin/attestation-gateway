@@ -301,7 +301,7 @@ impl ErrorCode {
             Self::InvalidAttestationForApp => "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object.",
             Self::InvalidInitialAttestation => "This public key has already gone through initial attestation. Use assertion instead.",
             Self::InvalidPublicKey => "Public key has not been attested.",
-            Self::InvalidToken => "The provided token is invalid or malformed.",
+            Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
         }
     }
 }
