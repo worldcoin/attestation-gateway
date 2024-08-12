@@ -65,6 +65,11 @@ pub struct ApplePublicKeyRecordOutput {
     pub bundle_identifier: BundleIdentifier,
 }
 
+/// Fetches an Apple public key from the relevant table
+///
+/// # Errors
+/// Will return a `ClientError` if the `key_id` is not found in the DB.
+/// Returns an `aws_sdk_dynamodb::Error` if the request fails.
 pub async fn fetch_apple_public_key(
     aws_config: &aws_config::SdkConfig,
     apple_keys_dynamo_table_name: &String,
@@ -79,21 +84,30 @@ pub async fn fetch_apple_public_key(
         .send()
         .await?;
 
-    // FIXME: Unwraps
     match request.item {
         Some(item) => {
-            let public_key = item.get("public_key").unwrap().as_s().unwrap().to_string();
+            let public_key = item
+                .get("public_key")
+                .ok_or_else(|| eyre::eyre!("public_key not found for key: {key_id}"))?
+                .as_s()
+                .map_err(|_| eyre::eyre!("unable to parse public_key as_s for key: {key_id}"))?
+                .to_string();
             let counter = item
                 .get("key_counter")
-                .unwrap()
+                .ok_or_else(|| eyre::eyre!("key_counter not found for key: {key_id}"))?
                 .as_n()
-                .unwrap()
+                .map_err(|_| eyre::eyre!("unable to parse key_counter as_n for key: {key_id}"))?
                 .parse::<u32>()
-                .unwrap();
+                .map_err(|_| eyre::eyre!("unable to parse key_counter as u32 for key: {key_id}"))?;
 
             let bundle_identifier: BundleIdentifier = serde_json::from_str(&format!(
                 "\"{:}\"",
-                item.get("bundle_identifier").unwrap().as_s().unwrap()
+                item.get("bundle_identifier")
+                    .ok_or_else(|| eyre::eyre!("bundle_identifier not found for key: {key_id}"))?
+                    .as_s()
+                    .map_err(|_| eyre::eyre!(
+                        "unable to parse bundle_identifier as_s for key: {key_id}"
+                    ))?
             ))?;
 
             Ok(ApplePublicKeyRecordOutput {
@@ -111,6 +125,10 @@ pub async fn fetch_apple_public_key(
     }
 }
 
+/// Increments the `key_counter` by 1 of an Apple public key (to prevent replay attacks)
+///
+/// # Errors
+/// Will return an `aws_sdk_dynamodb::Error` if the request fails.
 pub async fn update_apple_public_key_counter_plus(
     aws_config: &aws_config::SdkConfig,
     apple_keys_dynamo_table_name: &String,
