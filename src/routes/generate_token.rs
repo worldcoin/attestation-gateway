@@ -44,10 +44,10 @@ pub async fn handler(
 
     let report = verify_android_or_apple_integrity(
         integrity_verification_input,
-        &request.request_hash,
-        &request.bundle_identifier,
+        request.request_hash,
+        request.bundle_identifier,
         &request.aud,
-        &request.client_error,
+        request.client_error,
         global_config.clone(),
         &aws_config,
     )
@@ -122,10 +122,10 @@ pub async fn handler(
 
 async fn verify_android_or_apple_integrity(
     verification_input: IntegrityVerificationInput,
-    request_hash: &String,
-    bundle_identifier: &BundleIdentifier,
+    request_hash: String,
+    bundle_identifier: BundleIdentifier,
     aud: &str,
-    client_error: &Option<String>,
+    client_error: Option<String>,
     config: GlobalConfig,
     aws_config: &aws_config::SdkConfig,
 ) -> eyre::Result<DataReport> {
@@ -146,15 +146,15 @@ async fn verify_android_or_apple_integrity(
     let verify_result = match verification_input {
         IntegrityVerificationInput::Android { integrity_token } => android::verify(
             &integrity_token,
-            bundle_identifier,
-            request_hash,
+            &bundle_identifier,
+            &request_hash,
             config.android_outer_jwe_private_key,
         )?,
         IntegrityVerificationInput::AppleInitialAttestation {
             apple_initial_attestation,
         } => {
             apple::verify_initial_attestation(
-                &apple_initial_attestation,
+                apple_initial_attestation,
                 bundle_identifier,
                 request_hash,
                 aws_config,
@@ -166,12 +166,17 @@ async fn verify_android_or_apple_integrity(
         IntegrityVerificationInput::AppleAssertion {
             apple_assertion,
             apple_public_key,
-        } => apple::verify(
-            &apple_assertion,
-            &apple_public_key,
-            bundle_identifier,
-            request_hash,
-        )?,
+        } => {
+            apple::verify(
+                apple_assertion,
+                apple_public_key,
+                &bundle_identifier,
+                &request_hash,
+                aws_config,
+                &config.apple_keys_dynamo_table_name,
+            )
+            .await?
+        }
     };
 
     report.play_integrity = verify_result.parsed_play_integrity_token;
