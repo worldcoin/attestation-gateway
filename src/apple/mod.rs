@@ -180,7 +180,7 @@ fn decode_and_validate_initial_attestation(
     expected_app_id: &str,
     expected_aaguid: AAGUID,
 ) -> eyre::Result<InitialAttestationOutput> {
-    let attestation_bytes = general_purpose::STANDARD_NO_PAD
+    let attestation_bytes = general_purpose::STANDARD
         .decode(apple_initial_attestation)
         .map_err(|e| {
             tracing::debug!(?e, "error decoding base64 encoded attestation.");
@@ -286,8 +286,8 @@ fn decode_and_validate_initial_attestation(
     }
 
     Ok(InitialAttestationOutput {
-        public_key: general_purpose::STANDARD_NO_PAD.encode(public_key_der),
-        receipt: general_purpose::STANDARD_NO_PAD.encode(attestation.att_stmt.receipt.as_ref()),
+        public_key: general_purpose::STANDARD.encode(public_key_der),
+        receipt: general_purpose::STANDARD.encode(attestation.att_stmt.receipt.as_ref()),
         key_id: general_purpose::STANDARD.encode(credential_id),
     })
 }
@@ -334,14 +334,12 @@ fn decode_and_validate_assertion(
     request_hash: &str,
     last_counter: u32,
 ) -> eyre::Result<()> {
-    let assertion_bytes = general_purpose::STANDARD_NO_PAD
-        .decode(assertion)
-        .map_err(|_| {
-            eyre::eyre!(ClientError {
-                code: ErrorCode::InvalidToken,
-                internal_debug_info: "error decoding base64 encoded assertion.".to_string(),
-            })
-        })?;
+    let assertion_bytes = general_purpose::STANDARD.decode(assertion).map_err(|_| {
+        eyre::eyre!(ClientError {
+            code: ErrorCode::InvalidToken,
+            internal_debug_info: "error decoding base64 encoded assertion.".to_string(),
+        })
+    })?;
 
     let assertion: Assertion = serde_cbor::from_slice(&assertion_bytes)?;
 
@@ -356,8 +354,7 @@ fn decode_and_validate_assertion(
     let nonce: &[u8] = &hasher.finish();
 
     // Step 3: Verify signature
-    let public_key =
-        PKey::public_key_from_der(&general_purpose::STANDARD_NO_PAD.decode(public_key)?)?;
+    let public_key = PKey::public_key_from_der(&general_purpose::STANDARD.decode(public_key)?)?;
     let mut verifier = Verifier::new(MessageDigest::sha256(), &public_key)?;
     verifier.update(nonce)?;
     if !verifier.verify(&assertion.signature)? {

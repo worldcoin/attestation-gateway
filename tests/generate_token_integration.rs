@@ -9,6 +9,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use serial_test::serial;
 use tower::ServiceExt; // for `response.collect`
 use tracing_test::traced_test;
 
@@ -82,6 +83,7 @@ async fn get_api_router() -> aide::axum::ApiRouter {
 // SECTION ------------------ android tests ------------------
 
 #[tokio::test]
+#[serial]
 async fn test_android_e2e_success() {
     let api_router = get_api_router().await;
 
@@ -121,6 +123,7 @@ async fn test_android_e2e_success() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_token_generation_fails_on_invalid_bundle_identifier() {
     let api_router = get_api_router().await;
 
@@ -157,6 +160,7 @@ async fn test_token_generation_fails_on_invalid_bundle_identifier() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_android_token_generation_with_invalid_attributes() {
     let api_router = get_api_router().await;
 
@@ -200,6 +204,7 @@ async fn test_android_token_generation_with_invalid_attributes() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_token_generation_fails_on_duplicate_request_hash() {
     let api_router = get_api_router().await;
 
@@ -254,6 +259,7 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
 
 #[traced_test]
 #[tokio::test]
+#[serial]
 async fn test_server_error_is_properly_logged() {
     // Override global config to use an invalid JWE private key which will cause a server error
     fn get_local_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
@@ -320,6 +326,7 @@ async fn test_server_error_is_properly_logged() {
 // SECTION --- apple initial attestation tests ---
 
 #[tokio::test]
+#[serial]
 async fn test_apple_initial_attestation_e2e_success() {
     let api_router = get_api_router().await;
 
@@ -375,7 +382,7 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     let item = get_item_result.item.unwrap();
 
-    assert_eq!(item.get("public_key").unwrap().as_s().unwrap(), "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw");
+    assert_eq!(item.get("public_key").unwrap().as_s().unwrap(), "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==");
     assert_eq!(item.get("key_counter").unwrap().as_n().unwrap(), "0");
     assert_eq!(
         item.get("bundle_identifier").unwrap().as_s().unwrap(),
@@ -414,6 +421,7 @@ async fn test_apple_initial_attestation_e2e_success() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_apple_token_generation_with_invalid_attributes_for_initial_attestation() {
     let api_router = get_api_router().await;
 
@@ -458,6 +466,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
 // SECTION --- apple assertions tests ---
 
 #[tokio::test]
+#[serial]
 async fn test_apple_assertion_e2e_success() {
     let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let api_router = get_api_router().await;
@@ -471,7 +480,7 @@ async fn test_apple_assertion_e2e_success() {
         BundleIdentifier::IOSStageWorldApp,
         test_key.to_string(),
         // public key can also be retrieved from the assertion
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw".to_string(),
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
         "receipt".to_string(),
     ).await.unwrap();
 
@@ -523,6 +532,7 @@ async fn test_apple_assertion_e2e_success() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates_a_client_error() {
     let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let api_router = get_api_router().await;
@@ -536,7 +546,7 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
         BundleIdentifier::IOSStageWorldApp,
         test_key.to_string(),
         // public key can also be retrieved from the assertion
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw".to_string(),
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
         "receipt".to_string(),
     ).await.unwrap();
 
@@ -581,6 +591,7 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
 }
 
 #[tokio::test]
+#[serial]
 async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_client_error() {
     let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let api_router = get_api_router().await;
@@ -594,7 +605,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
         BundleIdentifier::IOSStageWorldApp,
         test_key.to_string(),
         // public key can also be retrieved from the assertion
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw".to_string(),
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
         "receipt".to_string(),
     ).await.unwrap();
 
@@ -607,8 +618,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
         apple_initial_attestation: None,
         apple_public_key: Some(test_key.to_string()),
         // Valid base64 but invalid CBOR message
-        // FIXME: padding
-        apple_assertion: Some("aW52YWxpZA==".to_string()),
+        apple_assertion: Some("aW52YWxpZA".to_string()),
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -641,6 +651,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
 }
 
 #[tokio::test]
+#[serial]
 async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
     let api_router = get_api_router().await;
 
@@ -683,6 +694,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
     let api_router = get_api_router().await;
 
@@ -725,6 +737,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertion() {
     // This assertion can be obtained from `verify_assertion_failure_with_invalid_key`
     let invalid_assertion = "omlzaWduYXR1cmVYRzBFAiAzg4lX/q4SMY/HZLegpV+1I5eUE1fRldlC4yloghLWsQIhAMSlrYPwou6WJ0JsiVCE00G2+ZCBphnyOO3imjI68yCccWF1dGhlbnRpY2F0b3JEYXRhWEt0aGlzX2lzX25vdF9hX3ZhbGlkX2F1dGhlbnRpY2F0b3JfZGF0YV9idXRfdmVyaWZpY2F0aW9uX3dpbGxfbm90X3JlYWNoX2hlcmU";
@@ -740,7 +753,7 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
         BundleIdentifier::IOSStageWorldApp,
         test_key.to_string(),
         // public key can also be retrieved from the assertion
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw".to_string(),
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
         "receipt".to_string(),
     ).await.unwrap();
 
@@ -784,6 +797,7 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
 }
 
 #[tokio::test]
+#[serial]
 async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identifier_pair() {
     let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let api_router = get_api_router().await;
@@ -797,7 +811,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
         BundleIdentifier::IOSProdWorldApp, // <-- we also change this to test explicitly the `rp_id` check in the assertion
         test_key.to_string(),
         // public key can also be retrieved from the assertion
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw".to_string(),
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
         "receipt".to_string(),
     ).await.unwrap();
 
