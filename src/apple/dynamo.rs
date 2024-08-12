@@ -146,8 +146,8 @@ pub async fn update_apple_public_key_counter_plus(
         .send()
         .await?;
 
-    if let Some(attributes) = request.attributes.clone() {
-        if let Some(_updated_value) = attributes.get("key_counter") {
+    if let Some(attributes) = &request.attributes {
+        if attributes.contains_key("key_counter") {
             return Ok(());
         }
     }
