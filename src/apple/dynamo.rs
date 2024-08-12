@@ -1,4 +1,4 @@
-use aws_sdk_dynamodb::types::AttributeValue;
+use aws_sdk_dynamodb::{operation::get_item::GetItemOutput, types::AttributeValue};
 
 use crate::utils::{BundleIdentifier, ClientError, ErrorCode};
 
@@ -16,7 +16,7 @@ pub async fn insert_apple_public_key(
     receipt: String,
 ) -> eyre::Result<()> {
     let client = aws_sdk_dynamodb::Client::new(aws_config);
-    let request = client
+    let response = client
         .put_item()
         .table_name(apple_keys_dynamo_table_name)
         .item("key_id", AttributeValue::S(format!("key#{key_id}")))
@@ -36,23 +36,20 @@ pub async fn insert_apple_public_key(
             ),
         )
         .condition_expression("attribute_not_exists(#pk)")
-        .expression_attribute_names("#pk", "key_id");
+        .expression_attribute_names("#pk", "key_id")
+        .send()
+        .await;
 
-    match request.send().await {
-        Ok(_) => {
-            println!("Record inserted successfully");
+    if let Err(e) = response {
+        let e = e.into_service_error();
+        if e.is_conditional_check_failed_exception() {
+            eyre::bail!(ClientError {
+                code: ErrorCode::InvalidInitialAttestation,
+                internal_debug_info: "the attested apple key ID is already registered in DB"
+                    .to_string(),
+            });
         }
-        Err(e) => {
-            let e = e.into_service_error();
-            if e.is_conditional_check_failed_exception() {
-                eyre::bail!(ClientError {
-                    code: ErrorCode::InvalidInitialAttestation,
-                    internal_debug_info: "the attested apple key ID is already registered in DB"
-                        .to_string(),
-                });
-            }
-            eyre::bail!(e);
-        }
+        eyre::bail!(e);
     }
 
     Ok(())
@@ -63,6 +60,54 @@ pub struct ApplePublicKeyRecordOutput {
     pub public_key: String,
     pub counter: u32,
     pub bundle_identifier: BundleIdentifier,
+}
+
+impl ApplePublicKeyRecordOutput {
+    fn from_dynamo_row(value: GetItemOutput, key_id: &str) -> eyre::Result<Self> {
+        match value.item {
+            Some(item) => {
+                let public_key = item
+                    .get("public_key")
+                    .ok_or_else(|| eyre::eyre!("public_key not found for key: {key_id}"))?
+                    .as_s()
+                    .map_err(|_| eyre::eyre!("unable to parse public_key as_s for key: {key_id}"))?
+                    .to_string();
+                let counter = item
+                    .get("key_counter")
+                    .ok_or_else(|| eyre::eyre!("key_counter not found for key: {key_id}"))?
+                    .as_n()
+                    .map_err(|_| eyre::eyre!("unable to parse key_counter as_n for key: {key_id}"))?
+                    .parse::<u32>()
+                    .map_err(|_| {
+                        eyre::eyre!("unable to parse key_counter as u32 for key: {key_id}")
+                    })?;
+
+                let bundle_identifier: BundleIdentifier = serde_json::from_str(&format!(
+                    "\"{:}\"",
+                    item.get("bundle_identifier")
+                        .ok_or_else(|| eyre::eyre!(
+                            "bundle_identifier not found for key: {key_id}"
+                        ))?
+                        .as_s()
+                        .map_err(|_| eyre::eyre!(
+                            "unable to parse bundle_identifier as_s for key: {key_id}"
+                        ))?
+                ))?;
+
+                Ok(Self {
+                    public_key,
+                    counter,
+                    bundle_identifier,
+                })
+            }
+            None => {
+                eyre::bail!(ClientError {
+                    code: ErrorCode::InvalidPublicKey,
+                    internal_debug_info: "the key_id was not found in Dynamo".to_string(),
+                });
+            }
+        }
+    }
 }
 
 /// Fetches an Apple public key from the relevant table
@@ -76,7 +121,7 @@ pub async fn fetch_apple_public_key(
     key_id: String,
 ) -> eyre::Result<ApplePublicKeyRecordOutput> {
     let client = aws_sdk_dynamodb::Client::new(aws_config);
-    let request = client
+    let response = client
         .get_item()
         .table_name(apple_keys_dynamo_table_name)
         .key("key_id", AttributeValue::S(format!("key#{key_id}")))
@@ -84,45 +129,7 @@ pub async fn fetch_apple_public_key(
         .send()
         .await?;
 
-    match request.item {
-        Some(item) => {
-            let public_key = item
-                .get("public_key")
-                .ok_or_else(|| eyre::eyre!("public_key not found for key: {key_id}"))?
-                .as_s()
-                .map_err(|_| eyre::eyre!("unable to parse public_key as_s for key: {key_id}"))?
-                .to_string();
-            let counter = item
-                .get("key_counter")
-                .ok_or_else(|| eyre::eyre!("key_counter not found for key: {key_id}"))?
-                .as_n()
-                .map_err(|_| eyre::eyre!("unable to parse key_counter as_n for key: {key_id}"))?
-                .parse::<u32>()
-                .map_err(|_| eyre::eyre!("unable to parse key_counter as u32 for key: {key_id}"))?;
-
-            let bundle_identifier: BundleIdentifier = serde_json::from_str(&format!(
-                "\"{:}\"",
-                item.get("bundle_identifier")
-                    .ok_or_else(|| eyre::eyre!("bundle_identifier not found for key: {key_id}"))?
-                    .as_s()
-                    .map_err(|_| eyre::eyre!(
-                        "unable to parse bundle_identifier as_s for key: {key_id}"
-                    ))?
-            ))?;
-
-            Ok(ApplePublicKeyRecordOutput {
-                public_key,
-                counter,
-                bundle_identifier,
-            })
-        }
-        None => {
-            eyre::bail!(ClientError {
-                code: ErrorCode::InvalidPublicKey,
-                internal_debug_info: "the key_id was not found in Dynamo".to_string(),
-            });
-        }
-    }
+    ApplePublicKeyRecordOutput::from_dynamo_row(response, &key_id)
 }
 
 /// Increments the `key_counter` by 1 of an Apple public key (to prevent replay attacks)
