@@ -9,6 +9,8 @@
     "decrypter",
     "dotenv",
     "encrypter",
+    "llen",
+    "lpush",
     "lrange",
     "pkey",
     "rustc",

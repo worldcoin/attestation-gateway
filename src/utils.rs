@@ -22,8 +22,8 @@ pub struct SigningConfigDefinition {
     pub jose_kit_algorithm: josekit::jws::alg::ecdsa::EcdsaJwsAlgorithm,
     pub kms_algorithm: aws_sdk_kms::types::SigningAlgorithmSpec,
     pub signature_len: usize,
-    pub key_ttl_signing: u64, // Time (in seconds) the key is available for signing new tokens
-    pub key_ttl_verification: u64, // Time (in seconds) the key is available for retrieval and hence for verification by third-parties
+    pub key_ttl_signing: i64, // Time (in seconds) the key is available for signing new tokens
+    pub key_ttl_verification: i64, // Time (in seconds) the key is available for retrieval and hence for verification by third-parties
 }
 
 // NOTE: These attributes must always match each other
