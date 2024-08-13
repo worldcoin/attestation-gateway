@@ -5,7 +5,7 @@ use josekit::{
 use serial_test::serial;
 use std::sync::{Arc, Mutex};
 use tokio::task;
-use tracing::{subscriber, Instrument};
+use tracing::Instrument;
 
 use crate::kms_jws::EcdsaJwsSignerWithKms;
 
@@ -244,11 +244,6 @@ async fn test_fetch_active_key_with_race_condition() {
 
     let redis_client = get_redis_client().await;
     let aws_config = get_aws_config().await;
-
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(tracing::Level::DEBUG)
-        .finish();
-    let _ = subscriber::set_global_default(subscriber);
 
     // Spawn tasks
     for i in 0..num_calls {
