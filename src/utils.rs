@@ -8,9 +8,6 @@ use std::{fmt::Display, time::SystemTime};
 
 static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 
-pub static KMS_SIGNING_KEY_ALIAS: &str = "alias/attestation-gateway-primary"; // must begin with `alias/`
-                                                                              // if changing this, remember to update aws-seed.sh
-
 #[derive(Debug, Clone)]
 pub struct GlobalConfig {
     pub android_outer_jwe_private_key: String,

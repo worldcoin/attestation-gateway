@@ -9,6 +9,7 @@
     "decrypter",
     "dotenv",
     "encrypter",
+    "lrange",
     "pkey",
     "rustc",
     "schemars",

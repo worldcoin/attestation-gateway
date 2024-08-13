@@ -9,10 +9,7 @@ use redis::{aio::ConnectionManager, AsyncCommands};
 use josekit::{jwk::Jwk, Value};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    kms_jws::KMSKeyDefinition,
-    utils::{KMS_SIGNING_KEY_ALIAS, SIGNING_CONFIG},
-};
+use crate::{kms_jws::KMSKeyDefinition, utils::SIGNING_CONFIG};
 
 const SIGNING_KEYS_REDIS_KEY: &str = "signing-keys";
 
@@ -29,14 +26,18 @@ pub async fn fetch_keys(
     redis: &mut ConnectionManager,
     aws_config: &aws_config::SdkConfig,
 ) -> eyre::Result<Vec<SigningKey>> {
-    let keys: Option<Vec<u8>> = redis.get(SIGNING_KEYS_REDIS_KEY).await?;
+    let keys: Vec<Vec<u8>> = redis.lrange(SIGNING_KEYS_REDIS_KEY, 0, -1).await?;
 
-    if let Some(keys) = keys {
-        let keys: Vec<SigningKey> = serde_json::from_slice(&keys)?;
-        Ok(keys)
-    } else {
-        Ok(vec![generate_new_key(redis, aws_config).await?])
+    let objects: Vec<SigningKey> = keys
+        .into_iter()
+        .map(|item| serde_json::from_slice(&item).unwrap())
+        .collect();
+
+    if objects.is_empty() {
+        return Ok(vec![generate_new_key(redis, aws_config).await?]);
     }
+
+    Ok(objects)
 }
 
 pub async fn fetch_active_key(
@@ -78,14 +79,6 @@ async fn generate_new_key(
 
     let key_definition = KMSKeyDefinition::from_arn(key.key_metadata.unwrap().arn.unwrap());
 
-    // Create alias for singing
-    kms_client
-        .create_alias()
-        .alias_name(KMS_SIGNING_KEY_ALIAS)
-        .target_key_id(key_definition.arn.clone())
-        .send()
-        .await?;
-
     // Fetch public key
     let public_key = kms_client
         .get_public_key()
@@ -114,7 +107,7 @@ async fn generate_new_key(
     redis
         .lpush(
             SIGNING_KEYS_REDIS_KEY,
-            serde_json::to_vec(&[signing_key.clone()])?,
+            serde_json::to_vec(&signing_key.clone())?,
         )
         .await?;
 
