@@ -26,7 +26,12 @@ pub struct SigningKey {
     pub created_at: i64,
 }
 
-pub async fn fetch_keys(
+/// Fetches all keys available for signing or verifying.
+/// Will generate a new key if none are available.
+///
+/// # Errors
+/// Will return an error if the key generation process fails or if there is a problem fetching/updating data from Redis.
+pub async fn fetch_all(
     redis: &mut ConnectionManager,
     aws_config: &aws_config::SdkConfig,
 ) -> eyre::Result<Vec<SigningKey>> {
@@ -39,11 +44,15 @@ pub async fn fetch_keys(
     Ok(keys)
 }
 
+/// Fetches the current active key for signing or generates a new one if none are available or all are expired.
+///
+/// # Errors
+/// Will return an error if the key generation process fails or if there is a problem fetching/updating data from Redis.
 pub async fn fetch_active_key(
     redis: &mut ConnectionManager,
     aws_config: &aws_config::SdkConfig,
 ) -> eyre::Result<SigningKey> {
-    let key = fetch_keys(redis, aws_config).await?.remove(0);
+    let key = fetch_all(redis, aws_config).await?.remove(0);
 
     if key.created_at + SIGNING_CONFIG.key_ttl_signing < chrono::Utc::now().timestamp() {
         return generate_new_key(redis, aws_config).await;
@@ -58,7 +67,15 @@ async fn fetch_keys_from_redis(redis: &mut ConnectionManager) -> eyre::Result<Ve
     let keys: Vec<SigningKey> = keys
         .into_iter()
         .filter_map(|item| {
-            let key: SigningKey = serde_json::from_slice(&item).unwrap();
+            let key = serde_json::from_slice::<SigningKey>(&item)
+                .map_err(|e| {
+                    tracing::error!(
+                        "Unexpected Error. Failed to deserialize key from Redis: {:?}",
+                        e
+                    );
+                    e
+                })
+                .ok()?;
             // Exclude keys which are unsuitable for verification anymore
             if key.created_at + SIGNING_CONFIG.key_ttl_verification < chrono::Utc::now().timestamp()
             {
@@ -113,7 +130,18 @@ async fn kms_generate_new_key_and_store(
         .send()
         .await?;
 
-    let key_definition = KMSKeyDefinition::from_arn(key.key_metadata.unwrap().arn.unwrap());
+    let key_metadata = key
+        .key_metadata
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("Key metadata is missing"))?;
+
+    let key_arn = key_metadata
+        .arn
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("ARN is missing"))?
+        .clone();
+
+    let key_definition = KMSKeyDefinition::from_arn(key_arn);
 
     // Fetch public key
     let public_key = kms_client

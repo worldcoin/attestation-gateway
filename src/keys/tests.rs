@@ -77,7 +77,7 @@ async fn test_fetch_all_keys_valid_for_verifying() {
         .await
         .unwrap();
 
-    let keys = fetch_keys(&mut redis, &aws_config).await.unwrap();
+    let keys = fetch_all(&mut redis, &aws_config).await.unwrap();
     assert_eq!(keys.len(), 2); // both signing and verifying keys are returned
     assert_eq!(keys[0].key_definition.id, signing_key.key_definition.id);
     assert_eq!(keys[1].key_definition.id, verifying_key.key_definition.id);
@@ -112,7 +112,7 @@ async fn test_fetch_already_existing_active_key() {
         .unwrap();
     assert_eq!(key.key_definition.id, fetched_key.key_definition.id);
 
-    let key_list = fetch_keys(&mut redis, &aws_config).await.unwrap();
+    let key_list = fetch_all(&mut redis, &aws_config).await.unwrap();
     assert_eq!(key_list.len(), 1);
     assert_eq!(key_list[0].key_definition.id, key.key_definition.id);
 }
