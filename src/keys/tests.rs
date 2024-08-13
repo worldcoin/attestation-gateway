@@ -103,6 +103,42 @@ async fn test_fetch_active_key_with_race_condition() {
 
 #[test]
 fn test_public_key_to_jwk() {
+    let test_pk_pem = "-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE8juOBvTjX/Z23rca/uGth7I8LkuK
+hnX+pFZq78Se67+BOJDjy1rpIDxDAJgXMy7QbKbztaUGOIrSiRCeMc8lhg==
+-----END PUBLIC KEY-----";
+    let public_key = PKey::public_key_from_pem(test_pk_pem.as_bytes()).unwrap();
+
+    let jwk = public_key_to_jwk(
+        &public_key,
+        "key_b9734d0e56ef4ad68e1fee2086a6e8e9".to_string(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        jwk.key_id().unwrap(),
+        "key_b9734d0e56ef4ad68e1fee2086a6e8e9"
+    );
+    assert_eq!(jwk.key_type(), "EC");
+    assert_eq!(jwk.algorithm().unwrap(), "ES256");
+    assert_eq!(jwk.curve().unwrap(), "P-256");
+
+    let serialized_jwk = serde_json::to_string(&jwk).unwrap();
+
+    let parsed_jwk: serde_json::Value = serde_json::from_str(&serialized_jwk).unwrap();
+    assert_eq!(
+        parsed_jwk["x"],
+        "8juOBvTjX_Z23rca_uGth7I8LkuKhnX-pFZq78Se678"
+    );
+    assert_eq!(
+        parsed_jwk["y"],
+        // cspell:disable-next-line
+        "gTiQ48ta6SA8QwCYFzMu0Gym87WlBjiK0okQnjHPJYY"
+    );
+}
+
+#[test]
+fn test_generate_key_sign_and_verify_with_jwk() {
     todo!("todo");
 }
 
