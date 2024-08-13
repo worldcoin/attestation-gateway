@@ -34,8 +34,8 @@ pub const SIGNING_CONFIG: SigningConfigDefinition = SigningConfigDefinition {
     jose_kit_algorithm: josekit::jws::alg::ecdsa::EcdsaJwsAlgorithm::Es256,
     kms_algorithm: aws_sdk_kms::types::SigningAlgorithmSpec::EcdsaSha256,
     signature_len: 64,
-    key_ttl_signing: 60 * 60 * 24 * 90,      // 90 days
-    key_ttl_verification: 60 * 60 * 24 * 92, // 92 days
+    key_ttl_signing: 60 * 60 * 24 * 180,      // 180 days
+    key_ttl_verification: 60 * 60 * 24 * 182, // 182 days
 };
 
 #[derive(Debug)]

@@ -1,9 +1,17 @@
+use josekit::{
+    jws::{self, JwsHeader},
+    jwt::{self, JwtPayload},
+};
 use serial_test::serial;
 use std::sync::{Arc, Mutex};
 use tokio::task;
 use tracing::{subscriber, Instrument};
 
+use crate::kms_jws::EcdsaJwsSignerWithKms;
+
 use super::*;
+
+// NOTE: Generally all of these are integration tests (requires docker-compose.test.yml to be running)
 
 async fn get_aws_config() -> aws_config::SdkConfig {
     // Required to load default AWS Config variables
@@ -25,20 +33,200 @@ async fn get_redis_client() -> redis::aio::ConnectionManager {
     redis::aio::ConnectionManager::new(client).await.unwrap()
 }
 
-#[test]
-fn test_fetch_all_keys_valid_for_verifying() {
-    // insert a key valid for signing, one for verifying, one for neither
-    todo!("todo");
+#[tokio::test]
+#[serial]
+async fn test_fetch_all_keys_valid_for_verifying() {
+    let mut redis = get_redis_client().await;
+    let aws_config = get_aws_config().await;
+
+    // create a valid key for signing
+    let signing_key = kms_generate_new_key_and_store(&mut redis, &get_aws_config().await)
+        .await
+        .unwrap();
+
+    // create a key that is no longer valid for signing but is valid for verifying
+    let verifying_key = SigningKey {
+        key_definition: KMSKeyDefinition {
+            id: "key_123".to_string(),
+            arn: "arn:aws:kms:us-west-2:123456789012:key/key_123".to_string(),
+        },
+        jwk: Jwk::new("EC"),
+        created_at: chrono::Utc::now().timestamp() - SIGNING_CONFIG.key_ttl_signing - 10,
+    };
+    // note we add at the end of the list
+    redis
+        .rpush::<_, _, ()>(
+            SIGNING_KEYS_REDIS_KEY,
+            serde_json::to_vec(&verifying_key).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // create a key that is completely expired
+    let key = SigningKey {
+        key_definition: KMSKeyDefinition {
+            id: "key_123".to_string(),
+            arn: "arn:aws:kms:us-west-2:123456789012:key/key_123".to_string(),
+        },
+        jwk: Jwk::new("EC"),
+        created_at: chrono::Utc::now().timestamp() - SIGNING_CONFIG.key_ttl_verification - 10,
+    };
+    // note we add at the end of the list
+    redis
+        .rpush::<_, _, ()>(SIGNING_KEYS_REDIS_KEY, serde_json::to_vec(&key).unwrap())
+        .await
+        .unwrap();
+
+    let keys = fetch_keys(&mut redis, &aws_config).await.unwrap();
+    assert_eq!(keys.len(), 2); // both signing and verifying keys are returned
+    assert_eq!(keys[0].key_definition.id, signing_key.key_definition.id);
+    assert_eq!(keys[1].key_definition.id, verifying_key.key_definition.id);
 }
 
-#[test]
-fn test_fetch_already_existing_active_key() {
-    todo!("todo");
+#[tokio::test]
+#[serial]
+async fn test_fetch_already_existing_active_key() {
+    let mut redis = get_redis_client().await;
+    let aws_config = get_aws_config().await;
+
+    // Create a key in Redis
+    let key = SigningKey {
+        key_definition: KMSKeyDefinition {
+            id: "key_123".to_string(),
+            arn: "arn:aws:kms:us-west-2:123456789012:key/key_123".to_string(),
+        },
+        jwk: Jwk::new("EC"),
+        created_at: chrono::Utc::now().timestamp(),
+    };
+
+    redis
+        .lpush::<_, _, ()>(
+            SIGNING_KEYS_REDIS_KEY,
+            serde_json::to_vec(&key.clone()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let fetched_key = fetch_active_key(&mut redis, &get_aws_config().await)
+        .await
+        .unwrap();
+    assert_eq!(key.key_definition.id, fetched_key.key_definition.id);
+
+    let key_list = fetch_keys(&mut redis, &aws_config).await.unwrap();
+    assert_eq!(key_list.len(), 1);
+    assert_eq!(key_list[0].key_definition.id, key.key_definition.id);
 }
 
-#[test]
-fn test_fetch_active_key_creating_a_new_one() {
-    todo!("todo");
+#[tokio::test]
+#[serial]
+async fn test_fetch_active_key_creating_a_new_one() {
+    let mut redis = get_redis_client().await;
+    let aws_config = get_aws_config().await;
+
+    // Check there aren't any keys created
+    let len = redis
+        .llen::<_, usize>(SIGNING_KEYS_REDIS_KEY)
+        .await
+        .unwrap();
+    assert_eq!(len, 0);
+
+    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+
+    // Check the key was created in Redis
+    let len = redis
+        .llen::<_, usize>(SIGNING_KEYS_REDIS_KEY)
+        .await
+        .unwrap();
+    assert_eq!(len, 1);
+
+    // assert key.created_at is close to the current time
+    let now = chrono::Utc::now().timestamp();
+    assert!(key.created_at - now < 3);
+
+    // Check the key was created in AWS
+    let kms_client = aws_sdk_kms::Client::new(&aws_config);
+    let key_metadata = kms_client
+        .describe_key()
+        .key_id(key.key_definition.arn.clone())
+        .send()
+        .await
+        .unwrap()
+        .key_metadata
+        .unwrap();
+
+    assert_eq!(
+        key_metadata.key_state.unwrap(),
+        aws_sdk_kms::types::KeyState::Enabled
+    );
+
+    assert_eq!(key_metadata.key_spec.unwrap(), SIGNING_CONFIG.key_spec);
+
+    // ensure the same key is returned again
+    let key_second_time = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+    assert_eq!(key.key_definition.id, key_second_time.key_definition.id);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_fetch_active_key_expired_key_creates_a_new_one() {
+    let mut redis = get_redis_client().await;
+    let aws_config = get_aws_config().await;
+
+    // Create an expired key
+    let expired_key = SigningKey {
+        key_definition: KMSKeyDefinition {
+            id: "key_123".to_string(),
+            arn: "arn:aws:kms:us-west-2:123456789012:key/key_123".to_string(),
+        },
+        jwk: Jwk::new("EC"),
+        created_at: chrono::Utc::now().timestamp() - SIGNING_CONFIG.key_ttl_signing - 10,
+    };
+    // note we add at the end of the list
+    redis
+        .rpush::<_, _, ()>(
+            SIGNING_KEYS_REDIS_KEY,
+            serde_json::to_vec(&expired_key).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let len = redis
+        .llen::<_, usize>(SIGNING_KEYS_REDIS_KEY)
+        .await
+        .unwrap();
+
+    let new_key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+
+    assert_ne!(new_key.key_definition.id, expired_key.key_definition.id);
+
+    // Check that a new key was created in Redis
+    let new_len = redis
+        .llen::<_, usize>(SIGNING_KEYS_REDIS_KEY)
+        .await
+        .unwrap();
+    assert_eq!(new_len, len + 1);
+
+    // assert key.created_at is close to the current time
+    let now = chrono::Utc::now().timestamp();
+    assert!(new_key.created_at - now < 3);
+
+    // Check the key was created in AWS
+    let kms_client = aws_sdk_kms::Client::new(&aws_config);
+    let key_metadata = kms_client
+        .describe_key()
+        .key_id(new_key.key_definition.arn.clone())
+        .send()
+        .await
+        .unwrap()
+        .key_metadata
+        .unwrap();
+
+    assert_eq!(
+        key_metadata.key_state.unwrap(),
+        aws_sdk_kms::types::KeyState::Enabled
+    );
+
+    assert_eq!(key_metadata.key_spec.unwrap(), SIGNING_CONFIG.key_spec);
 }
 
 #[tokio::test]
@@ -137,9 +325,33 @@ hnX+pFZq78Se67+BOJDjy1rpIDxDAJgXMy7QbKbztaUGOIrSiRCeMc8lhg==
     );
 }
 
-#[test]
-fn test_generate_key_sign_and_verify_with_jwk() {
-    todo!("todo");
+#[tokio::test]
+#[serial]
+async fn test_generate_key_sign_and_verify_with_jwk() {
+    let mut redis = get_redis_client().await;
+    let aws_config = get_aws_config().await;
+
+    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+
+    // Generate a JWS token
+    let kms_client = aws_sdk_kms::Client::new(&aws_config);
+    let signer = EcdsaJwsSignerWithKms {
+        key: key.key_definition,
+        kms_client,
+    };
+    let header = JwsHeader::new();
+    let mut payload = JwtPayload::new();
+    payload.set_subject("whoami");
+    let jwt =
+        tokio::task::spawn_blocking(move || jwt::encode_with_signer(&payload, &header, &signer))
+            .await
+            .unwrap()
+            .unwrap();
+
+    // Verify with the JWK
+    let verifier = jws::ES256.verifier_from_jwk(&key.jwk).unwrap();
+    let decoded = jwt::decode_with_verifier(jwt, &verifier).unwrap();
+    assert_eq!(decoded.0.subject().unwrap(), "whoami");
 }
 
 #[test]

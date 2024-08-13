@@ -44,8 +44,9 @@ impl KMSKeyDefinition {
 
 #[derive(Debug, Clone)]
 pub struct EcdsaJwsSignerWithKms {
-    key: KMSKeyDefinition,
-    kms_client: aws_sdk_kms::Client,
+    // Fields are public to allow usage in keys/tests.rs
+    pub key: KMSKeyDefinition,
+    pub kms_client: aws_sdk_kms::Client,
 }
 
 /// Implement the `JwsSigner` trait for `EcdsaJwsSignerWithKms` to be able to have a custom `sign` method which relies on KMS instead of local keys
