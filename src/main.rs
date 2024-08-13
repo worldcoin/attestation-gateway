@@ -3,17 +3,15 @@
 use crate::utils::GlobalConfig;
 use dotenvy::dotenv;
 use redis::aio::ConnectionManager;
-use regex::Regex;
 use std::env;
 
 mod android;
 mod apple;
+mod keys;
 mod kms_jws;
 mod routes;
 mod server;
 mod utils;
-
-const ARN_REGEX_PATTERN: &str = r"^arn:aws:\w+:[a-z0-9\-]+:\d+:\w+\/[\w\-]+$";
 
 #[tokio::main]
 async fn main() {
@@ -50,15 +48,6 @@ async fn build_redis_pool(redis_url: String) -> redis::RedisResult<ConnectionMan
 /// If required environment variables are not set or do not look correct
 #[must_use]
 pub fn load_config() -> GlobalConfig {
-    let output_token_kms_key_arn = env::var("OUTPUT_TOKEN_KMS_KEY_ARN")
-        .expect("env var `OUTPUT_TOKEN_KMS_KEY_ARN` is required");
-    let re = Regex::new(ARN_REGEX_PATTERN).unwrap();
-
-    assert!(
-        re.is_match(&output_token_kms_key_arn),
-        "Invalid format for OUTPUT_TOKEN_KMS_KEY_ARN. Expected format: `{ARN_REGEX_PATTERN}`",
-    );
-
     let android_outer_jwe_private_key = env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
         .expect("env var `ANDROID_OUTER_JWE_PRIVATE_KEY` is required");
 
@@ -66,7 +55,6 @@ pub fn load_config() -> GlobalConfig {
         .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
 
     GlobalConfig {
-        output_token_kms_key_arn,
         android_outer_jwe_private_key,
         apple_keys_dynamo_table_name,
     }

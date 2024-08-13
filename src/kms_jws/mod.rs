@@ -1,25 +1,30 @@
 use aws_sdk_kms::primitives::Blob;
 use base64::Engine;
 use josekit::{
-    jws::{alg::ecdsa::EcdsaJwsAlgorithm, JwsAlgorithm, JwsHeader, JwsSigner},
+    jws::{JwsAlgorithm, JwsHeader, JwsSigner},
     jwt::{self, JwtPayload},
     util::der::{DerReader, DerType},
     JoseError,
 };
+use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 
-#[derive(Debug, Clone)]
-pub struct EcdsaJwsSignerWithKms {
-    key_arn: String,
-    kms_client: aws_sdk_kms::Client,
-    key_id: String,
+use crate::utils::SIGNING_CONFIG;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KMSKeyDefinition {
+    pub id: String,
+    pub arn: String,
 }
 
-impl EcdsaJwsSignerWithKms {
-    /// Initializes a new `EcdsaJwsSignerWithKms` instance while parsing the `key_arn` to generate the `key_id`
+impl KMSKeyDefinition {
     /// Extracts the key ID from the key ARN
-    fn new(key_arn: String, kms_client: aws_sdk_kms::Client) -> Self {
-        let parts: Vec<&str> = key_arn.split('/').collect();
+    ///
+    /// # Panics
+    /// If the provided key ARN is not valid. This should never happen in production and it is a fatal error.
+    #[must_use]
+    pub fn from_arn(arn: String) -> Self {
+        let parts: Vec<&str> = arn.split('/').collect();
         assert!(
             !(!parts.len() == 2 && parts[1].contains('-')),
             "Unexpected key ARN."
@@ -28,32 +33,33 @@ impl EcdsaJwsSignerWithKms {
         let mut hasher = openssl::sha::Sha224::new();
         hasher.update(parts[1].as_bytes());
         let key_hash = hasher.finish();
-        let key_id = format!(
+        let id = format!(
             "key_{}",
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key_hash)
         );
 
-        Self {
-            key_arn,
-            kms_client,
-            key_id,
-        }
+        Self { id, arn }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct EcdsaJwsSignerWithKms {
+    key: KMSKeyDefinition,
+    kms_client: aws_sdk_kms::Client,
 }
 
 /// Implement the `JwsSigner` trait for `EcdsaJwsSignerWithKms` to be able to have a custom `sign` method which relies on KMS instead of local keys
 impl JwsSigner for EcdsaJwsSignerWithKms {
     fn algorithm(&self) -> &dyn JwsAlgorithm {
-        &EcdsaJwsAlgorithm::Es256
+        &SIGNING_CONFIG.jose_kit_algorithm
     }
 
     fn signature_len(&self) -> usize {
-        // SHA-256 with ECDSA generates a 64-byte signature
-        64
+        SIGNING_CONFIG.signature_len
     }
 
     fn key_id(&self) -> Option<&str> {
-        Some(&self.key_id)
+        Some(&self.key.id)
     }
 
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, JoseError> {
@@ -63,7 +69,7 @@ impl JwsSigner for EcdsaJwsSignerWithKms {
             let rt = Runtime::new().unwrap();
             let der_signature = rt.block_on(async {
                 // NOTE: KMS signing is async, so we need to block the current thread
-                sign_with_kms(&self.kms_client, &self.key_arn, message).await
+                sign_with_kms(&self.kms_client, &self.key.arn, message).await
             })?;
 
             // NOTE: Code below is kept as is from the original `josekit` implementation
@@ -106,12 +112,13 @@ async fn sign_with_kms(
     key_id: &str,
     message: &[u8],
 ) -> eyre::Result<Vec<u8>> {
+    // We could technically fetch the key ID after signing using a key alias but the `kid` must be known before signing
     let result = client
         .sign()
         .key_id(key_id)
         .message(Blob::new(message))
         .message_type(aws_sdk_kms::types::MessageType::Raw)
-        .signing_algorithm(aws_sdk_kms::types::SigningAlgorithmSpec::EcdsaSha256)
+        .signing_algorithm(SIGNING_CONFIG.kms_algorithm)
         .send()
         .await?;
 
@@ -136,7 +143,9 @@ pub async fn generate_output_token(
 
     let kms_client = aws_sdk_kms::Client::new(aws_config);
 
-    let signer = EcdsaJwsSignerWithKms::new(key_arn, kms_client);
+    let key = KMSKeyDefinition::from_arn(key_arn);
+
+    let signer = EcdsaJwsSignerWithKms { key, kms_client };
 
     let jwt =
         tokio::task::spawn_blocking(move || jwt::encode_with_signer(&payload, &header, &signer))

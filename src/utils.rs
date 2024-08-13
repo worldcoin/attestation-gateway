@@ -8,12 +8,38 @@ use std::{fmt::Display, time::SystemTime};
 
 static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 
+pub static KMS_SIGNING_KEY_ALIAS: &str = "alias/attestation-gateway-primary"; // must begin with `alias/`
+                                                                              // if changing this, remember to update aws-seed.sh
+
 #[derive(Debug, Clone)]
 pub struct GlobalConfig {
-    pub output_token_kms_key_arn: String,
     pub android_outer_jwe_private_key: String,
     pub apple_keys_dynamo_table_name: String,
 }
+
+#[derive(Debug)]
+/// Configuration for the signature of output tokens (JWS) from Attestation Gateway
+pub struct SigningConfigDefinition {
+    pub key_spec: aws_sdk_kms::types::KeySpec,
+    pub curve_str: &'static str,
+    pub jose_kit_algorithm: josekit::jws::alg::ecdsa::EcdsaJwsAlgorithm,
+    pub kms_algorithm: aws_sdk_kms::types::SigningAlgorithmSpec,
+    pub signature_len: usize,
+    pub key_ttl_signing: u64, // Time (in seconds) the key is available for signing new tokens
+    pub key_ttl_verification: u64, // Time (in seconds) the key is available for retrieval and hence for verification by third-parties
+}
+
+// NOTE: These attributes must always match each other
+pub const SIGNING_CONFIG: SigningConfigDefinition = SigningConfigDefinition {
+    // We use ES256 with the NIST P-256 curve for signing JWS
+    key_spec: aws_sdk_kms::types::KeySpec::EccNistP256,
+    curve_str: "P-256",
+    jose_kit_algorithm: josekit::jws::alg::ecdsa::EcdsaJwsAlgorithm::Es256,
+    kms_algorithm: aws_sdk_kms::types::SigningAlgorithmSpec::EcdsaSha256,
+    signature_len: 64,
+    key_ttl_signing: 60 * 60 * 24 * 90,      // 90 days
+    key_ttl_verification: 60 * 60 * 24 * 92, // 92 days
+};
 
 #[derive(Debug)]
 pub enum Platform {
