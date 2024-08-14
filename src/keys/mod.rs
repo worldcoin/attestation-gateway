@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use aws_sdk_kms::types::{KeySpec, Tag};
 use base64::{engine::general_purpose, Engine};
 use der_parser::nom::ToUsize;
+use eyre::OptionExt;
 use openssl::{
     bn::{BigNum, BigNumContext},
     pkey::{PKey, Public},
@@ -52,7 +53,11 @@ pub async fn fetch_active_key(
     redis: &mut ConnectionManager,
     aws_config: &aws_config::SdkConfig,
 ) -> eyre::Result<SigningKey> {
-    let key = fetch_all(redis, aws_config).await?.remove(0);
+    let key = fetch_all(redis, aws_config)
+        .await?
+        .first()
+        .ok_or_eyre("Unexpected state with no valid keys")?
+        .clone();
 
     if key.created_at + SIGNING_CONFIG.key_ttl_signing < chrono::Utc::now().timestamp() {
         return generate_new_key(redis, aws_config).await;
@@ -104,7 +109,12 @@ async fn generate_new_key(
     tracing::info!("No suitable signing keys found. Generating a new key");
 
     if acquire_lock_with_backoff(redis).await? {
-        return kms_generate_new_key_and_store(redis, aws_config).await;
+        let new_key = kms_generate_new_key_and_store(redis, aws_config).await;
+
+        // Release the lock. Intentionally ignore result because failure is not critical (key expires automatically)
+        let _ = release_lock(redis).await;
+
+        return new_key;
     }
 
     // If the lock was not acquired, likely the key was created by another instance, try to retrieve it
@@ -179,13 +189,7 @@ async fn kms_generate_new_key_and_store(
         )
         .await?;
 
-    let length = redis.llen::<_, usize>(SIGNING_KEYS_REDIS_KEY).await?;
-    tracing::warn!(length);
-
     tracing::info!("Stored key in Redis: {}", signing_key.key_definition.id);
-
-    // Intentionally ignore result because failure is not critical (key expires automatically)
-    let _ = release_lock(redis).await;
 
     Ok(signing_key)
 }
