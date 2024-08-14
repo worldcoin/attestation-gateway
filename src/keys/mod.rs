@@ -27,6 +27,21 @@ pub struct SigningKey {
     pub created_at: i64,
 }
 
+impl SigningKey {
+    /// Returns whether the key is valid for signing.
+    #[must_use]
+    pub fn can_sign(&self) -> bool {
+        self.created_at + SIGNING_CONFIG.key_ttl_signing > chrono::Utc::now().timestamp()
+    }
+
+    /// Returns whether the key is valid for verification.
+    /// All keys which are valid for signing are valid for verification, but not vice versa.
+    #[must_use]
+    pub fn can_verify(&self) -> bool {
+        self.created_at + SIGNING_CONFIG.key_ttl_verification > chrono::Utc::now().timestamp()
+    }
+}
+
 /// Fetches all keys available for signing or verifying.
 /// Will generate a new key if none are available.
 ///
@@ -59,7 +74,7 @@ pub async fn fetch_active_key(
         .ok_or_eyre("Unexpected state with no valid keys")?
         .clone();
 
-    if key.created_at + SIGNING_CONFIG.key_ttl_signing < chrono::Utc::now().timestamp() {
+    if !key.can_sign() {
         return generate_new_key(redis, aws_config).await;
     }
 
@@ -67,8 +82,7 @@ pub async fn fetch_active_key(
 }
 
 async fn fetch_keys_from_redis(redis: &mut ConnectionManager) -> eyre::Result<Vec<SigningKey>> {
-    // maximum retrieve two keys
-    let keys: Vec<Vec<u8>> = redis.lrange(SIGNING_KEYS_REDIS_KEY, 0, 1).await?;
+    let keys: Vec<Vec<u8>> = redis.lrange(SIGNING_KEYS_REDIS_KEY, 0, 1).await?; // maximum retrieve two keys
     let keys: Vec<SigningKey> = keys
         .into_iter()
         .filter_map(|item| {
@@ -82,8 +96,7 @@ async fn fetch_keys_from_redis(redis: &mut ConnectionManager) -> eyre::Result<Ve
                 })
                 .ok()?;
             // Exclude keys which are unsuitable for verification anymore
-            if key.created_at + SIGNING_CONFIG.key_ttl_verification < chrono::Utc::now().timestamp()
-            {
+            if !key.can_verify() {
                 return None;
             }
             Some(key)
@@ -109,12 +122,24 @@ async fn generate_new_key(
     tracing::info!("No suitable signing keys found. Generating a new key");
 
     if acquire_lock_with_backoff(redis).await? {
-        let new_key = kms_generate_new_key_and_store(redis, aws_config).await;
+        let (key_definition, public_key_der) = kms_generate_new_key(aws_config).await?;
+
+        let public_key = PKey::public_key_from_der(&public_key_der)?;
+
+        let jwk = public_key_to_jwk(&public_key, key_definition.id.clone())?;
+
+        let signing_key = SigningKey {
+            key_definition,
+            jwk,
+            created_at: chrono::Utc::now().timestamp(),
+        };
+
+        store_new_key_in_redis(redis, &signing_key).await?;
 
         // Release the lock. Intentionally ignore result because failure is not critical (key expires automatically)
         let _ = release_lock(redis).await;
 
-        return new_key;
+        return Ok(signing_key);
     }
 
     // If the lock was not acquired, likely the key was created by another instance, try to retrieve it
@@ -125,10 +150,9 @@ async fn generate_new_key(
     eyre::bail!("DEADLOCK. Failed to acquire lock for key generation and key was never created.");
 }
 
-async fn kms_generate_new_key_and_store(
-    redis: &mut ConnectionManager,
+async fn kms_generate_new_key(
     aws_config: &aws_config::SdkConfig,
-) -> eyre::Result<SigningKey> {
+) -> eyre::Result<(KMSKeyDefinition, Vec<u8>)> {
     tracing::info!("Generating new key in KMS.");
 
     let kms_client = aws_sdk_kms::Client::new(aws_config);
@@ -160,38 +184,29 @@ async fn kms_generate_new_key_and_store(
         .send()
         .await?;
 
-    let public_key = public_key.public_key().ok_or_else(|| {
+    let public_key_der = public_key.public_key().ok_or_else(|| {
         eyre::eyre!(
             "Public key not found for newly created key: {:?}",
             key_definition.arn
         )
     })?;
 
-    let public_key = PKey::public_key_from_der(&public_key.clone().into_inner())?;
+    let public_key_der = public_key_der.as_ref().to_vec();
 
-    let jwk = public_key_to_jwk(&public_key, key_definition.id.clone())?;
+    tracing::info!("New KMS key generated: {}", key_definition.arn);
 
-    let signing_key = SigningKey {
-        key_definition,
-        jwk,
-        created_at: chrono::Utc::now().timestamp(),
-    };
+    Ok((key_definition, public_key_der))
+}
 
-    tracing::info!(
-        "New key generated, storing in Redis: {}",
-        signing_key.key_definition.id
-    );
-
+async fn store_new_key_in_redis(
+    redis: &mut ConnectionManager,
+    key: &SigningKey,
+) -> eyre::Result<()> {
     redis
-        .lpush(
-            SIGNING_KEYS_REDIS_KEY,
-            serde_json::to_vec(&signing_key.clone())?,
-        )
+        .lpush(SIGNING_KEYS_REDIS_KEY, serde_json::to_vec(key)?)
         .await?;
-
-    tracing::info!("Stored key in Redis: {}", signing_key.key_definition.id);
-
-    Ok(signing_key)
+    tracing::info!("New key stored in Redis: {}", key.key_definition.id);
+    Ok(())
 }
 
 async fn acquire_lock_with_backoff(redis: &mut ConnectionManager) -> eyre::Result<bool> {

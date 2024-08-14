@@ -40,7 +40,7 @@ async fn test_fetch_all_keys_valid_for_verifying() {
     let aws_config = get_aws_config().await;
 
     // create a valid key for signing
-    let signing_key = kms_generate_new_key_and_store(&mut redis, &get_aws_config().await)
+    let signing_key = generate_new_key(&mut redis, &get_aws_config().await)
         .await
         .unwrap();
 
