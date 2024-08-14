@@ -242,11 +242,18 @@ async fn acquire_lock_with_backoff(redis: &mut ConnectionManager) -> eyre::Resul
         tokio::time::sleep(sleep_duration).await;
 
         // Check if a key was created while waiting
-        let updated_key_count = redis.llen::<_, usize>(SIGNING_KEYS_REDIS_KEY).await?;
+        let new_key = redis
+            .lindex::<_, Option<Vec<u8>>>(SIGNING_KEYS_REDIS_KEY, 0)
+            .await?;
 
-        if updated_key_count - key_count > 0 {
-            tracing::info!("A new key has been created while waiting for the lock. Exiting wait.");
-            return Ok(false);
+        if let Some(new_key) = new_key {
+            let new_key: SigningKey = serde_json::from_slice(&new_key)?;
+            if new_key.can_sign() {
+                tracing::info!(
+                    "A new key has been created while waiting for the lock. Exiting wait."
+                );
+                return Ok(false);
+            }
         }
 
         // Increase the backoff for the next retry
