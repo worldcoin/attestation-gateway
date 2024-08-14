@@ -355,6 +355,7 @@ async fn test_apple_initial_attestation_e2e_success() {
     let api_router = get_api_router().await;
 
     let aws_config = get_aws_config_extension().await;
+    let mut redis = get_redis_extension().await.0;
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
@@ -386,8 +387,7 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     let response = response.into_body().collect().await.unwrap().to_bytes();
     let response: Value = serde_json::from_slice(&response).unwrap();
-
-    assert!(response["attestation_gateway_token"].is_string());
+    let token = response["attestation_gateway_token"].as_str().unwrap();
 
     // Verify the key was saved to Dynamo
     let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
@@ -413,7 +413,32 @@ async fn test_apple_initial_attestation_e2e_success() {
         "org.worldcoin.insight.staging"
     );
 
-    // FIXME: Verify the token
+    let headers = josekit::jwt::decode_header(token).unwrap();
+
+    assert_eq!(
+        headers.claim("typ"),
+        Some(&josekit::Value::String("JWT".to_string()))
+    );
+    assert_eq!(
+        headers.claim("alg"),
+        Some(&josekit::Value::String("ES256".to_string()))
+    );
+
+    let kid = headers.claim("kid").unwrap().as_str().unwrap();
+
+    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+
+    // active key should match the key used to sign the token
+    assert_eq!(key.key_definition.id, kid);
+
+    let verifier = josekit::jws::ES256.verifier_from_jwk(&key.jwk).unwrap();
+    let (payload, _header) = josekit::jwt::decode_with_verifier(token, &verifier).unwrap();
+
+    assert_eq!(payload.claim("pass"), Some(&josekit::Value::Bool(true)));
+    assert_eq!(
+        payload.claim("out"),
+        Some(&josekit::Value::String("pass".to_string()))
+    );
 
     // ANCHOR: Test that the same public key cannot be verified as an initial attestation (we avoid another test to avoid duplicating the same calls)
 
@@ -496,6 +521,7 @@ async fn test_apple_assertion_e2e_success() {
     let api_router = get_api_router().await;
 
     let aws_config = get_aws_config_extension().await;
+    let mut redis = get_redis_extension().await.0;
 
     // Insert key into Dynamo first
     apple::dynamo::insert_apple_public_key(
@@ -539,8 +565,34 @@ async fn test_apple_assertion_e2e_success() {
     let response = response.into_body().collect().await.unwrap().to_bytes();
     let response: Value = serde_json::from_slice(&response).unwrap();
 
-    // FIXME: Verify the token
-    assert!(response["attestation_gateway_token"].is_string());
+    let token = response["attestation_gateway_token"].as_str().unwrap();
+
+    let headers = josekit::jwt::decode_header(token).unwrap();
+
+    assert_eq!(
+        headers.claim("typ"),
+        Some(&josekit::Value::String("JWT".to_string()))
+    );
+    assert_eq!(
+        headers.claim("alg"),
+        Some(&josekit::Value::String("ES256".to_string()))
+    );
+
+    let kid = headers.claim("kid").unwrap().as_str().unwrap();
+
+    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+
+    // active key should match the key used to sign the token
+    assert_eq!(key.key_definition.id, kid);
+
+    let verifier = josekit::jws::ES256.verifier_from_jwk(&key.jwk).unwrap();
+    let (payload, _header) = josekit::jwt::decode_with_verifier(token, &verifier).unwrap();
+
+    assert_eq!(payload.claim("pass"), Some(&josekit::Value::Bool(true)));
+    assert_eq!(
+        payload.claim("out"),
+        Some(&josekit::Value::String("pass".to_string()))
+    );
 
     // Verify the key counter was updated in Dynamo
 
