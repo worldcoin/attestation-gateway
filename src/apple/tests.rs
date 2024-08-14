@@ -261,12 +261,15 @@ fn verify_assertion_failure_with_invalid_key() {
         signature: ByteBuf::from(signature),
     };
 
-    let assertion = serde_cbor::to_vec(&assertion).unwrap();
-    let assertion = general_purpose::STANDARD.encode(assertion);
+    let mut encoded_assertion: Vec<u8> = Vec::new();
+
+    ciborium::into_writer(&assertion, &mut encoded_assertion).unwrap();
+
+    let encoded_assertion = general_purpose::STANDARD.encode(encoded_assertion);
     // We also use this assertion for `test_apple_token_generation_assertion_with_an_invalidly_signed_assertion`
 
     let result = decode_and_validate_assertion(
-        assertion,
+         encoded_assertion,
         // notice this public key does not match the `fake_public_key` generated above
          "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEh4Bd1IrEnNal/KNplK6VVrByUq4jsVtVVxpMI/mezeQcluflXHikUxYe+xoB/fAL3VnEA5zJlLobpHcfn/4+7w==".to_string(),
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
@@ -285,7 +288,7 @@ fn verify_assertion_failure_with_invalid_key() {
 }
 
 #[test]
-fn verify_assertion_failure_with_invalid_authenticator_daata() {
+fn verify_assertion_failure_with_invalid_authenticator_data() {
     let fake_authenticator_data =
         ByteBuf::from("these_are_not_the_expected_bytes_of_data".as_bytes());
 
@@ -316,11 +319,14 @@ fn verify_assertion_failure_with_invalid_authenticator_daata() {
         signature: ByteBuf::from(signature),
     };
 
-    let assertion = serde_cbor::to_vec(&assertion).unwrap();
-    let assertion = general_purpose::STANDARD.encode(assertion);
+    let mut encoded_assertion: Vec<u8> = Vec::new();
+
+    ciborium::into_writer(&assertion, &mut encoded_assertion).unwrap();
+
+    let encoded_assertion = general_purpose::STANDARD.encode(encoded_assertion);
 
     let result = decode_and_validate_assertion(
-        assertion,
+        encoded_assertion,
         general_purpose::STANDARD.encode(fake_key.public_key_to_der().unwrap()),
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
         request_hash,
