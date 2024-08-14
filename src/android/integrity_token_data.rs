@@ -6,8 +6,7 @@ use std::{
 
 use crate::utils::{BundleIdentifier, ClientError, ErrorCode};
 
-// FIXME const ALLOWED_TIMESTAMP_WINDOW: u64 = 10 * 600;
-const ALLOWED_TIMESTAMP_WINDOW: u64 = 10_000_000;
+const ALLOWED_TIMESTAMP_WINDOW: u64 = 10 * 60; // 10 minutes
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -347,7 +346,7 @@ mod tests {
             "requestDetails": {
                 "requestPackageName": "com.worldcoin.staging",
                 "nonce": "aGVsbG8gd29scmQgdGhlcmU",
-                "timestampMillis": "1720506932737"
+                "timestampMillis": "{timestamp}"
             },
             "appIntegrity": {
                 "appRecognitionVerdict": "PLAY_RECOGNIZED",
@@ -375,9 +374,13 @@ mod tests {
                 }
             }
         }"#;
+        let token_payload_str = token_payload_str.replace(
+            "{timestamp}",
+            chrono::Utc::now().timestamp_millis().to_string().as_str(),
+        );
         // cspell:enable
 
-        let token = PlayIntegrityToken::from_json(token_payload_str).unwrap();
+        let token = PlayIntegrityToken::from_json(&token_payload_str).unwrap();
 
         let result = token.validate_all_claims(
             &BundleIdentifier::AndroidStageWorldApp,
