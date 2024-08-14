@@ -7,6 +7,8 @@ use josekit::{
 
 use crate::utils::{OutEnum, OutputTokenPayload};
 
+use super::*;
+
 /// This key ID is set in `/tests/aws-seed.sh` & `.env.example`
 static TEST_KEY_ARN: &str =
     "arn:aws:kms:us-east-1:000000000000:key/c7956b9c-5235-4e8e-bb35-7310fb80f4ca";
@@ -32,7 +34,12 @@ async fn get_kms_client() -> aws_sdk_kms::Client {
 async fn test_key_id_extraction() {
     let key_arn = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789013";
 
-    let signer = super::EcdsaJwsSignerWithKms::new(key_arn.to_string(), get_kms_client().await);
+    let key = KMSKeyDefinition::from_arn(key_arn.to_string());
+
+    let signer = super::EcdsaJwsSignerWithKms {
+        key,
+        kms_client: get_kms_client().await,
+    };
 
     assert_eq!(
         signer.key_id(),
@@ -50,7 +57,12 @@ async fn test_key_id_extraction() {
 async fn test_invalid_key_arn_in_extraction() {
     let key_arn = "12345678-1234-1234-1234-123456789012";
 
-    let signer = super::EcdsaJwsSignerWithKms::new(key_arn.to_string(), get_kms_client().await);
+    let key = KMSKeyDefinition::from_arn(key_arn.to_string());
+
+    let signer = super::EcdsaJwsSignerWithKms {
+        key,
+        kms_client: get_kms_client().await,
+    };
 
     signer.key_id(); // This should panic
 }

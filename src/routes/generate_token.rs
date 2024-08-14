@@ -4,7 +4,9 @@ use redis::{aio::ConnectionManager, AsyncCommands};
 use std::time::SystemTime;
 
 use crate::{
-    android, apple, kms_jws,
+    android, apple,
+    keys::fetch_active_key,
+    kms_jws,
     utils::{
         handle_redis_error, BundleIdentifier, ClientError, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
@@ -89,19 +91,26 @@ pub async fn handler(
     }
     .generate()?;
 
-    let attestation_gateway_token = kms_jws::generate_output_token(
-        &aws_config,
-        global_config.output_token_kms_key_arn.clone(),
-        output_token_payload,
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(?e, "Error generating output token");
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: None,
-        }
-    })?;
+    let key = fetch_active_key(&mut redis, &aws_config)
+        .await
+        .map_err(|e| {
+            tracing::error!(?e, "Error fetching active key");
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: None,
+            }
+        })?;
+
+    let attestation_gateway_token =
+        kms_jws::generate_output_token(&aws_config, key.key_definition.arn, output_token_payload)
+            .await
+            .map_err(|e| {
+                tracing::error!(?e, "Error generating output token");
+                RequestError {
+                    code: ErrorCode::InternalServerError,
+                    details: None,
+                }
+            })?;
 
     // Store the request hash in Redis to prevent duplicate use
     redis

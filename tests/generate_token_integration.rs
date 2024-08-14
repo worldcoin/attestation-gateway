@@ -1,5 +1,6 @@
 use attestation_gateway::{
     apple,
+    keys::fetch_active_key,
     utils::{BundleIdentifier, TokenGenerationRequest},
 };
 use axum::{
@@ -56,9 +57,6 @@ async fn reset_apple_keys_table(aws_config: &aws_config::SdkConfig) {
 
 fn get_global_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
     let config = attestation_gateway::utils::GlobalConfig {
-        output_token_kms_key_arn:
-            "arn:aws:kms:us-east-1:000000000000:key/c7956b9c-5235-4e8e-bb35-7310fb80f4ca"
-                .to_string(),
         android_outer_jwe_private_key: "7d5b44298bf959af149a0086d79334e6".to_string(),
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
     };
@@ -86,6 +84,8 @@ async fn get_api_router() -> aide::axum::ApiRouter {
 #[serial]
 async fn test_android_e2e_success() {
     let api_router = get_api_router().await;
+    let mut redis = get_redis_extension().await.0;
+    let aws_config = get_aws_config_extension().await.0;
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(VALID_INTEGRITY_TOKEN.to_string()),
@@ -117,9 +117,34 @@ async fn test_android_e2e_success() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
 
-    assert!(body["attestation_gateway_token"].is_string());
+    let token: &str = body["attestation_gateway_token"].as_str().unwrap();
 
-    // FIXME: Verify the token
+    let headers = josekit::jwt::decode_header(token).unwrap();
+
+    assert_eq!(
+        headers.claim("typ"),
+        Some(&josekit::Value::String("JWT".to_string()))
+    );
+    assert_eq!(
+        headers.claim("alg"),
+        Some(&josekit::Value::String("ES256".to_string()))
+    );
+
+    let kid = headers.claim("kid").unwrap().as_str().unwrap();
+
+    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+
+    // active key should match the key used to sign the token
+    assert_eq!(key.key_definition.id, kid);
+
+    let verifier = josekit::jws::ES256.verifier_from_jwk(&key.jwk).unwrap();
+    let (payload, _header) = josekit::jwt::decode_with_verifier(token, &verifier).unwrap();
+
+    assert_eq!(payload.claim("pass"), Some(&josekit::Value::Bool(true)));
+    assert_eq!(
+        payload.claim("out"),
+        Some(&josekit::Value::String("pass".to_string()))
+    );
 }
 
 #[tokio::test]
@@ -264,9 +289,6 @@ async fn test_server_error_is_properly_logged() {
     // Override global config to use an invalid JWE private key which will cause a server error
     fn get_local_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
         let config = attestation_gateway::utils::GlobalConfig {
-            output_token_kms_key_arn:
-                "arn:aws:kms:us-east-1:000000000000:key/c7956b9c-5235-4e8e-bb35-7310fb80f4ca"
-                    .to_string(),
             // This is not a valid AES-256 key
             android_outer_jwe_private_key: "invalid".to_string(),
             apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
