@@ -11,6 +11,7 @@ static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_
 #[derive(Debug, Clone)]
 pub struct GlobalConfig {
     pub android_outer_jwe_private_key: String,
+    pub android_inner_jws_public_key: String,
     pub apple_keys_dynamo_table_name: String,
 }
 

@@ -51,11 +51,15 @@ pub fn load_config() -> GlobalConfig {
     let android_outer_jwe_private_key = env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
         .expect("env var `ANDROID_OUTER_JWE_PRIVATE_KEY` is required");
 
+    let android_inner_jws_public_key = env::var("ANDROID_INNER_JWS_PUBLIC_KEY")
+        .expect("env var `ANDROID_INNER_JWS_PUBLIC_KEY` is required");
+
     let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
         .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
 
     GlobalConfig {
         android_outer_jwe_private_key,
+        android_inner_jws_public_key,
         apple_keys_dynamo_table_name,
     }
 }

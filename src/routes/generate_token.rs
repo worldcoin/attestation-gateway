@@ -158,6 +158,7 @@ async fn verify_android_or_apple_integrity(
             &bundle_identifier,
             &request_hash,
             config.android_outer_jwe_private_key,
+            config.android_inner_jws_public_key,
         )?,
         IntegrityVerificationInput::AppleInitialAttestation {
             apple_initial_attestation,

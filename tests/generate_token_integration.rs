@@ -58,6 +58,7 @@ async fn reset_apple_keys_table(aws_config: &aws_config::SdkConfig) {
 fn get_global_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
     let config = attestation_gateway::utils::GlobalConfig {
         android_outer_jwe_private_key: "7d5b44298bf959af149a0086d79334e6".to_string(),
+        android_inner_jws_public_key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/EScv4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==".to_string(),
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
     };
     Extension(config)
@@ -291,6 +292,7 @@ async fn test_server_error_is_properly_logged() {
         let config = attestation_gateway::utils::GlobalConfig {
             // This is not a valid AES-256 key
             android_outer_jwe_private_key: "invalid".to_string(),
+            android_inner_jws_public_key: "irrelevant".to_string(),
             apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         };
         Extension(config)
