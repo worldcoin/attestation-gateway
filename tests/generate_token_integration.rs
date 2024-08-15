@@ -1,3 +1,5 @@
+use std::time::{Duration, SystemTime};
+
 use attestation_gateway::{
     apple,
     keys::fetch_active_key,
@@ -9,12 +11,15 @@ use axum::{
     Extension,
 };
 use http_body_util::BodyExt;
+use josekit::{
+    jwe::{JweContext, JweHeader, A256KW},
+    jws::{JwsHeader, ES256},
+    jwt::{self, JwtPayload},
+};
 use serde_json::{json, Value};
 use serial_test::serial;
 use tower::ServiceExt; // for `response.collect`
 use tracing_test::traced_test;
-
-static VALID_INTEGRITY_TOKEN: &str = "eyJhbGciOiJBMjU2S1ciLCJlbmMiOiJBMjU2R0NNIn0.cNECHTrf6KAJDjDGqkWF4O0uMey-S4rjJYV9GNuyVGZlSOJV_4VaTg.gC6osYvLIhvwroOJ.EYkQCz4FFVNdRozPflriVz23J4AkP3FXnYU-p2IzEp9I5GHsYnEQg8CHCx_bNRBP_kUiWKjUDNW7XV-f1xHp-F8lDhuda-eouMdzdzphbQPw_jCEo3ujN-i6tO8NWUqOX3L8IhYQxDilz3yQ6j5_2ESlrNfm9J2KO9UaK5xAvNvUeplDCuG9DbAjoiqyKo1F7Arezqqo7M0NeMMD3EWVf36Pqx3_Fna14wdUx6mRQeMcZ5wYtQprU7mJXGIPoCGvdNuSzwM1Hcgmey8mp7HLXTQP1EXrogzSoGkTdZomfz0wnrB8WkLT5wDg3eb1lhYbih9SwupTrakAQG9LdBAWEldO_GzX1JW6zI51tZIUlWjyNhNrWJtyYNAYSSbc9dY4qN5ffNd0vhVlMB5DWD6v-ztaPASG3776e_mfgYsCEd_1PsrW3CbuVY-m5fva2qi0ar1Hye5ZSrE267ND_2CIvjqnEjDKji3S3PepTlbPv1_VGzRrra9QpuJKVKxefeoNGwZ-U8jDeJCErfFdOFJaXJ94McnO0IWc6aoEQf3stzqTEsx_T9MIP6n8TGx-w0xG-WJIVu_P1nb5Ybva8F8oqgtZwhuTGnin3ErSlHAn8HpdJ3-2T0BMuvf8ITfBgdSvS_aMJTPfPp3M8K0O-LN-6fGDZc-brKv_i7s-VQZj6w6D-EJ9xwGbXwxOk7mkyIAseUS-SEXNxG1OcC4QT-e47ncyq2C_KzR3-5spdzCg0FdxvqDuBhj8G2rd-LeElXohmITmJ3Ee_VafaFiYGcRzJdr6wfgF-LJoGNr8GMDxcEH9tIAZwDn6f3BearErgn8EJFrNhMDcallTWQX1AoPlCEhaJBB0RB5L0grAqOqkhM5XqrqzYBUIiIP3Cs1LQSmy2Ai2z6iOaKfyOU_rNXq_jhGmvr9u9PBYjnZhnnOoSVmNp8PkGdb8pLrL_LzMuHundTFOZUsbz3tgyqKzh8dae-Yf6D5u_byCUyMscnLL9Q520NfWnXtHVYJCWZOeU9F693MFUUE4aOuEZFfSk998QTSEFf-TagC7vP2rH4Zpux0sCM2hqxjOOvZEyg3Ef8FsBvg9srRIIb_L5mpVa0jasTyqfyDVECxZO4YiqZW5CWPWLDfgT2MkYPOT8VclhZ5ZyJIKu7ZamNGriSZBhHjKQi2g0ap9A75qnyrdq-hEJZo4gqKmUou9f3fQAzT3sCPj1i3PEWVmHQvlt5vbDTqmBBxyLcgSkd0oNrpI-So2jf94syvImh_5OKexCdde5Fj91o8.5_KKK0EuQwEA5tjlpxaRzA";
 
 static APPLE_KEYS_DYNAMO_TABLE_NAME: &str = "attestation-gateway-apple-keys";
 
@@ -58,6 +63,7 @@ async fn reset_apple_keys_table(aws_config: &aws_config::SdkConfig) {
 fn get_global_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
     let config = attestation_gateway::utils::GlobalConfig {
         android_outer_jwe_private_key: "7d5b44298bf959af149a0086d79334e6".to_string(),
+        android_inner_jws_public_key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/EScv4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==".to_string(),
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
     };
     Extension(config)
@@ -78,6 +84,91 @@ async fn get_api_router() -> aide::axum::ApiRouter {
         .layer(get_redis_extension().await)
 }
 
+/// Generates a valid Android integrity token (simulating what Play Store would generate)
+/// We need to generate this dynamically because of the timestamp
+fn helper_generate_valid_token() -> String {
+    // This is the corresponding private key to the public key we use in tests
+    let verifier_private_key = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFU28VNv+wsvcC0rR
+5n05rAs2xRxfmbHzDjEQdQqvRSmhRANCAAT4P6kKoEaZq6108t78Pyi357T8RJy/
+gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
+-----END PRIVATE KEY-----";
+
+    let token_payload_str = r#"
+    {
+        "payload":
+        {
+            "requestDetails": {
+                "requestPackageName": "com.worldcoin.dev",
+                "nonce": "aGVsbG8gd29scmQgdGhlcmU",
+                "timestampMillis": {timestamp}
+            },
+            "appIntegrity": {
+                "appRecognitionVerdict": "PLAY_RECOGNIZED",
+                "packageName": "com.worldcoin.dev",
+                "certificateSha256Digest": [
+                    "6a6a1474b5cbbb2b1aa57e0bc3"
+                ],
+                "versionCode": "25700"
+            },
+            "deviceIntegrity": {
+                "deviceRecognitionVerdict": [
+                    "MEETS_DEVICE_INTEGRITY"
+                ]
+            },
+            "accountDetails": {
+                "appLicensingVerdict": "LICENSED"
+            },
+            "environmentDetails": {
+                "appAccessRiskVerdict": {
+                    "appsDetected": [
+                        "KNOWN_INSTALLED",
+                        "UNKNOWN_INSTALLED",
+                        "UNKNOWN_CAPTURING"
+                    ]
+                }
+            }
+        }
+    }"#;
+    let token_payload_str = token_payload_str.replace(
+        "{timestamp}",
+        chrono::Utc::now().timestamp_millis().to_string().as_str(),
+    );
+
+    let token_payload: Value = serde_json::from_str(token_payload_str.as_str()).unwrap();
+
+    let json_map: serde_json::Map<String, Value> = match token_payload {
+        Value::Object(map) => map.into_iter().collect(),
+        _ => panic!("Unexpected value"),
+    };
+
+    let mut payload = JwtPayload::from_map(json_map).unwrap();
+    let exp = SystemTime::now() + Duration::new(600, 0);
+    payload.set_expires_at(&exp);
+
+    let mut headers = JwsHeader::new();
+    headers.set_algorithm("ES256");
+
+    // Sign the inner JWS
+    let signer = ES256.signer_from_pem(verifier_private_key).unwrap();
+    let jws = jwt::encode_with_signer(&payload, &headers, &signer).unwrap();
+
+    // Encrypt the JWE
+    let encrypter = A256KW
+        .encrypter_from_bytes(std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").unwrap())
+        .unwrap();
+    let mut headers = JweHeader::new();
+    headers.set_algorithm("A256KW");
+    headers.set_content_encryption("A256GCM");
+
+    let context = JweContext::new();
+    let jwe = context
+        .serialize_compact(jws.as_bytes(), &headers, &encrypter)
+        .unwrap();
+
+    jwe
+}
+
 // SECTION ------------------ android tests ------------------
 
 #[tokio::test]
@@ -88,7 +179,7 @@ async fn test_android_e2e_success() {
     let aws_config = get_aws_config_extension().await.0;
 
     let token_generation_request = TokenGenerationRequest {
-        integrity_token: Some(VALID_INTEGRITY_TOKEN.to_string()),
+        integrity_token: Some(helper_generate_valid_token()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
         request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
@@ -116,6 +207,7 @@ async fn test_android_e2e_success() {
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
+    dbg!(&body);
 
     let token: &str = body["attestation_gateway_token"].as_str().unwrap();
 
@@ -234,7 +326,7 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
     let api_router = get_api_router().await;
 
     let token_generation_request = TokenGenerationRequest {
-        integrity_token: Some(VALID_INTEGRITY_TOKEN.to_string()),
+        integrity_token: Some(helper_generate_valid_token()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
         request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
@@ -291,6 +383,7 @@ async fn test_server_error_is_properly_logged() {
         let config = attestation_gateway::utils::GlobalConfig {
             // This is not a valid AES-256 key
             android_outer_jwe_private_key: "invalid".to_string(),
+            android_inner_jws_public_key: "irrelevant".to_string(),
             apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         };
         Extension(config)
@@ -306,7 +399,7 @@ async fn test_server_error_is_properly_logged() {
     let api_router = get_local_api_router().await;
 
     let token_generation_request = TokenGenerationRequest {
-        integrity_token: Some(VALID_INTEGRITY_TOKEN.to_string()),
+        integrity_token: Some(helper_generate_valid_token()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
         request_hash: "test_server_error_is_properly_logged_hash".to_string(),
@@ -353,6 +446,7 @@ async fn test_apple_initial_attestation_e2e_success() {
     let api_router = get_api_router().await;
 
     let aws_config = get_aws_config_extension().await;
+    let mut redis = get_redis_extension().await.0;
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
@@ -384,8 +478,7 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     let response = response.into_body().collect().await.unwrap().to_bytes();
     let response: Value = serde_json::from_slice(&response).unwrap();
-
-    assert!(response["attestation_gateway_token"].is_string());
+    let token = response["attestation_gateway_token"].as_str().unwrap();
 
     // Verify the key was saved to Dynamo
     let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
@@ -411,7 +504,32 @@ async fn test_apple_initial_attestation_e2e_success() {
         "org.worldcoin.insight.staging"
     );
 
-    // FIXME: Verify the token
+    let headers = josekit::jwt::decode_header(token).unwrap();
+
+    assert_eq!(
+        headers.claim("typ"),
+        Some(&josekit::Value::String("JWT".to_string()))
+    );
+    assert_eq!(
+        headers.claim("alg"),
+        Some(&josekit::Value::String("ES256".to_string()))
+    );
+
+    let kid = headers.claim("kid").unwrap().as_str().unwrap();
+
+    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+
+    // active key should match the key used to sign the token
+    assert_eq!(key.key_definition.id, kid);
+
+    let verifier = josekit::jws::ES256.verifier_from_jwk(&key.jwk).unwrap();
+    let (payload, _header) = josekit::jwt::decode_with_verifier(token, &verifier).unwrap();
+
+    assert_eq!(payload.claim("pass"), Some(&josekit::Value::Bool(true)));
+    assert_eq!(
+        payload.claim("out"),
+        Some(&josekit::Value::String("pass".to_string()))
+    );
 
     // ANCHOR: Test that the same public key cannot be verified as an initial attestation (we avoid another test to avoid duplicating the same calls)
 
@@ -494,6 +612,7 @@ async fn test_apple_assertion_e2e_success() {
     let api_router = get_api_router().await;
 
     let aws_config = get_aws_config_extension().await;
+    let mut redis = get_redis_extension().await.0;
 
     // Insert key into Dynamo first
     apple::dynamo::insert_apple_public_key(
@@ -537,8 +656,34 @@ async fn test_apple_assertion_e2e_success() {
     let response = response.into_body().collect().await.unwrap().to_bytes();
     let response: Value = serde_json::from_slice(&response).unwrap();
 
-    // FIXME: Verify the token
-    assert!(response["attestation_gateway_token"].is_string());
+    let token = response["attestation_gateway_token"].as_str().unwrap();
+
+    let headers = josekit::jwt::decode_header(token).unwrap();
+
+    assert_eq!(
+        headers.claim("typ"),
+        Some(&josekit::Value::String("JWT".to_string()))
+    );
+    assert_eq!(
+        headers.claim("alg"),
+        Some(&josekit::Value::String("ES256".to_string()))
+    );
+
+    let kid = headers.claim("kid").unwrap().as_str().unwrap();
+
+    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+
+    // active key should match the key used to sign the token
+    assert_eq!(key.key_definition.id, kid);
+
+    let verifier = josekit::jws::ES256.verifier_from_jwk(&key.jwk).unwrap();
+    let (payload, _header) = josekit::jwt::decode_with_verifier(token, &verifier).unwrap();
+
+    assert_eq!(payload.claim("pass"), Some(&josekit::Value::Bool(true)));
+    assert_eq!(
+        payload.claim("out"),
+        Some(&josekit::Value::String("pass".to_string()))
+    );
 
     // Verify the key counter was updated in Dynamo
 

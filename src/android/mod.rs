@@ -1,6 +1,7 @@
 use std::time::SystemTime;
 
 use crate::utils::{BundleIdentifier, ClientError, ErrorCode, VerificationOutput};
+use base64::Engine;
 pub use integrity_token_data::PlayIntegrityToken;
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
@@ -17,10 +18,12 @@ pub fn verify(
     bundle_identifier: &BundleIdentifier,
     request_hash: &str,
     android_outer_jwe_private_key: String,
+    android_inner_jws_verifier_key: String,
 ) -> eyre::Result<VerificationOutput> {
     let decrypted_jws = decrypt_outer_jwe(integrity_token, android_outer_jwe_private_key)?;
 
-    let play_integrity_payload = verify_and_parse_inner_jws(&decrypted_jws)?;
+    let play_integrity_payload =
+        verify_and_parse_inner_jws(decrypted_jws, android_inner_jws_verifier_key)?;
 
     let parsed_token = PlayIntegrityToken::from_json(&play_integrity_payload)?;
 
@@ -67,14 +70,13 @@ fn decrypt_outer_jwe(
 /// Verifies the signature of the inner JWS (as well as expiration) and parses the payload into a `PlayIntegrityToken` struct
 /// <https://developer.android.com/google/play/integrity/classic#kotlin>
 ///
-fn verify_and_parse_inner_jws(compact_jws: &[u8]) -> eyre::Result<String> {
-    // FIXME: These are temporary keys for local development
-    let verifier_key = b"-----BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/ESc
-v4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==
------END PUBLIC KEY-----";
-
-    let verifier = ES256.verifier_from_pem(verifier_key)?;
+fn verify_and_parse_inner_jws(
+    compact_jws: Vec<u8>,
+    android_inner_jws_verifier_key: String,
+) -> eyre::Result<String> {
+    let decoded_key = base64::engine::general_purpose::STANDARD
+        .decode(android_inner_jws_verifier_key.into_bytes())?;
+    let verifier = ES256.verifier_from_der(decoded_key)?;
 
     let (jws, _) = josekit::jwt::decode_with_verifier(compact_jws, &verifier)?;
 
@@ -110,9 +112,14 @@ mod tests {
     use josekit::jwt::{self, JwtPayload};
     use std::time::{Duration, SystemTime};
 
-    fn helper_get_test_key() -> String {
+    fn helper_get_test_keys() -> (String, String) {
         dotenvy::from_filename(".env.example").unwrap();
-        std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").unwrap()
+        (
+            std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
+                .expect("`ANDROID_OUTER_JWE_PRIVATE_KEY` must be set for tests."),
+            std::env::var("ANDROID_INNER_JWS_PUBLIC_KEY")
+                .expect("`ANDROID_INNER_JWS_PUBLIC_KEY` must be set for tests."),
+        )
     }
 
     // SECTION - JWE tests
@@ -130,11 +137,14 @@ mod tests {
 
         let test_jwe = jwe::serialize_compact(b"test", &headers, &encrypter).unwrap();
 
+        let (jwe_sk, jws_pk) = helper_get_test_keys();
+
         let error_report = verify(
             &test_jwe,
             &BundleIdentifier::AndroidStageWorldApp,
             "test",
-            helper_get_test_key(),
+            jwe_sk,
+            jws_pk,
         )
         .unwrap_err();
 
@@ -161,11 +171,14 @@ mod tests {
 
         let test_jwe = jwe::serialize_compact(b"test", &headers, &encrypter).unwrap();
 
+        let (jwe_sk, jws_pk) = helper_get_test_keys();
+
         let error_report = verify(
             &test_jwe,
             &BundleIdentifier::AndroidStageWorldApp,
             "test",
-            helper_get_test_key(),
+            jwe_sk,
+            jws_pk,
         )
         .unwrap_err();
 
@@ -201,7 +214,9 @@ mod tests {
 
         let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
 
-        let error_report = verify_and_parse_inner_jws(&jws.into_bytes()).unwrap_err();
+        let (_, jws_pk) = helper_get_test_keys();
+
+        let error_report = verify_and_parse_inner_jws(jws.into_bytes(), jws_pk).unwrap_err();
         assert_eq!(
             "Invalid signature: The signature does not match.",
             error_report.to_string()
@@ -210,7 +225,6 @@ mod tests {
 
     #[test]
     fn test_expired_jws_fails_verification() {
-        // TODO: Replace once we use actual keys
         let verifier_private_key = "-----BEGIN PRIVATE KEY-----
     MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFU28VNv+wsvcC0rR
     5n05rAs2xRxfmbHzDjEQdQqvRSmhRANCAAT4P6kKoEaZq6108t78Pyi357T8RJy/
@@ -232,7 +246,9 @@ mod tests {
 
         let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
 
-        let error_report = verify_and_parse_inner_jws(&jws.into_bytes()).unwrap_err();
+        let (_, jws_pk) = helper_get_test_keys();
+
+        let error_report = verify_and_parse_inner_jws(jws.into_bytes(), jws_pk).unwrap_err();
 
         assert_eq!(
             error_report.downcast::<ClientError>().unwrap(),
@@ -263,7 +279,9 @@ mod tests {
 
         let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
 
-        let error_report = verify_and_parse_inner_jws(&jws.into_bytes()).unwrap_err();
+        let (_, jws_pk) = helper_get_test_keys();
+
+        let error_report = verify_and_parse_inner_jws(jws.into_bytes(), jws_pk).unwrap_err();
 
         assert_eq!(
             error_report.to_string(),

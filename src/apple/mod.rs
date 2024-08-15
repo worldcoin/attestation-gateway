@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{io::Cursor, str::FromStr};
 
 use crate::utils::{BundleIdentifier, ClientError, ErrorCode, VerificationOutput};
 use base64::{engine::general_purpose, Engine as _};
@@ -190,7 +190,9 @@ fn decode_and_validate_initial_attestation(
             })
         })?;
 
-    let attestation: Attestation = serde_cbor::from_slice(&attestation_bytes).map_err(|e| {
+    let cursor = Cursor::new(attestation_bytes);
+
+    let attestation: Attestation = ciborium::from_reader(cursor).map_err(|e| {
         tracing::debug!(?e, "error decoding cbor formatted attestation.");
         eyre::eyre!(ClientError {
             code: ErrorCode::InvalidToken,
@@ -341,7 +343,9 @@ fn decode_and_validate_assertion(
         })
     })?;
 
-    let assertion: Assertion = serde_cbor::from_slice(&assertion_bytes)?;
+    let cursor = Cursor::new(assertion_bytes);
+
+    let assertion: Assertion = ciborium::from_reader(cursor)?;
 
     // Step 1 and 2: Calculate nonce
     let mut hasher = Sha256::new();
