@@ -87,7 +87,7 @@ pub async fn handler(
         request_hash: request_hash.clone(),
         pass: report.pass,
         out: report.out,
-        error: None, // TODO: Implement in the future
+        error: None, // TODO: Implement in the future (see L76)
     }
     .generate()?;
 
