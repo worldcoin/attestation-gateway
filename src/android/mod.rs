@@ -115,8 +115,10 @@ mod tests {
     fn helper_get_test_keys() -> (String, String) {
         dotenvy::from_filename(".env.example").unwrap();
         (
-            std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").unwrap(),
-            std::env::var("ANDROID_INNER_JWS_PUBLIC_KEY").unwrap(),
+            std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
+                .expect("`ANDROID_OUTER_JWE_PRIVATE_KEY` must be set for tests."),
+            std::env::var("ANDROID_INNER_JWS_PUBLIC_KEY")
+                .expect("`ANDROID_INNER_JWS_PUBLIC_KEY` must be set for tests."),
         )
     }
 
