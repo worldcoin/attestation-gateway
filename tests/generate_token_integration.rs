@@ -65,6 +65,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         android_outer_jwe_private_key: "7d5b44298bf959af149a0086d79334e6".to_string(),
         android_inner_jws_public_key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/EScv4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==".to_string(),
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
+        disabled_bundle_identifiers: vec![BundleIdentifier::AndroidProdWorldApp],
     };
     Extension(config)
 }
@@ -278,6 +279,43 @@ async fn test_token_generation_fails_on_invalid_bundle_identifier() {
 
 #[tokio::test]
 #[serial]
+async fn test_token_generation_fails_on_disabled_bundle_identifier() {
+    let api_router = get_api_router().await;
+
+    let token_generation_request = json!( {
+        "integrity_token": "my_integrity_token".to_string(),
+        "aud": "toolsforhumanity.com".to_string(),
+        "bundle_identifier": "com.worldcoin".to_string(), // see get_global_config_extension where this identifier is currently disabled
+        "request_hash": "my_request_hash".to_string(),
+    });
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(
+        body["details"],
+        "This bundle identifier is currently unavailable.".to_string()
+    );
+}
+
+#[tokio::test]
+#[serial]
 async fn test_android_token_generation_with_invalid_attributes() {
     let api_router = get_api_router().await;
 
@@ -385,6 +423,7 @@ async fn test_server_error_is_properly_logged() {
             android_outer_jwe_private_key: "invalid".to_string(),
             android_inner_jws_public_key: "irrelevant".to_string(),
             apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
+            disabled_bundle_identifiers: Vec::new(),
         };
         Extension(config)
     }

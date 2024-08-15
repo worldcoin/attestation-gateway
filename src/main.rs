@@ -34,34 +34,12 @@ async fn main() {
 
     let aws_config = environment.aws_config().await;
 
-    server::start(redis, aws_config, load_config()).await;
+    server::start(redis, aws_config, GlobalConfig::from_env()).await;
 }
 
 async fn build_redis_pool(redis_url: String) -> redis::RedisResult<ConnectionManager> {
     let client: redis::Client = redis::Client::open(redis_url)?;
     ConnectionManager::new(client).await
-}
-
-/// Loads the global configuration from env vars
-///
-/// # Panics
-/// If required environment variables are not set or do not look correct
-#[must_use]
-pub fn load_config() -> GlobalConfig {
-    let android_outer_jwe_private_key = env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
-        .expect("env var `ANDROID_OUTER_JWE_PRIVATE_KEY` is required");
-
-    let android_inner_jws_public_key = env::var("ANDROID_INNER_JWS_PUBLIC_KEY")
-        .expect("env var `ANDROID_INNER_JWS_PUBLIC_KEY` is required");
-
-    let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
-        .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
-
-    GlobalConfig {
-        android_outer_jwe_private_key,
-        android_inner_jws_public_key,
-        apple_keys_dynamo_table_name,
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

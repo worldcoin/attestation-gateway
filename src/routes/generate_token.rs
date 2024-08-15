@@ -29,6 +29,16 @@ pub async fn handler(
 
     let integrity_verification_input = IntegrityVerificationInput::from_request(&request)?;
 
+    if global_config
+        .disabled_bundle_identifiers
+        .contains(&request.bundle_identifier)
+    {
+        return Err(RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("This bundle identifier is currently unavailable.".to_string()),
+        });
+    }
+
     // Check the request hash is unique
     if redis
         .exists::<_, bool>(format!(
