@@ -203,7 +203,7 @@ async fn test_android_e2e_success() {
         .await
         .unwrap();
 
-    // assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::OK);
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
