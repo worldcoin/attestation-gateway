@@ -1,7 +1,7 @@
 ####################################################################################################
 ## Base image
 ####################################################################################################
-FROM --platform=linux/amd64 rust:1 AS chef
+FROM --platform=linux/amd64 public.ecr.aws/docker/library/rust:1 AS chef
 USER root
 WORKDIR /app
 RUN cargo install cargo-chef
