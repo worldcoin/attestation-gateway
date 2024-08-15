@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use josekit::{jwt::JwtPayload, JoseError};
 use redis::RedisError;
 use schemars::JsonSchema;
-use std::{fmt::Display, time::SystemTime};
+use std::{env, fmt::Display, time::SystemTime};
 
 static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 
@@ -13,6 +13,48 @@ pub struct GlobalConfig {
     pub android_outer_jwe_private_key: String,
     pub android_inner_jws_public_key: String,
     pub apple_keys_dynamo_table_name: String,
+    pub disabled_bundle_identifiers: Vec<BundleIdentifier>,
+}
+
+impl GlobalConfig {
+    /// Loads global config from environment variables
+    ///
+    /// # Panics
+    /// If required environment variables are not set
+    pub fn from_env() -> Self {
+        let android_outer_jwe_private_key = env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
+            .expect("env var `ANDROID_OUTER_JWE_PRIVATE_KEY` is required");
+
+        let android_inner_jws_public_key = env::var("ANDROID_INNER_JWS_PUBLIC_KEY")
+            .expect("env var `ANDROID_INNER_JWS_PUBLIC_KEY` is required");
+
+        let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
+            .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
+
+        // Disabling bundle identifiers is helpful so that the production deployment of this app does not accept staging apps (or viceversa)
+        let disabled_bundle_identifiers = env::var("DISABLED_BUNDLE_IDENTIFIERS");
+        let disabled_bundle_identifiers: Vec<BundleIdentifier> = disabled_bundle_identifiers
+            .map_or_else(
+                |_| Vec::new(),
+                |val| {
+                    val.split(',')
+                        .filter_map(|s| serde_json::from_str(&format!("\"{s}\"")).ok())
+                        .collect()
+                },
+            );
+
+        tracing::info!(
+            "Running with disabled bundle identifiers: {:?}",
+            disabled_bundle_identifiers
+        );
+
+        Self {
+            android_outer_jwe_private_key,
+            android_inner_jws_public_key,
+            apple_keys_dynamo_table_name,
+            disabled_bundle_identifiers,
+        }
+    }
 }
 
 #[derive(Debug)]

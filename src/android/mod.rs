@@ -261,7 +261,6 @@ mod tests {
 
     #[test]
     fn test_jws_without_a_valid_exp_is_rejected() {
-        // TODO: Replace once we use actual keys
         let verifier_private_key = "-----BEGIN PRIVATE KEY-----
     MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFU28VNv+wsvcC0rR
     5n05rAs2xRxfmbHzDjEQdQqvRSmhRANCAAT4P6kKoEaZq6108t78Pyi357T8RJy/

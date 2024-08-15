@@ -33,7 +33,7 @@ serde = { version = "1.0.204", features = ["derive"] }
 serde_bytes = "0.11.15"
 serde_json = "1.0.122"
 tokio = { version = "1.39.2", features = ["full"] }
-tower-http = { version = "0.5.2", features = ["trace"] }
+tower-http = { version = "0.5.2", features = ["trace", "timeout"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt","json"
