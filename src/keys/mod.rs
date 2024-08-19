@@ -51,10 +51,16 @@ pub async fn fetch_all(
     redis: &mut ConnectionManager,
     aws_config: &aws_config::SdkConfig,
 ) -> eyre::Result<Vec<SigningKey>> {
-    let keys = fetch_keys_from_redis(redis).await?;
+    let mut keys = fetch_keys_from_redis(redis).await?;
 
     if keys.is_empty() {
         return Ok(vec![generate_new_key(redis, aws_config).await?]);
+    }
+
+    // check the latest key is valid for signing, otherwise generate a new one
+    if !keys[0].can_sign() {
+        keys.insert(0, generate_new_key(redis, aws_config).await?);
+        return Ok(keys);
     }
 
     Ok(keys)
@@ -83,6 +89,7 @@ pub async fn fetch_active_key(
 
 async fn fetch_keys_from_redis(redis: &mut ConnectionManager) -> eyre::Result<Vec<SigningKey>> {
     let keys: Vec<Vec<u8>> = redis.lrange(SIGNING_KEYS_REDIS_KEY, 0, 1).await?; // maximum retrieve two keys
+
     let keys: Vec<SigningKey> = keys
         .into_iter()
         .filter_map(|item| {

@@ -47,8 +47,8 @@ async fn test_fetch_all_keys_valid_for_verifying() {
     // create a key that is no longer valid for signing but is valid for verifying
     let verifying_key = SigningKey {
         key_definition: KMSKeyDefinition {
-            id: "key_123".to_string(),
-            arn: "arn:aws:kms:us-west-2:123456789012:key/key_123".to_string(),
+            id: "key_abcdefgh".to_string(),
+            arn: "arn:aws:kms:us-west-2:123456789012:key/key_abcdefgh".to_string(),
         },
         jwk: Jwk::new("EC"),
         created_at: chrono::Utc::now().timestamp() - SIGNING_CONFIG.key_ttl_signing - 10,

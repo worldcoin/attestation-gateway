@@ -14,6 +14,7 @@
     "lpush",
     "lrange",
     "pkey",
+    "rpush",
     "rustc",
     "schemars",
     "secp256r1",
