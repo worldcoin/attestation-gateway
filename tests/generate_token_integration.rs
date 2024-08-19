@@ -1,5 +1,3 @@
-use std::time::{Duration, SystemTime};
-
 use attestation_gateway::{
     apple,
     keys::fetch_active_key,
@@ -10,6 +8,7 @@ use axum::{
     http::{self, Request, StatusCode},
     Extension,
 };
+use base64::Engine;
 use http_body_util::BodyExt;
 use josekit::{
     jwe::{JweContext, JweHeader, A256KW},
@@ -61,8 +60,10 @@ async fn reset_apple_keys_table(aws_config: &aws_config::SdkConfig) {
 }
 
 fn get_global_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
+    // Required to load default env vars
+    dotenvy::from_filename(".env.example").unwrap();
     let config = attestation_gateway::utils::GlobalConfig {
-        android_outer_jwe_private_key: "7d5b44298bf959af149a0086d79334e6".to_string(),
+        android_outer_jwe_private_key: std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").expect("`ANDROID_OUTER_JWE_PRIVATE_KEY` must be set for tests."),
         android_inner_jws_public_key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/EScv4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==".to_string(),
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         disabled_bundle_identifiers: vec![BundleIdentifier::AndroidProdWorldApp],
@@ -97,37 +98,34 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
 
     let token_payload_str = r#"
     {
-        "payload":
-        {
-            "requestDetails": {
-                "requestPackageName": "com.worldcoin.dev",
-                "nonce": "aGVsbG8gd29scmQgdGhlcmU",
-                "timestampMillis": {timestamp}
-            },
-            "appIntegrity": {
-                "appRecognitionVerdict": "PLAY_RECOGNIZED",
-                "packageName": "com.worldcoin.dev",
-                "certificateSha256Digest": [
-                    "6a6a1474b5cbbb2b1aa57e0bc3"
-                ],
-                "versionCode": "25700"
-            },
-            "deviceIntegrity": {
-                "deviceRecognitionVerdict": [
-                    "MEETS_DEVICE_INTEGRITY"
+        "requestDetails": {
+            "requestPackageName": "com.worldcoin.dev",
+            "nonce": "aGVsbG8gd29scmQgdGhlcmU",
+            "timestampMillis": {timestamp}
+        },
+        "appIntegrity": {
+            "appRecognitionVerdict": "PLAY_RECOGNIZED",
+            "packageName": "com.worldcoin.dev",
+            "certificateSha256Digest": [
+                "6a6a1474b5cbbb2b1aa57e0bc3"
+            ],
+            "versionCode": "25700"
+        },
+        "deviceIntegrity": {
+            "deviceRecognitionVerdict": [
+                "MEETS_DEVICE_INTEGRITY"
+            ]
+        },
+        "accountDetails": {
+            "appLicensingVerdict": "LICENSED"
+        },
+        "environmentDetails": {
+            "appAccessRiskVerdict": {
+                "appsDetected": [
+                    "KNOWN_INSTALLED",
+                    "UNKNOWN_INSTALLED",
+                    "UNKNOWN_CAPTURING"
                 ]
-            },
-            "accountDetails": {
-                "appLicensingVerdict": "LICENSED"
-            },
-            "environmentDetails": {
-                "appAccessRiskVerdict": {
-                    "appsDetected": [
-                        "KNOWN_INSTALLED",
-                        "UNKNOWN_INSTALLED",
-                        "UNKNOWN_CAPTURING"
-                    ]
-                }
             }
         }
     }"#;
@@ -143,10 +141,7 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
         _ => panic!("Unexpected value"),
     };
 
-    let mut payload = JwtPayload::from_map(json_map).unwrap();
-    let exp = SystemTime::now() + Duration::new(600, 0);
-    payload.set_expires_at(&exp);
-
+    let payload = JwtPayload::from_map(json_map).unwrap();
     let mut headers = JwsHeader::new();
     headers.set_algorithm("ES256");
 
@@ -156,7 +151,14 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
 
     // Encrypt the JWE
     let encrypter = A256KW
-        .encrypter_from_bytes(std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").unwrap())
+        .encrypter_from_bytes(
+            base64::engine::general_purpose::STANDARD
+                .decode(
+                    std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
+                        .expect("`ANDROID_OUTER_JWE_PRIVATE_KEY` must be set for tests."),
+                )
+                .expect("Improperly encoded `ANDROID_OUTER_JWE_PRIVATE_KEY`."),
+        )
         .unwrap();
     let mut headers = JweHeader::new();
     headers.set_algorithm("A256KW");
@@ -183,6 +185,7 @@ async fn test_android_e2e_success() {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+        // cspell:disable-next-line
         request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -208,7 +211,6 @@ async fn test_android_e2e_success() {
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
-    dbg!(&body);
 
     let token: &str = body["attestation_gateway_token"].as_str().unwrap();
 
@@ -420,7 +422,8 @@ async fn test_server_error_is_properly_logged() {
     fn get_local_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
         let config = attestation_gateway::utils::GlobalConfig {
             // This is not a valid AES-256 key
-            android_outer_jwe_private_key: "invalid".to_string(),
+            android_outer_jwe_private_key: base64::engine::general_purpose::STANDARD
+                .encode("invalid"),
             android_inner_jws_public_key: "irrelevant".to_string(),
             apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
             disabled_bundle_identifiers: Vec::new(),

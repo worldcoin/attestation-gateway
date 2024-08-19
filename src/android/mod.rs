@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use crate::utils::{BundleIdentifier, ClientError, ErrorCode, VerificationOutput};
 use base64::Engine;
 pub use integrity_token_data::PlayIntegrityToken;
@@ -55,12 +53,13 @@ fn decrypt_outer_jwe(
     android_outer_jwe_private_key: String,
 ) -> eyre::Result<Vec<u8>> {
     // Decrypt the outer JWE
-    let decrypter = A256KW.decrypter_from_bytes(android_outer_jwe_private_key)?;
+    let key = base64::engine::general_purpose::STANDARD.decode(android_outer_jwe_private_key)?;
+    let decrypter = A256KW.decrypter_from_bytes(key)?;
 
-    let (compact_jws, _) = jwe::deserialize_compact(integrity_token, &decrypter).map_err(|_| {
+    let (compact_jws, _) = jwe::deserialize_compact(integrity_token, &decrypter).map_err(|e| {
         eyre::eyre!(ClientError {
             code: ErrorCode::InvalidToken,
-            internal_debug_info: "JWE failed decryption".to_string(),
+            internal_debug_info: format!("JWE failed decryption {e}"),
         })
     })?;
 
@@ -80,26 +79,9 @@ fn verify_and_parse_inner_jws(
 
     let (jws, _) = josekit::jwt::decode_with_verifier(compact_jws, &verifier)?;
 
-    // Verify expiration
-    jws.expires_at()
-        .ok_or_else(|| eyre::eyre!("Unexpected token format, invalid exp claim."))
-        .and_then(|value| {
-            value.duration_since(SystemTime::now()).map_err(|_| {
-                eyre::eyre!(ClientError {
-                    code: ErrorCode::InvalidToken,
-                    internal_debug_info: "JWS is expired".to_string(),
-                })
-            })
-        })?;
+    // NOTE: The JWS doesn't have an `exp` claim and has instead a `timestampMillis` so we don't verify the `exp` claim
 
-    // Parse the JWS
-    let Some(integrity_payload) = jws.claim("payload") else {
-        return Err(eyre::eyre!(
-            "JWT does not have a `payload` attribute".to_string()
-        ));
-    };
-
-    Ok(integrity_payload.to_string())
+    Ok(serde_json::to_string(jws.claims_set())?)
 }
 
 #[cfg(test)]
@@ -110,7 +92,6 @@ mod tests {
     use josekit::jwe::{self, JweHeader, A128KW, A256KW};
     use josekit::jws::{JwsHeader, ES256};
     use josekit::jwt::{self, JwtPayload};
-    use std::time::{Duration, SystemTime};
 
     fn helper_get_test_keys() -> (String, String) {
         dotenvy::from_filename(".env.example").unwrap();
@@ -152,7 +133,8 @@ mod tests {
             error_report.downcast::<ClientError>().unwrap(),
             ClientError {
                 code: ErrorCode::InvalidToken,
-                internal_debug_info: "JWE failed decryption".to_string()
+                internal_debug_info:
+                    "JWE failed decryption Invalid JWE format: Failed to unwrap key.".to_string()
             }
         );
     }
@@ -186,7 +168,7 @@ mod tests {
             error_report.downcast::<ClientError>().unwrap(),
             ClientError {
                 code: ErrorCode::InvalidToken,
-                internal_debug_info: "JWE failed decryption".to_string()
+                internal_debug_info: "JWE failed decryption Invalid JWE format: The JWE alg header claim is not A256KW: A128KW".to_string()
             }
         );
     }
@@ -220,71 +202,6 @@ mod tests {
         assert_eq!(
             "Invalid signature: The signature does not match.",
             error_report.to_string()
-        );
-    }
-
-    #[test]
-    fn test_expired_jws_fails_verification() {
-        let verifier_private_key = "-----BEGIN PRIVATE KEY-----
-    MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFU28VNv+wsvcC0rR
-    5n05rAs2xRxfmbHzDjEQdQqvRSmhRANCAAT4P6kKoEaZq6108t78Pyi357T8RJy/
-    gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
-    -----END PRIVATE KEY-----";
-
-        // Generate a JWS which expired 5 seconds ago
-        let exp = SystemTime::now()
-            .checked_sub(Duration::from_secs(5))
-            .unwrap();
-        let mut payload = JwtPayload::new();
-        payload.set_subject("subject");
-        payload.set_expires_at(&exp);
-
-        let mut header = JwsHeader::new();
-        header.set_token_type("JWT");
-
-        let signer = ES256.signer_from_pem(verifier_private_key).unwrap();
-
-        let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
-
-        let (_, jws_pk) = helper_get_test_keys();
-
-        let error_report = verify_and_parse_inner_jws(jws.into_bytes(), jws_pk).unwrap_err();
-
-        assert_eq!(
-            error_report.downcast::<ClientError>().unwrap(),
-            ClientError {
-                code: ErrorCode::InvalidToken,
-                internal_debug_info: "JWS is expired".to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn test_jws_without_a_valid_exp_is_rejected() {
-        let verifier_private_key = "-----BEGIN PRIVATE KEY-----
-    MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFU28VNv+wsvcC0rR
-    5n05rAs2xRxfmbHzDjEQdQqvRSmhRANCAAT4P6kKoEaZq6108t78Pyi357T8RJy/
-    gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
-    -----END PRIVATE KEY-----";
-
-        // Generate a JWS without an expiration claim
-        let mut payload = JwtPayload::new();
-        payload.set_subject("sub");
-
-        let mut header = JwsHeader::new();
-        header.set_token_type("JWT");
-
-        let signer = ES256.signer_from_pem(verifier_private_key).unwrap();
-
-        let jws = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
-
-        let (_, jws_pk) = helper_get_test_keys();
-
-        let error_report = verify_and_parse_inner_jws(jws.into_bytes(), jws_pk).unwrap_err();
-
-        assert_eq!(
-            error_report.to_string(),
-            "Unexpected token format, invalid exp claim."
         );
     }
 }
