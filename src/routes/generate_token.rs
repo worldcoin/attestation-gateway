@@ -67,6 +67,7 @@ pub async fn handler(
     .map_err(|e| {
         // Check if we have a ClientError in the error chain and return to the client without further logging
         if let Some(client_error) = e.downcast_ref::<ClientError>() {
+            tracing::debug!(?e, "Client failure verifying Android or Apple integrity");
             return RequestError {
                 code: client_error.code,
                 details: None,

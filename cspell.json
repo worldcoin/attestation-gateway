@@ -9,6 +9,7 @@
     "decrypter",
     "dotenv",
     "encrypter",
+    "JWKS",
     "llen",
     "lpush",
     "lrange",
