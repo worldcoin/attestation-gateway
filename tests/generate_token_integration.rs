@@ -489,6 +489,59 @@ async fn test_request_hash_race_condition() {
     assert_eq!(count_409, num_calls - 1);
 }
 
+#[tokio::test]
+#[serial]
+async fn test_request_hash_is_released_if_request_fails() {
+    let api_router = get_api_router().await;
+
+    let mut token_generation_request = TokenGenerationRequest {
+        integrity_token: Some(helper_generate_valid_token()),
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        request_hash: "i_am_a_sample_request_hash".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: None,
+        apple_assertion: None,
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    // First request fails (from integrity checks)
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "integrity_failed");
+
+    // Subsequent request succeeds (request hash is freed up)
+    token_generation_request.bundle_identifier = BundleIdentifier::AndroidDevWorldApp;
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+    let response = api_router
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 #[traced_test]
 #[tokio::test]
 #[serial]

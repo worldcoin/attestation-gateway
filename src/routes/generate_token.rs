@@ -46,7 +46,7 @@ pub async fn handler(
 
     let lock_set = redis
         .set_options::<String, bool, bool>(
-            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:?}", request_hash.clone()),
+            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:}", request_hash.clone()),
             true,
             request_hash_lock_options,
         )
@@ -89,9 +89,9 @@ pub async fn handler(
 
     // If the report is an error, release the request hash to allow re-use and return the error
     let report = match report {
-        Err(err) => {
+        Err(e) => {
             let _ = release_request_hash(request_hash, &mut redis).await;
-            return Err(err);
+            return Err(e);
         }
         Ok(value) => value,
     };
@@ -248,7 +248,7 @@ async fn release_request_hash(
     redis: &mut ConnectionManager,
 ) -> Result<(), RequestError> {
     redis
-        .del::<_, ()>(format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"))
+        .del::<_, _>(format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"))
         .await
         .map_err(handle_redis_error)?;
     Ok(())
