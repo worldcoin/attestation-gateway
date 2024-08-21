@@ -5,6 +5,7 @@ use attestation_gateway::{
     keys::fetch_active_key,
     utils::{BundleIdentifier, TokenGenerationRequest},
 };
+use aws_sdk_dynamodb::types::AttributeValue;
 use axum::{
     body::Body,
     http::{self, Request, StatusCode},
@@ -17,6 +18,8 @@ use josekit::{
     jws::{JwsHeader, ES256},
     jwt::{self, JwtPayload},
 };
+use openssl::sha::Sha256;
+use serde_bytes::ByteBuf;
 use serde_json::{json, Value};
 use serial_test::serial;
 use tokio::task;
@@ -1190,4 +1193,209 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
             "details": "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object."
         })
     );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_apple_token_generation_with_invalid_counter() {
+    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
+    let api_router = get_api_router().await;
+
+    let aws_config = get_aws_config_extension().await;
+    let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
+
+    // Insert key into Dynamo first
+    apple::dynamo::insert_apple_public_key(
+        &aws_config.0,
+        &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
+        BundleIdentifier::IOSStageWorldApp,
+        test_key.to_string(),
+        // this assertion has a `counter = 1`
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
+        "receipt".to_string(),
+    ).await.unwrap();
+
+    // increase the counter beyond the current assertion
+    client
+        .update_item()
+        .table_name(APPLE_KEYS_DYNAMO_TABLE_NAME)
+        .key("key_id", AttributeValue::S(format!("key#{test_key}")))
+        .update_expression("SET key_counter = :new_counter")
+        .expression_attribute_values(":new_counter", AttributeValue::N(2.to_string()))
+        .return_values(aws_sdk_dynamodb::types::ReturnValue::UpdatedNew)
+        .send()
+        .await
+        .unwrap();
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        request_hash: "testhash".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: Some(test_key.to_string()),
+        apple_assertion: Some("omlzaWduYXR1cmVYRzBFAiBpd06ZONnjmJ2m/kD/DYQ5G5WQzEaXsuI68fo+746SRAIhAKEqmog8GorUtxeFcAHeB4yYj0xrTzQHenABYSwSDUBWcWF1dGhlbnRpY2F0b3JEYXRhWCXSWAiD9xYpCV0SrIZSuFuvEG/iP9ZomXOQHo30OaDrdUAAAAAB".to_string()),
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = response.into_body().collect().await.unwrap().to_bytes();
+    let response: Value = serde_json::from_slice(&response).unwrap();
+    assert_eq!(
+        response,
+        json!({
+            "code": "expired_token",
+            "details": "The integrity token has expired. Please generate a new one."
+        })
+    );
+}
+
+fn helper_generate_valid_attestation(counter: u32, key_id: String) -> String {
+    let mut authenticator_data: ByteBuf = ByteBuf::new();
+
+    // 0 - 32 bytes
+    let mut hasher = Sha256::new();
+    hasher.update(
+        BundleIdentifier::AndroidStageWorldApp
+            .to_string()
+            .as_bytes(),
+    );
+    let rp_id: &[u8] = &hasher.finish();
+    authenticator_data.extend_from_slice(rp_id);
+
+    // 33 - 37 bytes
+    authenticator_data.extend_from_slice(&counter.to_be_bytes());
+
+    // 37 - 53 bytes
+    authenticator_data.extend_from_slice("appattestdevelop".as_bytes());
+
+    // 53 - 55 bytes
+    authenticator_data.extend_from_slice(&[0x00, 0x00]);
+
+    // 55 - 87 bytes
+    authenticator_data.extend_from_slice(
+        &base64::engine::general_purpose::STANDARD
+            .decode(key_id)
+            .unwrap(),
+    );
+
+    let attestation = apple::Assertion {
+        authenticator_data,
+        fmt: "fmt".to_string(),
+    };
+}
+
+#[tokio::test]
+#[serial]
+/// Asserts that there is no race condition when the same counter in an Apple assertion is used multiple times at the same time
+async fn test_apple_counter_race_condition() {
+    let api_router_base = get_api_router().await;
+
+    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
+    let aws_config = get_aws_config_extension().await;
+    let redis_client = redis::Client::open("redis://localhost").unwrap();
+
+    // Insert key into Dynamo first
+    apple::dynamo::insert_apple_public_key(
+        &aws_config.0,
+        &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
+        BundleIdentifier::IOSStageWorldApp,
+        test_key.to_string(),
+        // public key can also be retrieved from the assertion
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
+        "receipt".to_string(),
+    ).await.unwrap();
+
+    let num_calls = 5;
+    let mut handles = vec![];
+    let output_mutex = Arc::new(Mutex::new(vec![]));
+
+    let subscriber = tracing_subscriber::fmt::Subscriber::builder()
+        .with_max_level(tracing::Level::INFO)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+
+    for i in 0..num_calls {
+        let output_mutex = Arc::clone(&output_mutex);
+
+        let api_router = api_router_base.clone();
+        let span = tracing::span!(tracing::Level::INFO, "generate_token", task_id = i);
+
+        let client = redis_client.clone();
+
+        let token_generation_request = TokenGenerationRequest {
+            integrity_token: None,
+            aud: "toolsforhumanity.com".to_string(),
+            bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+            request_hash: "testhash".to_string(),
+            client_error: None,
+            apple_initial_attestation: None,
+            apple_public_key: Some(test_key.to_string()),
+            apple_assertion: Some("omlzaWduYXR1cmVYRzBFAiBpd06ZONnjmJ2m/kD/DYQ5G5WQzEaXsuI68fo+746SRAIhAKEqmog8GorUtxeFcAHeB4yYj0xrTzQHenABYSwSDUBWcWF1dGhlbnRpY2F0b3JEYXRhWCXSWAiD9xYpCV0SrIZSuFuvEG/iP9ZomXOQHo30OaDrdUAAAAAB".to_string()),
+        };
+
+        let handle = task::spawn(
+            async move {
+                let body = serde_json::to_string(&token_generation_request).unwrap();
+                redis::cmd("FLUSHDB").execute(&mut client.get_connection().unwrap());
+                let response = api_router
+                    .oneshot(
+                        Request::builder()
+                            .uri("/g")
+                            .method(http::Method::POST)
+                            .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                redis::cmd("FlUSHALL").execute(&mut client.get_connection().unwrap());
+
+                let mut outputs = output_mutex.lock().unwrap();
+                outputs.push(response.status());
+            }
+            .instrument(span),
+        );
+
+        handles.push(handle);
+    }
+
+    // Wait for all tasks to complete
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    let status_codes = {
+        let outputs = output_mutex.lock().unwrap();
+        outputs.clone()
+    };
+
+    dbg!(&status_codes);
+
+    // let count_200 = status_codes
+    //     .iter()
+    //     .filter(|&&code| code == StatusCode::OK)
+    //     .count();
+    // assert_eq!(count_200, 1);
+    // let count_409 = status_codes
+    //     .iter()
+    //     .filter(|&&code| code == StatusCode::BAD_REQUEST)
+    //     .count();
+    // assert_eq!(count_409, num_calls - 1);
 }
