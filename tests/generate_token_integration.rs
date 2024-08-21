@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use attestation_gateway::{
     apple,
     keys::fetch_active_key,
@@ -17,7 +19,9 @@ use josekit::{
 };
 use serde_json::{json, Value};
 use serial_test::serial;
+use tokio::task;
 use tower::ServiceExt; // for `response.collect`
+use tracing::Instrument;
 use tracing_test::traced_test;
 
 static APPLE_KEYS_DYNAMO_TABLE_NAME: &str = "attestation-gateway-apple-keys";
@@ -412,6 +416,79 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
 
     assert_eq!(body["code"], "duplicate_request_hash");
     assert_eq!(body["details"], "The `request_hash` has already been used.");
+}
+
+#[tokio::test]
+#[serial]
+/// Asserts that there is no race condition when the same request hash is used multiple times at the same time
+async fn test_request_hash_race_condition() {
+    let api_router_base = get_api_router().await;
+
+    let num_calls = 10;
+    let mut handles = vec![];
+    let output_mutex = Arc::new(Mutex::new(vec![]));
+
+    for i in 0..num_calls {
+        let output_mutex = Arc::clone(&output_mutex);
+
+        let api_router = api_router_base.clone();
+        let span = tracing::span!(tracing::Level::INFO, "generate_token", task_id = i);
+
+        let token_generation_request = TokenGenerationRequest {
+            integrity_token: Some(helper_generate_valid_token()),
+            aud: "toolsforhumanity.com".to_string(),
+            bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+            // cspell:disable-next-line
+            request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(), // note we use the same request hash for all requests
+            client_error: None,
+            apple_initial_attestation: None,
+            apple_public_key: None,
+            apple_assertion: None,
+        };
+
+        let handle = task::spawn(
+            async move {
+                let body = serde_json::to_string(&token_generation_request).unwrap();
+                let response = api_router
+                    .oneshot(
+                        Request::builder()
+                            .uri("/g")
+                            .method(http::Method::POST)
+                            .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let mut outputs = output_mutex.lock().unwrap();
+                outputs.push(response.status());
+            }
+            .instrument(span),
+        );
+
+        handles.push(handle);
+    }
+
+    // Wait for all tasks to complete
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    let status_codes = {
+        let outputs = output_mutex.lock().unwrap();
+        outputs.clone()
+    };
+
+    let count_200 = status_codes
+        .iter()
+        .filter(|&&code| code == StatusCode::OK)
+        .count();
+    assert_eq!(count_200, 1);
+    let count_429 = status_codes
+        .iter()
+        .filter(|&&code| code == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!(count_429, num_calls - 1);
 }
 
 #[traced_test]

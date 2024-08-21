@@ -233,19 +233,13 @@ async fn test_fetch_active_key_expired_key_creates_a_new_one() {
 #[serial]
 /// Asserts only one key is generated
 async fn test_fetch_active_key_with_race_condition() {
-    // Define the number of concurrent calls
     let num_calls = 10;
-
-    // Create a vector to hold the join handles
     let mut handles = vec![];
-
-    // Mutex to hold the outputs
     let output_mutex = Arc::new(Mutex::new(vec![]));
 
     let redis_client = get_redis_client().await;
     let aws_config = get_aws_config().await;
 
-    // Spawn tasks
     for i in 0..num_calls {
         let output_mutex = Arc::clone(&output_mutex);
 
