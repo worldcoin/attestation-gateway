@@ -1,6 +1,6 @@
 use axum::Extension;
 use axum_jsonschema::Json;
-use redis::{aio::ConnectionManager, AsyncCommands};
+use redis::{aio::ConnectionManager, AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
 use std::time::SystemTime;
 
 use crate::{
@@ -14,7 +14,8 @@ use crate::{
     },
 };
 
-static REQUEST_HASH_REDIS_KEY_PREFIX: &str = "request_hash:";
+const REQUEST_HASH_REDIS_KEY_PREFIX: &str = "request_hash:";
+const REQUEST_HASH_CACHE_TTL: usize = 60 * 60 * 24; // 24 hours
 
 // NOTE: Integration tests for route handlers are in the `/tests` module
 
@@ -39,20 +40,25 @@ pub async fn handler(
         });
     }
 
-    // Check the request hash is unique
-    if redis
-        .exists::<_, bool>(format!(
-            "{REQUEST_HASH_REDIS_KEY_PREFIX}{:?}",
-            request_hash.clone()
-        ))
+    let request_hash_lock_options = SetOptions::default()
+        .conditional_set(ExistenceCheck::NX)
+        .with_expiration(SetExpiry::EX(REQUEST_HASH_CACHE_TTL));
+
+    let lock_set = redis
+        .set_options::<String, bool, bool>(
+            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:?}", request_hash.clone()),
+            true,
+            request_hash_lock_options,
+        )
         .await
-        .map_err(handle_redis_error)?
-    {
+        .map_err(handle_redis_error)?;
+
+    if !lock_set {
         return Err(RequestError {
             code: ErrorCode::DuplicateRequestHash,
             details: None,
         });
-    };
+    }
 
     let report = verify_android_or_apple_integrity(
         integrity_verification_input,
@@ -79,62 +85,31 @@ pub async fn handler(
             code: ErrorCode::InternalServerError,
             details: None,
         }
-    })?;
+    });
 
-    // FIXME: Report to Kinesis
-    tracing::debug!("Report: {:?}", report);
+    // If the report is an error, release the request hash to allow re-use and return the error
+    let report = match report {
+        Err(err) => {
+            let _ = release_request_hash(request_hash, &mut redis).await;
+            return Err(err);
+        }
+        Ok(value) => value,
+    };
 
-    // TODO: Initial roll out does not include generating failure tokens
-    if !report.pass {
-        return Err(RequestError {
-            code: ErrorCode::IntegrityFailed,
-            details: None,
-        });
-    }
-
-    // Generate output attestation token
-    let output_token_payload = OutputTokenPayload {
+    let response = match process_and_finalize_report(
+        report,
+        request_hash.clone(),
         aud,
-        request_hash: request_hash.clone(),
-        pass: report.pass,
-        out: report.out,
-        error: None, // TODO: Implement in the future (see L76)
-    }
-    .generate()?;
-
-    let key = fetch_active_key(&mut redis, &aws_config)
-        .await
-        .map_err(|e| {
-            tracing::error!(?e, "Error fetching active key");
-            RequestError {
-                code: ErrorCode::InternalServerError,
-                details: None,
-            }
-        })?;
-
-    let attestation_gateway_token =
-        kms_jws::generate_output_token(&aws_config, key.key_definition.arn, output_token_payload)
-            .await
-            .map_err(|e| {
-                tracing::error!(?e, "Error generating output token");
-                RequestError {
-                    code: ErrorCode::InternalServerError,
-                    details: None,
-                }
-            })?;
-
-    // Store the request hash in Redis to prevent duplicate use
-    redis
-        .set_ex::<_, _, ()>(
-            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:?}", request_hash.clone()),
-            true,
-            60 * 60 * 24, // 24 hours
-        )
-        .await
-        .map_err(handle_redis_error)?;
-
-    let response = TokenGenerationResponse {
-        attestation_gateway_token,
+        &mut redis,
+        aws_config,
+    )
+    .await
+    {
+        Ok(res) => res,
+        Err(err) => {
+            let _ = release_request_hash(request_hash, &mut redis).await;
+            return Err(err);
+        }
     };
 
     Ok(Json(response))
@@ -212,4 +187,69 @@ async fn verify_android_or_apple_integrity(
         .map(|err| err.internal_debug_info);
 
     Ok(report)
+}
+
+async fn process_and_finalize_report(
+    report: DataReport,
+    request_hash: String,
+    aud: String,
+    redis: &mut ConnectionManager,
+    aws_config: aws_config::SdkConfig,
+) -> Result<TokenGenerationResponse, RequestError> {
+    // FIXME: Report to Kinesis
+    tracing::debug!("Report: {:?}", report);
+
+    // TODO: Initial roll out does not include generating failure tokens
+    if !report.pass {
+        return Err(RequestError {
+            code: ErrorCode::IntegrityFailed,
+            details: None,
+        });
+    }
+
+    // Generate output attestation token
+    let output_token_payload = OutputTokenPayload {
+        aud,
+        request_hash: request_hash.clone(),
+        pass: report.pass,
+        out: report.out,
+        error: None, // TODO: Implement in the future (see L76)
+    }
+    .generate()?;
+
+    let key = fetch_active_key(redis, &aws_config).await.map_err(|e| {
+        tracing::error!(?e, "Error fetching active key");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    })?;
+
+    let attestation_gateway_token =
+        kms_jws::generate_output_token(&aws_config, key.key_definition.arn, output_token_payload)
+            .await
+            .map_err(|e| {
+                tracing::error!(?e, "Error generating output token");
+                RequestError {
+                    code: ErrorCode::InternalServerError,
+                    details: None,
+                }
+            })?;
+
+    let response = TokenGenerationResponse {
+        attestation_gateway_token,
+    };
+
+    Ok(response)
+}
+
+async fn release_request_hash(
+    request_hash: String,
+    redis: &mut ConnectionManager,
+) -> Result<(), RequestError> {
+    redis
+        .del::<_, ()>(format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"))
+        .await
+        .map_err(handle_redis_error)?;
+    Ok(())
 }

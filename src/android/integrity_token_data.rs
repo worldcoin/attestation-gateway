@@ -345,7 +345,7 @@ mod tests {
         {
             "requestDetails": {
                 "requestPackageName": "com.worldcoin.staging",
-                "nonce": "aGVsbG8gd29scmQgdGhlcmU",
+                "nonce": "i_am_a_sample_request_hash",
                 "timestampMillis": "{timestamp}"
             },
             "appIntegrity": {

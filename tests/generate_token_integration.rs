@@ -104,7 +104,7 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
     {
         "requestDetails": {
             "requestPackageName": "com.worldcoin.dev",
-            "nonce": "aGVsbG8gd29scmQgdGhlcmU",
+            "nonce": "i_am_a_sample_request_hash",
             "timestampMillis": {timestamp}
         },
         "appIntegrity": {
@@ -189,8 +189,7 @@ async fn test_android_e2e_success() {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
-        // cspell:disable-next-line
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
@@ -329,7 +328,7 @@ async fn test_android_token_generation_with_invalid_attributes() {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
@@ -373,7 +372,7 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
@@ -438,8 +437,7 @@ async fn test_request_hash_race_condition() {
             integrity_token: Some(helper_generate_valid_token()),
             aud: "toolsforhumanity.com".to_string(),
             bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
-            // cspell:disable-next-line
-            request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(), // note we use the same request hash for all requests
+            request_hash: "i_am_a_sample_request_hash".to_string(), // note we use the same request hash for all requests
             client_error: None,
             apple_initial_attestation: None,
             apple_public_key: None,
@@ -484,11 +482,11 @@ async fn test_request_hash_race_condition() {
         .filter(|&&code| code == StatusCode::OK)
         .count();
     assert_eq!(count_200, 1);
-    let count_429 = status_codes
+    let count_409 = status_codes
         .iter()
-        .filter(|&&code| code == StatusCode::TOO_MANY_REQUESTS)
+        .filter(|&&code| code == StatusCode::CONFLICT)
         .count();
-    assert_eq!(count_429, num_calls - 1);
+    assert_eq!(count_409, num_calls - 1);
 }
 
 #[traced_test]
@@ -688,7 +686,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: Some("ou000000000000000000".to_string()),
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
@@ -840,7 +838,7 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some(test_key.to_string()),
@@ -899,7 +897,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some(test_key.to_string()),
@@ -945,7 +943,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
@@ -988,7 +986,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
