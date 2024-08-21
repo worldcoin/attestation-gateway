@@ -88,7 +88,7 @@ pub async fn verify(
         });
     }
 
-    decode_and_validate_assertion(
+    let counter = decode_and_validate_assertion(
         apple_assertion,
         key.public_key,
         bundle_identifier.apple_app_id().context(format!(
@@ -103,6 +103,7 @@ pub async fn verify(
         aws_config,
         apple_keys_dynamo_table_name,
         apple_public_key,
+        counter,
     )
     .await?;
 
@@ -121,7 +122,7 @@ struct AttestationStatement {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Attestation {
+pub struct Attestation {
     fmt: String,
     att_stmt: AttestationStatement,
     auth_data: ByteBuf,
@@ -129,9 +130,10 @@ struct Attestation {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Assertion {
-    signature: ByteBuf,
-    authenticator_data: ByteBuf,
+// we make it public to be used in integration tests
+pub struct Assertion {
+    pub signature: ByteBuf,
+    pub authenticator_data: ByteBuf,
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -335,7 +337,7 @@ fn decode_and_validate_assertion(
     expected_app_id: &str,
     request_hash: &str,
     last_counter: u32,
-) -> eyre::Result<()> {
+) -> eyre::Result<u32> {
     let assertion_bytes = general_purpose::STANDARD.decode(assertion).map_err(|_| {
         eyre::eyre!(ClientError {
             code: ErrorCode::InvalidToken,
@@ -396,7 +398,7 @@ fn decode_and_validate_assertion(
     // Step 6: Check for nonce
     // Nonce is verified by downstream services and not by the Attestation Gateway
 
-    Ok(())
+    Ok(counter)
 }
 
 #[cfg(test)]
