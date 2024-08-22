@@ -1,8 +1,11 @@
+use std::sync::{Arc, Mutex};
+
 use attestation_gateway::{
     apple,
     keys::fetch_active_key,
     utils::{BundleIdentifier, TokenGenerationRequest},
 };
+use aws_sdk_dynamodb::types::AttributeValue;
 use axum::{
     body::Body,
     http::{self, Request, StatusCode},
@@ -15,9 +18,13 @@ use josekit::{
     jws::{JwsHeader, ES256},
     jwt::{self, JwtPayload},
 };
+use openssl::{pkey::Private, sha::Sha256};
+use serde_bytes::ByteBuf;
 use serde_json::{json, Value};
 use serial_test::serial;
+use tokio::task;
 use tower::ServiceExt; // for `response.collect`
+use tracing::Instrument;
 use tracing_test::traced_test;
 
 static APPLE_KEYS_DYNAMO_TABLE_NAME: &str = "attestation-gateway-apple-keys";
@@ -100,7 +107,7 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
     {
         "requestDetails": {
             "requestPackageName": "com.worldcoin.dev",
-            "nonce": "aGVsbG8gd29scmQgdGhlcmU",
+            "nonce": "i_am_a_sample_request_hash",
             "timestampMillis": {timestamp}
         },
         "appIntegrity": {
@@ -185,8 +192,7 @@ async fn test_android_e2e_success() {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
-        // cspell:disable-next-line
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
@@ -325,7 +331,7 @@ async fn test_android_token_generation_with_invalid_attributes() {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
@@ -369,7 +375,7 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
@@ -412,6 +418,131 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
 
     assert_eq!(body["code"], "duplicate_request_hash");
     assert_eq!(body["details"], "The `request_hash` has already been used.");
+}
+
+#[tokio::test]
+#[serial]
+/// Asserts that there is no race condition when the same request hash is used multiple times at the same time
+async fn test_request_hash_race_condition() {
+    let api_router_base = get_api_router().await;
+
+    let num_calls = 10;
+    let mut handles = vec![];
+    let output_mutex = Arc::new(Mutex::new(vec![]));
+
+    for i in 0..num_calls {
+        let output_mutex = Arc::clone(&output_mutex);
+
+        let api_router = api_router_base.clone();
+        let span = tracing::span!(tracing::Level::INFO, "generate_token", task_id = i);
+
+        let token_generation_request = TokenGenerationRequest {
+            integrity_token: Some(helper_generate_valid_token()),
+            aud: "toolsforhumanity.com".to_string(),
+            bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+            request_hash: "i_am_a_sample_request_hash".to_string(), // note we use the same request hash for all requests
+            client_error: None,
+            apple_initial_attestation: None,
+            apple_public_key: None,
+            apple_assertion: None,
+        };
+
+        let handle = task::spawn(
+            async move {
+                let body = serde_json::to_string(&token_generation_request).unwrap();
+                let response = api_router
+                    .oneshot(
+                        Request::builder()
+                            .uri("/g")
+                            .method(http::Method::POST)
+                            .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let mut outputs = output_mutex.lock().unwrap();
+                outputs.push(response.status());
+            }
+            .instrument(span),
+        );
+
+        handles.push(handle);
+    }
+
+    // Wait for all tasks to complete
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    let status_codes = {
+        let outputs = output_mutex.lock().unwrap();
+        outputs.clone()
+    };
+
+    let count_200 = status_codes
+        .iter()
+        .filter(|&&code| code == StatusCode::OK)
+        .count();
+    assert_eq!(count_200, 1);
+    let count_409 = status_codes
+        .iter()
+        .filter(|&&code| code == StatusCode::CONFLICT)
+        .count();
+    assert_eq!(count_409, num_calls - 1);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_request_hash_is_released_if_request_fails() {
+    let api_router = get_api_router().await;
+
+    let mut token_generation_request = TokenGenerationRequest {
+        integrity_token: Some(helper_generate_valid_token()),
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        request_hash: "i_am_a_sample_request_hash".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: None,
+        apple_assertion: None,
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    // First request fails (from integrity checks)
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "integrity_failed");
+
+    // Subsequent request succeeds (request hash is freed up)
+    token_generation_request.bundle_identifier = BundleIdentifier::AndroidDevWorldApp;
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+    let response = api_router
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[traced_test]
@@ -611,7 +742,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: Some("ou000000000000000000".to_string()),
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
@@ -763,7 +894,7 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some(test_key.to_string()),
@@ -822,7 +953,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some(test_key.to_string()),
@@ -868,7 +999,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
@@ -911,7 +1042,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
-        request_hash: "aGVsbG8gd29scmQgdGhlcmU".to_string(),
+        request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
@@ -1062,4 +1193,238 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
             "details": "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object."
         })
     );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_apple_token_generation_with_invalid_counter() {
+    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
+    let api_router = get_api_router().await;
+
+    let aws_config = get_aws_config_extension().await;
+    let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
+
+    // Insert key into Dynamo first
+    apple::dynamo::insert_apple_public_key(
+        &aws_config.0,
+        &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
+        BundleIdentifier::IOSStageWorldApp,
+        test_key.to_string(),
+        // this assertion has a `counter = 1`
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
+        "receipt".to_string(),
+    ).await.unwrap();
+
+    // increase the counter beyond the current assertion
+    client
+        .update_item()
+        .table_name(APPLE_KEYS_DYNAMO_TABLE_NAME)
+        .key("key_id", AttributeValue::S(format!("key#{test_key}")))
+        .update_expression("SET key_counter = :new_counter")
+        .expression_attribute_values(":new_counter", AttributeValue::N(2.to_string()))
+        .return_values(aws_sdk_dynamodb::types::ReturnValue::UpdatedNew)
+        .send()
+        .await
+        .unwrap();
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None,
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        request_hash: "testhash".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: Some(test_key.to_string()),
+        apple_assertion: Some("omlzaWduYXR1cmVYRzBFAiBpd06ZONnjmJ2m/kD/DYQ5G5WQzEaXsuI68fo+746SRAIhAKEqmog8GorUtxeFcAHeB4yYj0xrTzQHenABYSwSDUBWcWF1dGhlbnRpY2F0b3JEYXRhWCXSWAiD9xYpCV0SrIZSuFuvEG/iP9ZomXOQHo30OaDrdUAAAAAB".to_string()),
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = response.into_body().collect().await.unwrap().to_bytes();
+    let response: Value = serde_json::from_slice(&response).unwrap();
+    assert_eq!(
+        response,
+        json!({
+            "code": "expired_token",
+            "details": "The integrity token has expired. Please generate a new one."
+        })
+    );
+}
+
+fn helper_generate_valid_assertion(
+    request_hash: String,
+    sk: openssl::pkey::PKey<Private>,
+) -> String {
+    let counter: u32 = 1;
+
+    let mut hasher = Sha256::new();
+    hasher.update(request_hash.as_bytes());
+    let hashed_nonce = hasher.finish();
+
+    let mut authenticator_data: ByteBuf = ByteBuf::new();
+
+    // 0 - 32 bytes
+    let mut hasher = Sha256::new();
+    hasher.update(
+        BundleIdentifier::IOSStageWorldApp
+            .apple_app_id()
+            .unwrap()
+            .as_bytes(),
+    );
+    let rp_id: &[u8] = &hasher.finish();
+    authenticator_data.extend_from_slice(rp_id);
+
+    authenticator_data.extend_from_slice(&[0x00]); // 32 - 33 bytes
+
+    // 33 - 37 bytes
+    authenticator_data.extend_from_slice(&counter.to_be_bytes());
+
+    let mut hasher = Sha256::new();
+    hasher.update(&authenticator_data);
+    hasher.update(&hashed_nonce);
+    let nonce: &[u8] = &hasher.finish();
+
+    let mut signer =
+        openssl::sign::Signer::new(openssl::hash::MessageDigest::sha256(), &sk).unwrap();
+    let signature = signer.sign_oneshot_to_vec(nonce).unwrap();
+
+    let assertion = apple::Assertion {
+        authenticator_data,
+        signature: ByteBuf::from(signature),
+    };
+
+    let mut encoded_assertion: Vec<u8> = Vec::new();
+
+    ciborium::into_writer(&assertion, &mut encoded_assertion).unwrap();
+
+    base64::engine::general_purpose::STANDARD.encode(encoded_assertion)
+}
+
+#[tokio::test]
+#[serial]
+/// Asserts that there is no race condition when the same counter in an Apple assertion is used multiple times at the same time
+async fn test_apple_counter_race_condition() {
+    // Generate a temp key
+    let group = openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1).unwrap();
+    let ec_key = openssl::ec::EcKey::generate(&group).unwrap();
+    let sk = openssl::pkey::PKey::from_ec_key(ec_key).unwrap();
+
+    let mut assertions: Vec<(u32, String)> = Vec::new();
+
+    let num_calls = 5;
+
+    for i in 0..num_calls {
+        let assertion = helper_generate_valid_assertion(format!("testhash-{i}"), sk.clone());
+        assertions.push((i as u32, assertion));
+    }
+
+    let api_router_base = get_api_router().await;
+
+    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
+    let aws_config = get_aws_config_extension().await;
+
+    let pk = base64::engine::general_purpose::STANDARD.encode(sk.public_key_to_der().unwrap());
+
+    // Insert key into Dynamo first
+    apple::dynamo::insert_apple_public_key(
+        &aws_config.0,
+        &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
+        BundleIdentifier::IOSStageWorldApp,
+        test_key.to_string(),
+        pk,
+        "receipt".to_string(),
+    )
+    .await
+    .unwrap();
+
+    let mut handles = vec![];
+    let output_mutex = Arc::new(Mutex::new(vec![]));
+
+    for (i, assertion) in assertions.iter() {
+        let output_mutex = Arc::clone(&output_mutex);
+
+        let api_router = api_router_base.clone();
+        let span = tracing::span!(tracing::Level::INFO, "generate_token", task_id = i);
+
+        let token_generation_request = TokenGenerationRequest {
+            integrity_token: None,
+            aud: "toolsforhumanity.com".to_string(),
+            bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+            request_hash: format!("testhash-{i}"),
+            client_error: None,
+            apple_initial_attestation: None,
+            apple_public_key: Some(test_key.to_string()),
+            apple_assertion: Some(assertion.to_string()),
+        };
+
+        let handle = task::spawn(
+            async move {
+                let body = serde_json::to_string(&token_generation_request).unwrap();
+                let response = api_router
+                    .oneshot(
+                        Request::builder()
+                            .uri("/g")
+                            .method(http::Method::POST)
+                            .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let code = response.status();
+
+                let output = match response.status() {
+                    StatusCode::OK => "ok".to_string(),
+                    StatusCode::BAD_REQUEST => {
+                        let response = response.into_body().collect().await.unwrap().to_bytes();
+                        let response: Value = serde_json::from_slice(&response).unwrap();
+                        response["code"].as_str().unwrap().to_string()
+                    }
+                    _ => panic!("Unexpected status code: {:?}", code),
+                };
+
+                let mut outputs = output_mutex.lock().unwrap();
+                outputs.push(output);
+            }
+            .instrument(span),
+        );
+
+        handles.push(handle);
+    }
+
+    // Wait for all tasks to complete
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    let response_codes = {
+        let outputs = output_mutex.lock().unwrap();
+        outputs.clone()
+    };
+
+    // only one success
+    let count_ok = response_codes.iter().filter(|&code| code == "ok").count();
+    assert_eq!(count_ok, 1);
+
+    // rest is expired_tokens
+    let count_expired = response_codes
+        .iter()
+        .filter(|&code| code == "expired_token")
+        .count();
+    assert_eq!(count_expired, num_calls - 1);
 }

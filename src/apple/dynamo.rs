@@ -140,6 +140,7 @@ pub async fn update_apple_public_key_counter_plus(
     aws_config: &aws_config::SdkConfig,
     apple_keys_dynamo_table_name: &String,
     key_id: String,
+    new_counter: u32,
 ) -> eyre::Result<()> {
     let client = aws_sdk_dynamodb::Client::new(aws_config);
 
@@ -147,19 +148,39 @@ pub async fn update_apple_public_key_counter_plus(
         .update_item()
         .table_name(apple_keys_dynamo_table_name)
         .key("key_id", AttributeValue::S(format!("key#{key_id}")))
-        .update_expression(format!("ADD {} :incr", "key_counter"))
-        .expression_attribute_values(":incr", AttributeValue::N("1".to_string()))
+        // with this condition we ensure there are no race conditions with the counter
+        .condition_expression("key_counter < :new_counter")
+        .update_expression("SET key_counter = :new_counter")
+        .expression_attribute_values(":new_counter", AttributeValue::N(new_counter.to_string()))
         .return_values(aws_sdk_dynamodb::types::ReturnValue::UpdatedNew)
         .send()
-        .await?;
+        .await;
 
-    if let Some(attributes) = &request.attributes {
-        if attributes.contains_key("key_counter") {
-            return Ok(());
+    match request {
+        Ok(request) => {
+            if let Some(attributes) = &request.attributes {
+                if attributes.contains_key("key_counter") {
+                    return Ok(());
+                }
+            }
+
+            eyre::bail!(
+                "Error updating counter for key: {key_id} \n {:?}",
+                request.attributes
+            );
+        }
+        Err(e) => {
+            let service_error = e.into_service_error();
+            if service_error.is_conditional_check_failed_exception() {
+                eyre::bail!(ClientError {
+                    code: ErrorCode::ExpiredToken,
+                    internal_debug_info:
+                        "Counter has already been used in Dynamo, race condition prevented."
+                            .to_string(),
+                });
+            }
+
+            eyre::bail!(service_error);
         }
     }
-    eyre::bail!(
-        "Error updating counter for key: {key_id} \n {:?}",
-        request.attributes
-    );
 }
