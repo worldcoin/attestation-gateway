@@ -18,7 +18,8 @@
     "rustc",
     "schemars",
     "secp256r1",
-    "serde"
+    "serde",
+    "Statsd"
   ],
   "enabledLanguageIds": [
     "jsonc",
