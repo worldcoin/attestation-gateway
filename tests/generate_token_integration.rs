@@ -74,6 +74,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         android_inner_jws_public_key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/EScv4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==".to_string(),
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         disabled_bundle_identifiers: vec![BundleIdentifier::AndroidProdWorldApp],
+        log_client_errors: false,
     };
     Extension(config)
 }
@@ -558,6 +559,7 @@ async fn test_server_error_is_properly_logged() {
             android_inner_jws_public_key: "irrelevant".to_string(),
             apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
             disabled_bundle_identifiers: Vec::new(),
+            log_client_errors: false,
         };
         Extension(config)
     }
