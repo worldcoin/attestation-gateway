@@ -28,6 +28,13 @@ pub async fn handler(
     let aud = request.aud.clone();
     let request_hash = request.request_hash.clone();
 
+    let my_span = tracing::span!(
+        tracing::Level::DEBUG,
+        "generate_token",
+        request_hash = request_hash
+    );
+    let _enter = my_span.enter();
+
     let integrity_verification_input = IntegrityVerificationInput::from_request(&request)?;
 
     if global_config
@@ -39,6 +46,9 @@ pub async fn handler(
             details: Some("This bundle identifier is currently unavailable.".to_string()),
         });
     }
+
+    let counter = metrics::counter!("attestation_gateway.generate_token",  "bundle_identifier" => request.bundle_identifier.to_string());
+    counter.increment(1);
 
     let request_hash_lock_options = SetOptions::default()
         .conditional_set(ExistenceCheck::NX)
@@ -63,7 +73,7 @@ pub async fn handler(
     let report = verify_android_or_apple_integrity(
         integrity_verification_input,
         request.request_hash,
-        request.bundle_identifier,
+        request.bundle_identifier.clone(),
         &request.aud,
         request.client_error,
         global_config.clone(),
@@ -73,7 +83,15 @@ pub async fn handler(
     .map_err(|e| {
         // Check if we have a ClientError in the error chain and return to the client without further logging
         if let Some(client_error) = e.downcast_ref::<ClientError>() {
-            tracing::debug!(?e, "Client failure verifying Android or Apple integrity");
+            if global_config.log_client_errors {
+                tracing::warn!(?e, "Client failure verifying Android or Apple integrity");
+            }else {
+                tracing::debug!(?e, "Client failure verifying Android or Apple integrity");
+            }
+
+            let counter = metrics::counter!("attestation_gateway.generate_token.client_error",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string());
+            counter.increment(1);
+
             return RequestError {
                 code: client_error.code,
                 details: None,
@@ -111,6 +129,9 @@ pub async fn handler(
             return Err(err);
         }
     };
+
+    let counter = metrics::counter!("attestation_gateway.generate_token.success",  "bundle_identifier" => request.bundle_identifier.to_string());
+    counter.increment(1);
 
     Ok(Json(response))
 }

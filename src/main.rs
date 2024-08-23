@@ -4,6 +4,7 @@ use crate::utils::GlobalConfig;
 use dotenvy::dotenv;
 use redis::aio::ConnectionManager;
 use std::env;
+use telemetry_batteries::{metrics::statsd::StatsdBattery, tracing::datadog::DatadogBattery};
 
 mod android;
 mod apple;
@@ -19,13 +20,26 @@ async fn main() {
 
     let environment = Environment::from_env();
 
-    tracing_subscriber::fmt()
-        .with_max_level(environment.log_level())
-        .json()
-        .with_target(false)
-        .flatten_event(true)
-        .without_time()
-        .init();
+    // Initialize logging
+    match environment {
+        Environment::Production => {
+            let _ = DatadogBattery::init(
+                None, // Use default endpoint
+                "attestation-gateway",
+                None,
+                true,
+            );
+            StatsdBattery::init("localhost", 8125, 5000, 1024, None).unwrap();
+        }
+        Environment::Development => {
+            tracing_subscriber::fmt()
+                .json()
+                .with_target(false)
+                .flatten_event(true)
+                .without_time()
+                .init();
+        }
+    }
 
     tracing::info!("Starting attestation gateway...");
 
@@ -67,13 +81,6 @@ impl Environment {
             .trim()
             .try_into()
             .unwrap()
-    }
-
-    pub const fn log_level(&self) -> tracing::Level {
-        match self {
-            Self::Development => tracing::Level::DEBUG,
-            Self::Production => tracing::Level::INFO,
-        }
     }
 
     pub async fn redis_client(&self) -> ConnectionManager {
