@@ -2,9 +2,9 @@
 
 use crate::utils::GlobalConfig;
 use dotenvy::dotenv;
+use metrics_exporter_statsd::StatsdBuilder;
 use redis::aio::ConnectionManager;
-use std::env;
-use telemetry_batteries::{metrics::statsd::StatsdBattery, tracing::datadog::DatadogBattery};
+use std::{env, fmt};
 
 mod android;
 mod apple;
@@ -20,25 +20,22 @@ async fn main() {
 
     let environment = Environment::from_env();
 
+    tracing_subscriber::fmt()
+        .json()
+        .with_target(false)
+        .flatten_event(true)
+        .init();
+
     // Initialize logging
     match environment {
-        Environment::Production => {
-            let _ = DatadogBattery::init(
-                None, // Use default endpoint
-                "attestation-gateway",
-                None,
-                true,
-            );
-            StatsdBattery::init("localhost", 8125, 5000, 1024, None).unwrap();
+        Environment::Production | Environment::Staging => {
+            set_up_metrics(environment)
+                .map_err(|e| {
+                    tracing::error!("error setting up metrics: {:?}", e);
+                })
+                .unwrap();
         }
-        Environment::Development => {
-            tracing_subscriber::fmt()
-                .json()
-                .with_target(false)
-                .flatten_event(true)
-                .without_time()
-                .init();
-        }
+        Environment::Development => {}
     }
 
     tracing::info!("Starting attestation gateway...");
@@ -51,14 +48,27 @@ async fn main() {
     server::start(redis, aws_config, GlobalConfig::from_env()).await;
 }
 
+fn set_up_metrics(environment: Environment) -> eyre::Result<()> {
+    let recorder = StatsdBuilder::from("localhost", 8125)
+        .with_queue_size(5000)
+        .with_buffer_size(1024)
+        .with_default_tag("env", environment.to_string())
+        .build(Some("attestation_gateway."))?;
+
+    metrics::set_global_recorder(recorder)?;
+
+    Ok(())
+}
+
 async fn build_redis_pool(redis_url: String) -> redis::RedisResult<ConnectionManager> {
     let client: redis::Client = redis::Client::open(redis_url)?;
     ConnectionManager::new(client).await
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Environment {
     Production,
+    Staging,
     Development,
 }
 
@@ -68,9 +78,21 @@ impl TryFrom<&str> for Environment {
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "production" => Ok(Self::Production),
+            "staging" => Ok(Self::Staging),
             "development" => Ok(Self::Development),
             _ => Err(format!("invalid `APP_ENV` environment variable: {s}").into()),
         }
+    }
+}
+
+impl fmt::Display for Environment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let env_str = match self {
+            Self::Production => "production",
+            Self::Staging => "staging",
+            Self::Development => "development",
+        };
+        write!(f, "{env_str}")
     }
 }
 

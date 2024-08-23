@@ -47,8 +47,7 @@ pub async fn handler(
         });
     }
 
-    let counter = metrics::counter!("attestation_gateway.generate_token",  "bundle_identifier" => request.bundle_identifier.to_string());
-    counter.increment(1);
+    metrics::counter!("generate_token",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
 
     let request_hash_lock_options = SetOptions::default()
         .conditional_set(ExistenceCheck::NX)
@@ -89,8 +88,7 @@ pub async fn handler(
                 tracing::debug!(?e, "Client failure verifying Android or Apple integrity");
             }
 
-            let counter = metrics::counter!("attestation_gateway.generate_token.client_error",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string());
-            counter.increment(1);
+            metrics::counter!("generate_token.client_error",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string()).increment(1);
 
             return RequestError {
                 code: client_error.code,
@@ -130,8 +128,7 @@ pub async fn handler(
         }
     };
 
-    let counter = metrics::counter!("attestation_gateway.generate_token.success",  "bundle_identifier" => request.bundle_identifier.to_string());
-    counter.increment(1);
+    metrics::counter!("generate_token.success",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
 
     Ok(Json(response))
 }
