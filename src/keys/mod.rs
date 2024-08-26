@@ -53,8 +53,7 @@ pub async fn fetch_all(
 ) -> eyre::Result<Vec<SigningKey>> {
     let mut keys = fetch_keys_from_redis(redis).await?;
 
-    let counter = metrics::counter!("attestation_gateway.keys.count");
-    counter.absolute(keys.len() as u64);
+    metrics::counter!("attestation_gateway.keys.count").absolute(keys.len() as u64);
 
     if keys.is_empty() {
         return Ok(vec![generate_new_key(redis, aws_config).await?]);
