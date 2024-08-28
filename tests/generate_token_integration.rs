@@ -75,6 +75,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         disabled_bundle_identifiers: vec![BundleIdentifier::AndroidProdWorldApp],
         log_client_errors: false,
+        kinesis_stream_name: None,
     };
     Extension(config)
 }
@@ -87,11 +88,22 @@ async fn get_redis_extension() -> Extension<redis::aio::ConnectionManager> {
     Extension(redis::aio::ConnectionManager::new(client).await.unwrap())
 }
 
+async fn get_kinesis_extension() -> Extension<aws_sdk_kinesis::Client> {
+    let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let aws_config = aws_config
+        .into_builder()
+        .endpoint_url("http://localhost:4566")
+        .build();
+    let kinesis_client = aws_sdk_kinesis::Client::new(&aws_config);
+    Extension(kinesis_client)
+}
+
 async fn get_api_router() -> aide::axum::ApiRouter {
     attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension())
         .layer(get_redis_extension().await)
+        .layer(get_kinesis_extension().await)
 }
 
 /// Generates a valid Android integrity token (simulating what Play Store would generate)
@@ -560,6 +572,7 @@ async fn test_server_error_is_properly_logged() {
             apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
             disabled_bundle_identifiers: Vec::new(),
             log_client_errors: false,
+            kinesis_stream_name: None,
         };
         Extension(config)
     }
@@ -569,6 +582,7 @@ async fn test_server_error_is_properly_logged() {
             .layer(get_aws_config_extension().await)
             .layer(get_local_config_extension())
             .layer(get_redis_extension().await)
+            .layer(get_kinesis_extension().await)
     }
 
     let api_router = get_local_api_router().await;

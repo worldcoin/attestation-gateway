@@ -123,7 +123,7 @@ pub async fn handler(
         &mut redis,
         aws_config,
         &kinesis_client,
-        &global_config.kinesis_stream_name,
+        global_config.kinesis_stream_name.as_deref().unwrap_or(""),
     )
     .await
     {
@@ -227,42 +227,43 @@ async fn process_and_finalize_report(
 
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
-        let attestation_failure = AttestationFailure {
-            created_at: Utc::now().to_rfc3339(),
-            public_key_id: None, // Add this if available
-            visitor_id: None,    // Add this if available
-            is_approved: false,
-            app_licensing_verdict: None,      // Add this if available
-            app_recognition_verdict: None,    // Add this if available
-            certificate_sha256_digest: None,  // Add this if available
-            package_name: None,               // Add this if available
-            version_code: None,               // Add this if available
-            device_recognition_verdict: None, // Add this if available
-            nonce: None,                      // Add this if available
-            request_timestamp: None,          // Add this if available
-            failure_reason: report
-                .internal_debug_info
-                .unwrap_or_else(|| "Unknown".to_string()),
-        };
+        if !kinesis_stream_name.is_empty() {
+            let attestation_failure = AttestationFailure {
+                created_at: Utc::now().to_rfc3339(),
+                public_key_id: None, // Add this if available
+                visitor_id: None,    // Add this if available
+                is_approved: false,
+                app_licensing_verdict: None,      // Add this if available
+                app_recognition_verdict: None,    // Add this if available
+                certificate_sha256_digest: None,  // Add this if available
+                package_name: None,               // Add this if available
+                version_code: None,               // Add this if available
+                device_recognition_verdict: None, // Add this if available
+                nonce: None,                      // Add this if available
+                request_timestamp: None,          // Add this if available
+                failure_reason: report
+                    .internal_debug_info
+                    .unwrap_or_else(|| "Unknown".to_string()),
+            };
 
-        let event_input = SeonEventStreamInput {
-            request: None,
-            response: None,
-            attestation_failure: Some(attestation_failure),
-        };
+            let event_input = SeonEventStreamInput {
+                request: None,
+                response: None,
+                attestation_failure: Some(attestation_failure),
+            };
 
-        if let Err(e) =
-            send_seon_action_stream_event(kinesis_client, kinesis_stream_name, event_input).await
-        {
-            tracing::error!("Failed to send seon action stream event: {:?}", e);
+            if let Err(e) =
+                send_seon_action_stream_event(kinesis_client, kinesis_stream_name, event_input)
+                    .await
+            {
+                tracing::error!("Failed to send seon action stream event: {:?}", e);
+            }
         }
-
         return Err(RequestError {
             code: ErrorCode::IntegrityFailed,
             details: None,
         });
     }
-
     // Generate output attestation token
     let output_token_payload = OutputTokenPayload {
         aud,
