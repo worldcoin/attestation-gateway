@@ -1,11 +1,14 @@
+use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
 use axum_jsonschema::Json;
+use chrono::Utc;
 use redis::{aio::ConnectionManager, AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
 use std::time::SystemTime;
 
 use crate::{
     android, apple,
     keys::fetch_active_key,
+    kinesis::{send_seon_action_stream_event, AttestationFailure, SeonEventStreamInput},
     kms_jws,
     utils::{
         handle_redis_error, BundleIdentifier, ClientError, DataReport, ErrorCode, GlobalConfig,
@@ -23,6 +26,7 @@ pub async fn handler(
     Extension(aws_config): Extension<aws_config::SdkConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
+    Extension(kinesis_client): Extension<KinesisClient>,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
     let aud = request.aud.clone();
@@ -118,6 +122,8 @@ pub async fn handler(
         aud,
         &mut redis,
         aws_config,
+        &kinesis_client,
+        &global_config.kinesis_stream_name,
     )
     .await
     {
@@ -213,12 +219,44 @@ async fn process_and_finalize_report(
     aud: String,
     redis: &mut ConnectionManager,
     aws_config: aws_config::SdkConfig,
+    kinesis_client: &KinesisClient,
+    kinesis_stream_name: &str,
 ) -> Result<TokenGenerationResponse, RequestError> {
     // FIXME: Report to Kinesis
-    tracing::debug!("Report: {:?}", report);
+    // tracing::debug!("Report: {:?}", report);
 
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
+        let attestation_failure = AttestationFailure {
+            created_at: Utc::now().to_rfc3339(),
+            public_key_id: None, // Add this if available
+            visitor_id: None,    // Add this if available
+            is_approved: false,
+            app_licensing_verdict: None,      // Add this if available
+            app_recognition_verdict: None,    // Add this if available
+            certificate_sha256_digest: None,  // Add this if available
+            package_name: None,               // Add this if available
+            version_code: None,               // Add this if available
+            device_recognition_verdict: None, // Add this if available
+            nonce: None,                      // Add this if available
+            request_timestamp: None,          // Add this if available
+            failure_reason: report
+                .internal_debug_info
+                .unwrap_or_else(|| "Unknown".to_string()),
+        };
+
+        let event_input = SeonEventStreamInput {
+            request: None,
+            response: None,
+            attestation_failure: Some(attestation_failure),
+        };
+
+        if let Err(e) =
+            send_seon_action_stream_event(kinesis_client, kinesis_stream_name, event_input).await
+        {
+            tracing::error!("Failed to send seon action stream event: {:?}", e);
+        }
+
         return Err(RequestError {
             code: ErrorCode::IntegrityFailed,
             details: None,

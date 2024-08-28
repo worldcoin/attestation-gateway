@@ -1,6 +1,7 @@
 use std::{env, net::SocketAddr};
 
 use aide::openapi::{Info, OpenApi};
+use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
 use redis::aio::ConnectionManager;
 use tokio::net::TcpListener;
@@ -11,6 +12,7 @@ pub async fn start(
     redis: ConnectionManager,
     aws_config: aws_config::SdkConfig,
     global_config: GlobalConfig,
+    kinesis_client: KinesisClient,
 ) {
     let mut openapi = OpenApi {
         info: Info {
@@ -25,7 +27,8 @@ pub async fn start(
         .layer(Extension(redis))
         .layer(Extension(openapi))
         .layer(Extension(aws_config))
-        .layer(Extension(global_config));
+        .layer(Extension(global_config))
+        .layer(Extension(kinesis_client));
 
     let address = SocketAddr::from((
         [0, 0, 0, 0],

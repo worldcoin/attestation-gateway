@@ -1,6 +1,7 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
 use crate::utils::GlobalConfig;
+use aws_sdk_kinesis::Client as KinesisClient;
 use dotenvy::dotenv;
 use metrics_exporter_statsd::StatsdBuilder;
 use redis::aio::ConnectionManager;
@@ -9,6 +10,7 @@ use std::{env, fmt};
 mod android;
 mod apple;
 mod keys;
+mod kinesis;
 mod kms_jws;
 mod routes;
 mod server;
@@ -45,7 +47,16 @@ async fn main() {
 
     let aws_config = environment.aws_config().await;
 
-    server::start(redis, aws_config, GlobalConfig::from_env()).await;
+    // Create Kinesis client
+    let kinesis_client = KinesisClient::new(&aws_config);
+    tracing::info!("✅ Kinesis client created.");
+
+    // Update GlobalConfig to include Kinesis stream name
+    let global_config = GlobalConfig::from_env();
+
+    server::start(redis, aws_config, global_config, kinesis_client).await;
+
+    // server::start(redis, aws_config, GlobalConfig::from_env()).await;
 }
 
 fn set_up_metrics(environment: Environment) -> eyre::Result<()> {
