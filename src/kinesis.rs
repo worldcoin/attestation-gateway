@@ -6,7 +6,7 @@ use serde_json::json;
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct AttestationFailure {
     pub created_at: String,
-    pub public_key_id: Option<String>,
+    pub public_key_id: String,
     pub visitor_id: Option<String>,
     pub is_approved: bool,
     // pub app_licensing_verdict: Option<String>,
