@@ -12,7 +12,7 @@ pub struct AttestationFailure {
     pub failure_reason: String,
 }
 
-pub async fn send_seon_action_stream_event(
+pub async fn send_kinesis_stream_event(
     kinesis_client: &KinesisClient,
     stream_name: &str,
     attestation_failure: AttestationFailure,

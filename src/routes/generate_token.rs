@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use crate::{
     android, apple,
     keys::fetch_active_key,
-    kinesis::{send_seon_action_stream_event, AttestationFailure},
+    kinesis::{send_kinesis_stream_event, AttestationFailure},
     kms_jws,
     utils::{
         handle_redis_error, BundleIdentifier, ClientError, DataReport, ErrorCode, GlobalConfig,
@@ -230,6 +230,7 @@ async fn process_and_finalize_report(
 ) -> Result<TokenGenerationResponse, RequestError> {
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
+        // Report errors to Kinesis
         if !kinesis_stream_name.is_empty() {
             let attestation_failure = AttestationFailure {
                 created_at: Utc::now().to_rfc3339(),
@@ -239,16 +240,11 @@ async fn process_and_finalize_report(
                 failure_reason: report.client_error.unwrap_or_else(|| "Unknown".to_string()),
             };
 
-            if let Err(e) = send_seon_action_stream_event(
-                kinesis_client,
-                kinesis_stream_name,
-                attestation_failure,
-            )
-            .await
+            if let Err(e) =
+                send_kinesis_stream_event(kinesis_client, kinesis_stream_name, attestation_failure)
+                    .await
             {
-                tracing::error!("Failed to send seon action stream event: {:?}", e);
-            } else {
-                tracing::info!("Sent seon action stream event");
+                tracing::error!("Failed to send Kinesis event: {:?}", e);
             }
         }
 
