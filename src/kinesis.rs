@@ -1,4 +1,4 @@
-use aws_sdk_kinesis::{primitives::Blob, Client as KinesisClient, Error as KinesisError};
+use aws_sdk_kinesis::{primitives::Blob, Client as KinesisClient};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -12,48 +12,31 @@ pub struct AttestationFailure {
     pub failure_reason: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SeonEventStreamInput {
-    pub request: Option<serde_json::Value>,
-    pub response: Option<serde_json::Value>,
-    pub attestation_failure: Option<AttestationFailure>,
-}
-
 pub async fn send_seon_action_stream_event(
     kinesis_client: &KinesisClient,
     stream_name: &str,
-    data: SeonEventStreamInput,
-) -> Result<(), KinesisError> {
-    let payload = if let Some(attestation_failure) = data.attestation_failure {
-        json!({
-            "attestation_failure": {
-                "date": Utc::now().to_rfc3339(),
-                "created_at": attestation_failure.created_at,
-                "public_key_id": attestation_failure.public_key_id,
-                "visitor_id": attestation_failure.visitor_id,
-                "is_approved": attestation_failure.is_approved,
-                "failure_reason": attestation_failure.failure_reason,
-            }
-        })
-    } else {
-        json!({
-            "request": {
-                "date": Utc::now().to_rfc3339(),
-                "data": data.request
-            },
-            "response": {
-                "date": Utc::now().to_rfc3339(),
-                "data": data.response
-            }
-        })
-    };
+    attestation_failure: AttestationFailure,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const PARTITION_KEY: &str = "seon-state-request";
+    let current_time = Utc::now().to_rfc3339();
 
-    let payload_bytes = serde_json::to_vec(&payload).unwrap();
+    let payload = json!({
+        "attestation_failure": {
+            "date": current_time,
+            "created_at": attestation_failure.created_at,
+            "public_key_id": attestation_failure.public_key_id,
+            "visitor_id": attestation_failure.visitor_id,
+            "is_approved": attestation_failure.is_approved,
+            "failure_reason": attestation_failure.failure_reason,
+        }
+    });
+
+    let payload_bytes = serde_json::to_vec(&payload)?;
 
     kinesis_client
         .put_record()
         .stream_name(stream_name)
-        .partition_key("seon-state-request")
+        .partition_key(PARTITION_KEY)
         .data(Blob::new(payload_bytes))
         .send()
         .await?;

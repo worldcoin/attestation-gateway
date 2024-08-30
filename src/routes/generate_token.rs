@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use crate::{
     android, apple,
     keys::fetch_active_key,
-    kinesis::{send_seon_action_stream_event, AttestationFailure, SeonEventStreamInput},
+    kinesis::{send_seon_action_stream_event, AttestationFailure},
     kms_jws,
     utils::{
         handle_redis_error, BundleIdentifier, ClientError, DataReport, ErrorCode, GlobalConfig,
@@ -237,14 +237,9 @@ async fn process_and_finalize_report(
             failure_reason: report.client_error.unwrap_or_else(|| "Unknown".to_string()),
         };
 
-        let event_input = SeonEventStreamInput {
-            request: None,
-            response: None,
-            attestation_failure: Some(attestation_failure),
-        };
-
         if let Err(e) =
-            send_seon_action_stream_event(kinesis_client, kinesis_stream_name, event_input).await
+            send_seon_action_stream_event(kinesis_client, kinesis_stream_name, attestation_failure)
+                .await
         {
             tracing::error!("Failed to send seon action stream event: {:?}", e);
         }
