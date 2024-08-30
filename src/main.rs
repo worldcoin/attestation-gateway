@@ -47,8 +47,7 @@ async fn main() {
 
     let aws_config = environment.aws_config().await;
 
-    // Create Kinesis client
-    let kinesis_client = KinesisClient::new(&aws_config);
+    let kinesis_client = environment.kinesis_client().await;
     tracing::info!("✅ Kinesis client created.");
 
     // Update GlobalConfig to include Kinesis stream name
@@ -148,6 +147,16 @@ impl Environment {
         build_redis_pool(redis_url)
             .await
             .expect("Failed to connect to Redis")
+    }
+
+    pub async fn kinesis_client(&self) -> KinesisClient {
+        // Redefine the Kinesis region if needed
+        let kinesis_region = env::var("KINESIS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+
+        let mut config_builder = self.aws_config().await.into_builder();
+        config_builder.set_region(Some(aws_sdk_kinesis::config::Region::new(kinesis_region)));
+        let config = config_builder.build();
+        KinesisClient::new(&config)
     }
 
     pub async fn aws_config(&self) -> aws_config::SdkConfig {
