@@ -228,25 +228,30 @@ async fn process_and_finalize_report(
     public_key_id: String,
     visitor_id: Option<String>,
 ) -> Result<TokenGenerationResponse, RequestError> {
-    if !kinesis_stream_name.is_empty() {
-        let attestation_failure = AttestationFailure {
-            created_at: Utc::now().to_rfc3339(),
-            public_key_id,
-            visitor_id,
-            is_approved: !report.pass,
-            failure_reason: report.client_error.unwrap_or_else(|| "Unknown".to_string()),
-        };
-
-        if let Err(e) =
-            send_seon_action_stream_event(kinesis_client, kinesis_stream_name, attestation_failure)
-                .await
-        {
-            tracing::error!("Failed to send seon action stream event: {:?}", e);
-        }
-    }
-
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
+        if !kinesis_stream_name.is_empty() {
+            let attestation_failure = AttestationFailure {
+                created_at: Utc::now().to_rfc3339(),
+                public_key_id,
+                visitor_id,
+                is_approved: !report.pass,
+                failure_reason: report.client_error.unwrap_or_else(|| "Unknown".to_string()),
+            };
+
+            if let Err(e) = send_seon_action_stream_event(
+                kinesis_client,
+                kinesis_stream_name,
+                attestation_failure,
+            )
+            .await
+            {
+                tracing::error!("Failed to send seon action stream event: {:?}", e);
+            } else {
+                tracing::info!("Sent seon action stream event");
+            }
+        }
+
         return Err(RequestError {
             code: ErrorCode::IntegrityFailed,
             details: None,

@@ -50,12 +50,7 @@ async fn main() {
     let kinesis_client = environment.kinesis_client().await;
     tracing::info!("✅ Kinesis client created.");
 
-    // Update GlobalConfig to include Kinesis stream name
-    let global_config = GlobalConfig::from_env();
-
-    server::start(redis, aws_config, global_config, kinesis_client).await;
-
-    // server::start(redis, aws_config, GlobalConfig::from_env()).await;
+    server::start(redis, aws_config, GlobalConfig::from_env(), kinesis_client).await;
 }
 
 fn set_up_metrics(environment: Environment) -> eyre::Result<()> {
