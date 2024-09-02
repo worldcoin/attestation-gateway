@@ -23,11 +23,11 @@ pub async fn send_kinesis_stream_event(
     let payload = json!({
         "attestation_failure": {
             "date": current_time,
-            "created_at": attestation_failure.created_at,
-            "public_key_id": attestation_failure.public_key_id,
-            "visitor_id": attestation_failure.visitor_id,
-            "is_approved": attestation_failure.is_approved,
-            "failure_reason": attestation_failure.failure_reason,
+            "createdAt": attestation_failure.created_at,
+            "publicKeyId": attestation_failure.public_key_id,
+            "visitorId": attestation_failure.visitor_id,
+            "isApproved": attestation_failure.is_approved,
+            "failureReason": attestation_failure.failure_reason,
         }
     });
 
