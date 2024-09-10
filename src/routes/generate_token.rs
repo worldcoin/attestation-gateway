@@ -31,8 +31,6 @@ pub async fn handler(
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
     let aud = request.aud.clone();
     let request_hash = request.request_hash.clone();
-    let public_key_id = request.public_key_id.clone();
-    let visitor_id = request.visitor_id.clone();
 
     let my_span = tracing::span!(
         tracing::Level::DEBUG,
@@ -126,8 +124,6 @@ pub async fn handler(
         aws_config,
         &kinesis_client,
         global_config.kinesis_stream_name.as_deref().unwrap_or(""),
-        public_key_id,
-        visitor_id,
     )
     .await
     {
@@ -225,8 +221,6 @@ async fn process_and_finalize_report(
     aws_config: aws_config::SdkConfig,
     kinesis_client: &KinesisClient,
     kinesis_stream_name: &str,
-    public_key_id: String,
-    visitor_id: Option<String>,
 ) -> Result<TokenGenerationResponse, RequestError> {
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
@@ -234,8 +228,6 @@ async fn process_and_finalize_report(
         if !kinesis_stream_name.is_empty() {
             let attestation_failure = AttestationFailure {
                 created_at: Utc::now().to_rfc3339(),
-                public_key_id,
-                visitor_id,
                 is_approved: !report.pass,
                 failure_reason: report.client_error.unwrap_or_else(|| "Unknown".to_string()),
             };

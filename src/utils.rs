@@ -181,8 +181,6 @@ pub struct TokenGenerationRequest {
     pub apple_initial_attestation: Option<String>,
     pub apple_public_key: Option<String>,
     pub apple_assertion: Option<String>,
-    pub public_key_id: String,
-    pub visitor_id: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, JsonSchema)]

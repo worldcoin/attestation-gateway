@@ -6,8 +6,6 @@ use serde_json::json;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AttestationFailure {
     pub created_at: String,
-    pub public_key_id: String,
-    pub visitor_id: Option<String>,
     pub is_approved: bool,
     pub failure_reason: String,
 }
@@ -24,8 +22,6 @@ pub async fn send_kinesis_stream_event(
         "attestation_failure": {
             "date": current_time,
             "createdAt": attestation_failure.created_at,
-            "publicKeyId": attestation_failure.public_key_id,
-            "visitorId": attestation_failure.visitor_id,
             "isApproved": attestation_failure.is_approved,
             "failureReason": attestation_failure.failure_reason,
         }
