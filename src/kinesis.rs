@@ -1,34 +1,18 @@
+use crate::utils::DataReport;
 use aws_sdk_kinesis::{primitives::Blob, Client as KinesisClient};
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AttestationFailure {
-    pub created_at: String,
-    pub is_approved: bool,
-    pub failure_reason: String,
-}
+use serde_json::to_vec;
 
 pub async fn send_kinesis_stream_event(
     kinesis_client: &KinesisClient,
     stream_name: &str,
-    attestation_failure: AttestationFailure,
+    data_report: &DataReport,
 ) -> Result<(), Box<dyn std::error::Error>> {
     const PARTITION_KEY: &str = "seon-state-request";
-    let current_time = Utc::now().to_rfc3339();
 
-    let payload = json!({
-        "attestation_failure": {
-            "date": current_time,
-            "createdAt": attestation_failure.created_at,
-            "isApproved": attestation_failure.is_approved,
-            "failureReason": attestation_failure.failure_reason,
-        }
-    });
+    // Serialize DataReport to JSON
+    let payload_bytes = to_vec(data_report)?;
 
-    let payload_bytes = serde_json::to_vec(&payload)?;
-
+    // Send the serialized data to Kinesis
     kinesis_client
         .put_record()
         .stream_name(stream_name)

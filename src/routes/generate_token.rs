@@ -1,14 +1,13 @@
 use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
 use axum_jsonschema::Json;
-use chrono::Utc;
 use redis::{aio::ConnectionManager, AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
 use std::time::SystemTime;
 
 use crate::{
     android, apple,
     keys::fetch_active_key,
-    kinesis::{send_kinesis_stream_event, AttestationFailure},
+    kinesis::send_kinesis_stream_event,
     kms_jws,
     utils::{
         handle_redis_error, BundleIdentifier, ClientError, DataReport, ErrorCode, GlobalConfig,
@@ -222,24 +221,17 @@ async fn process_and_finalize_report(
     kinesis_client: &KinesisClient,
     kinesis_stream_name: &str,
 ) -> Result<TokenGenerationResponse, RequestError> {
+    // Report result to Kinesis
+    if !kinesis_stream_name.is_empty() {
+        if let Err(e) =
+            send_kinesis_stream_event(kinesis_client, kinesis_stream_name, &report).await
+        {
+            tracing::error!("Failed to send Kinesis event: {:?}", e);
+        }
+    }
+
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
-        // Report errors to Kinesis
-        if !kinesis_stream_name.is_empty() {
-            let attestation_failure = AttestationFailure {
-                created_at: Utc::now().to_rfc3339(),
-                is_approved: !report.pass,
-                failure_reason: report.client_error.unwrap_or_else(|| "Unknown".to_string()),
-            };
-
-            if let Err(e) =
-                send_kinesis_stream_event(kinesis_client, kinesis_stream_name, attestation_failure)
-                    .await
-            {
-                tracing::error!("Failed to send Kinesis event: {:?}", e);
-            }
-        }
-
         return Err(RequestError {
             code: ErrorCode::IntegrityFailed,
             details: None,
