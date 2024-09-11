@@ -7,7 +7,7 @@ pub async fn send_kinesis_stream_event(
     stream_name: &str,
     data_report: &DataReport,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    const PARTITION_KEY: &str = "seon-state-request";
+    let partition_key: &str = &data_report.request_hash;
 
     // Serialize DataReport to JSON
     let payload_bytes = to_vec(data_report)?;
@@ -16,7 +16,7 @@ pub async fn send_kinesis_stream_event(
     kinesis_client
         .put_record()
         .stream_name(stream_name)
-        .partition_key(PARTITION_KEY)
+        .partition_key(partition_key)
         .data(Blob::new(payload_bytes))
         .send()
         .await?;
