@@ -1,6 +1,7 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
 use crate::utils::GlobalConfig;
+use aws_sdk_kinesis::Client as KinesisClient;
 use dotenvy::dotenv;
 use metrics_exporter_statsd::StatsdBuilder;
 use redis::aio::ConnectionManager;
@@ -9,6 +10,7 @@ use std::{env, fmt};
 mod android;
 mod apple;
 mod keys;
+mod kinesis;
 mod kms_jws;
 mod routes;
 mod server;
@@ -45,7 +47,10 @@ async fn main() {
 
     let aws_config = environment.aws_config().await;
 
-    server::start(redis, aws_config, GlobalConfig::from_env()).await;
+    let kinesis_client = environment.kinesis_client().await;
+    tracing::info!("✅ Kinesis client created.");
+
+    server::start(redis, aws_config, GlobalConfig::from_env(), kinesis_client).await;
 }
 
 fn set_up_metrics(environment: Environment) -> eyre::Result<()> {
@@ -137,6 +142,16 @@ impl Environment {
         build_redis_pool(redis_url)
             .await
             .expect("Failed to connect to Redis")
+    }
+
+    pub async fn kinesis_client(&self) -> KinesisClient {
+        // Redefine the Kinesis region if needed
+        let kinesis_region = env::var("KINESIS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+
+        let mut config_builder = self.aws_config().await.into_builder();
+        config_builder.set_region(Some(aws_sdk_kinesis::config::Region::new(kinesis_region)));
+        let config = config_builder.build();
+        KinesisClient::new(&config)
     }
 
     pub async fn aws_config(&self) -> aws_config::SdkConfig {

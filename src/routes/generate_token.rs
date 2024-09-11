@@ -1,3 +1,4 @@
+use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
 use axum_jsonschema::Json;
 use redis::{aio::ConnectionManager, AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
@@ -6,6 +7,7 @@ use std::time::SystemTime;
 use crate::{
     android, apple,
     keys::fetch_active_key,
+    kinesis::send_kinesis_stream_event,
     kms_jws,
     utils::{
         handle_redis_error, BundleIdentifier, ClientError, DataReport, ErrorCode, GlobalConfig,
@@ -23,6 +25,7 @@ pub async fn handler(
     Extension(aws_config): Extension<aws_config::SdkConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
+    Extension(kinesis_client): Extension<KinesisClient>,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
     let aud = request.aud.clone();
@@ -118,6 +121,8 @@ pub async fn handler(
         aud,
         &mut redis,
         aws_config,
+        &kinesis_client,
+        global_config.kinesis_stream_name.as_deref().unwrap_or(""),
     )
     .await
     {
@@ -213,9 +218,17 @@ async fn process_and_finalize_report(
     aud: String,
     redis: &mut ConnectionManager,
     aws_config: aws_config::SdkConfig,
+    kinesis_client: &KinesisClient,
+    kinesis_stream_name: &str,
 ) -> Result<TokenGenerationResponse, RequestError> {
-    // FIXME: Report to Kinesis
-    tracing::debug!("Report: {:?}", report);
+    // Report result to Kinesis
+    if !kinesis_stream_name.is_empty() {
+        if let Err(e) =
+            send_kinesis_stream_event(kinesis_client, kinesis_stream_name, &report).await
+        {
+            tracing::error!("Failed to send Kinesis event: {:?}", e);
+        }
+    }
 
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
@@ -224,7 +237,6 @@ async fn process_and_finalize_report(
             details: None,
         });
     }
-
     // Generate output attestation token
     let output_token_payload = OutputTokenPayload {
         aud,

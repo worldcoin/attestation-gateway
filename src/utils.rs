@@ -16,6 +16,7 @@ pub struct GlobalConfig {
     pub disabled_bundle_identifiers: Vec<BundleIdentifier>,
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
     pub log_client_errors: bool,
+    pub kinesis_stream_name: Option<String>,
 }
 
 impl GlobalConfig {
@@ -35,6 +36,8 @@ impl GlobalConfig {
 
         let log_client_errors = env::var("LOG_CLIENT_ERRORS")
             .map_or(false, |val| val.to_lowercase() == "true" || val == "1");
+
+        let kinesis_stream_name = env::var("KINESIS_STREAM_NAME").ok();
 
         // Disabling bundle identifiers is helpful so that the production deployment of this app does not accept staging apps (or viceversa)
         let disabled_bundle_identifiers = env::var("DISABLED_BUNDLE_IDENTIFIERS");
@@ -59,6 +62,7 @@ impl GlobalConfig {
             apple_keys_dynamo_table_name,
             disabled_bundle_identifiers,
             log_client_errors,
+            kinesis_stream_name,
         }
     }
 }
