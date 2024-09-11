@@ -7,7 +7,7 @@ pub async fn send_kinesis_stream_event(
     stream_name: &str,
     data_report: &DataReport,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let partition_key: &str = &data_report.request_hash;
+    let partition_key: &str = "request_hash";
 
     // Serialize DataReport to JSON
     let payload_bytes = to_vec(data_report)?;
