@@ -827,7 +827,7 @@ async fn test_apple_assertion_e2e_success() {
         request_hash: "test".to_string(),
         client_error: None,
         apple_initial_attestation: None,
-        apple_public_key: Some(TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string()),
+        apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
     };
 
