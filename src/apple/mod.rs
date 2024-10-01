@@ -299,19 +299,23 @@ fn decode_and_validate_initial_attestation(
 /// Implements the verification of the certificate chain for `DeviceCheck` attestations.
 fn verify_cert_chain(attestation: &Attestation) -> eyre::Result<()> {
     let root_cert = X509::from_pem(include_bytes!("./apple_app_attestation_root_ca.pem"))?;
-    let mut store_builder = X509StoreBuilder::new()?;
-    let mut cert_chain = Stack::new()?;
 
+    // Trusted root CA store
+    let mut store_builder = X509StoreBuilder::new()?;
     store_builder.add_cert(root_cert.clone())?;
+    let store = store_builder.build();
+
+    let mut cert_chain = Stack::new()?;
     cert_chain.push(root_cert)?;
+
+    dbg!(&attestation.att_stmt.x5c.iter().len());
 
     for cert_der in &attestation.att_stmt.x5c.iter().rev().collect::<Vec<_>>() {
         let cert = X509::from_der(cert_der)?;
+        dbg!(&cert);
         cert_chain.push(cert.clone())?;
-        store_builder.add_cert(cert)?;
+        // store_builder.add_cert(cert)?;
     }
-
-    let store = store_builder.build();
 
     let target_cert = cert_chain
         .get(cert_chain.len() - 1)
@@ -324,7 +328,14 @@ fn verify_cert_chain(attestation: &Attestation) -> eyre::Result<()> {
         &cert_chain,
         openssl::x509::X509StoreContextRef::verify_cert,
     ) {
-        Ok(_) => Ok(()),
+        Ok(result) => {
+            // return Ok(());
+            if result {
+                Ok(())
+            } else {
+                eyre::bail!("Certificate verification failed (validation failed)")
+            }
+        }
         Err(_) => eyre::bail!("Certificate verification failed"),
     }
 }
