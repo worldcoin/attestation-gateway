@@ -11,7 +11,10 @@ use openssl::{
     sha::Sha256,
     sign::Verifier,
     stack::Stack,
-    x509::{store::X509StoreBuilder, X509StoreContext, X509},
+    x509::{
+        store::{X509Store, X509StoreBuilder},
+        X509StoreContext, X509,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
@@ -296,23 +299,32 @@ fn decode_and_validate_initial_attestation(
     })
 }
 
-/// Implements the verification of the certificate chain for `DeviceCheck` attestations.
+/// Implements the verification of the certificate chain for `DeviceCheck` attestations, using Apple's root CA.
 fn verify_cert_chain(attestation: &Attestation) -> eyre::Result<()> {
     let root_cert = X509::from_pem(include_bytes!("./apple_app_attestation_root_ca.pem"))?;
 
     // Trusted root CA store
     let mut store_builder = X509StoreBuilder::new()?;
-    store_builder.add_cert(root_cert.clone())?;
+    store_builder.add_cert(root_cert)?;
     let store = store_builder.build();
 
-    let mut cert_chain = Stack::new()?;
-    cert_chain.push(root_cert)?;
+    // # Safety
+    // It is safe to call this function because we've initialized the store with the trusted root CA from Apple.
+    unsafe { internal_verify_cert_chain(attestation, &store) }
+}
 
-    dbg!(&attestation.att_stmt.x5c.iter().len());
+/// Implements the verification of the certificate chain for `DeviceCheck` attestations.
+///
+/// # Safety
+/// This should only be called with the right trusted store.
+unsafe fn internal_verify_cert_chain(
+    attestation: &Attestation,
+    store: &X509Store,
+) -> eyre::Result<()> {
+    let mut cert_chain = Stack::new()?;
 
     for cert_der in &attestation.att_stmt.x5c.iter().rev().collect::<Vec<_>>() {
         let cert = X509::from_der(cert_der)?;
-        dbg!(&cert);
         cert_chain.push(cert.clone())?;
         // store_builder.add_cert(cert)?;
     }
@@ -323,13 +335,12 @@ fn verify_cert_chain(attestation: &Attestation) -> eyre::Result<()> {
 
     let mut context = X509StoreContext::new()?;
     match context.init(
-        &store,
+        store,
         target_cert,
         &cert_chain,
         openssl::x509::X509StoreContextRef::verify_cert,
     ) {
         Ok(result) => {
-            // return Ok(());
             if result {
                 Ok(())
             } else {

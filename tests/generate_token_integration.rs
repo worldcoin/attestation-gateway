@@ -29,6 +29,12 @@ use tracing_test::traced_test;
 
 static APPLE_KEYS_DYNAMO_TABLE_NAME: &str = "attestation-gateway-apple-keys";
 
+// These keys need to be replaced if the test attestation is updated
+static TEST_VALID_ATTESTATION: &str = "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";
+static TEST_ATTESTATION_KEY_ID: &str = "OEQf1t214ajtjlmQ29xNeMtdWYOf4dUWDJQrQFqCJIw=";
+static TEST_ATTESTATION_RAW_PUBLIC_KEY: &str = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEh4Bd1IrEnNal/KNplK6VVrByUq4jsVtVVxpMI/mezeQcluflXHikUxYe+xoB/fAL3VnEA5zJlLobpHcfn/4+7w==";
+static TEST_VALID_ASSERTION: &str = "omlzaWduYXR1cmVYRjBEAiBR6EAxMJ5hyeJgItBum9qi0yNnPpl5COOw/m740jfpmQIgeoTihUfmyWMXGGMAOXq83wKD4dJ1Tv9CD1VPVFWN1DtxYXV0aGVudGljYXRvckRhdGFYJdJYCIP3FikJXRKshlK4W68Qb+I/1miZc5AejfQ5oOt1QAAAAAE=";
+
 // SECTION --- setup & config ---
 
 async fn get_aws_config_extension() -> Extension<aws_config::SdkConfig> {
@@ -56,9 +62,7 @@ async fn reset_apple_keys_table(aws_config: &aws_config::SdkConfig) {
         .table_name(APPLE_KEYS_DYNAMO_TABLE_NAME)
         .key(
             "key_id",
-            aws_sdk_dynamodb::types::AttributeValue::S(
-                "key#3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=".to_string(),
-            ),
+            aws_sdk_dynamodb::types::AttributeValue::S(format!("key#{TEST_ATTESTATION_KEY_ID}")),
         )
         .send()
         .await;
@@ -641,9 +645,9 @@ async fn test_apple_initial_attestation_e2e_success() {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
-        request_hash: "testhash".to_string(),
+        request_hash: "test".to_string(),
         client_error: None,
-        apple_initial_attestation: Some("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".to_string()),
+        apple_initial_attestation: Some(TEST_VALID_ATTESTATION.to_string()),
         apple_public_key: None,
         apple_assertion: None,
     };
@@ -676,9 +680,7 @@ async fn test_apple_initial_attestation_e2e_success() {
         .table_name(APPLE_KEYS_DYNAMO_TABLE_NAME.to_string())
         .key(
             "key_id",
-            aws_sdk_dynamodb::types::AttributeValue::S(
-                "key#3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=".to_string(),
-            ),
+            aws_sdk_dynamodb::types::AttributeValue::S(format!("key#{TEST_ATTESTATION_KEY_ID}")),
         )
         .send()
         .await
@@ -686,7 +688,10 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     let item = get_item_result.item.unwrap();
 
-    assert_eq!(item.get("public_key").unwrap().as_s().unwrap(), "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==");
+    assert_eq!(
+        item.get("public_key").unwrap().as_s().unwrap(),
+        TEST_ATTESTATION_RAW_PUBLIC_KEY
+    );
     assert_eq!(item.get("key_counter").unwrap().as_n().unwrap(), "0");
     assert_eq!(
         item.get("bundle_identifier").unwrap().as_s().unwrap(),
@@ -797,7 +802,6 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
 #[tokio::test]
 #[serial]
 async fn test_apple_assertion_e2e_success() {
-    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let api_router = get_api_router().await;
 
     let aws_config = get_aws_config_extension().await;
@@ -808,21 +812,23 @@ async fn test_apple_assertion_e2e_success() {
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::IOSStageWorldApp,
-        test_key.to_string(),
+        TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
+        TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
         "receipt".to_string(),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
-        request_hash: "testhash".to_string(),
+        request_hash: "test".to_string(),
         client_error: None,
         apple_initial_attestation: None,
-        apple_public_key: Some(test_key.to_string()),
-        apple_assertion: Some("omlzaWduYXR1cmVYRzBFAiBpd06ZONnjmJ2m/kD/DYQ5G5WQzEaXsuI68fo+746SRAIhAKEqmog8GorUtxeFcAHeB4yYj0xrTzQHenABYSwSDUBWcWF1dGhlbnRpY2F0b3JEYXRhWCXSWAiD9xYpCV0SrIZSuFuvEG/iP9ZomXOQHo30OaDrdUAAAAAB".to_string()),
+        apple_public_key: Some(TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string()),
+        apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -879,7 +885,7 @@ async fn test_apple_assertion_e2e_success() {
     let key = apple::dynamo::fetch_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        test_key.to_string(),
+        TEST_ATTESTATION_KEY_ID.to_string(),
     )
     .await
     .unwrap();
@@ -890,7 +896,6 @@ async fn test_apple_assertion_e2e_success() {
 #[tokio::test]
 #[serial]
 async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates_a_client_error() {
-    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let api_router = get_api_router().await;
 
     let aws_config = get_aws_config_extension().await;
@@ -900,11 +905,13 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::IOSStageWorldApp,
-        test_key.to_string(),
+        TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
+        TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
         "receipt".to_string(),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
@@ -913,7 +920,7 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
-        apple_public_key: Some(test_key.to_string()),
+        apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some("not_even_base64".to_string()),
     };
 
@@ -949,7 +956,6 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
 #[tokio::test]
 #[serial]
 async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_client_error() {
-    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let api_router = get_api_router().await;
 
     let aws_config = get_aws_config_extension().await;
@@ -959,11 +965,13 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::IOSStageWorldApp,
-        test_key.to_string(),
+        TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
+        TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
         "receipt".to_string(),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
@@ -972,7 +980,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
-        apple_public_key: Some(test_key.to_string()),
+        apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         // Valid base64 but invalid CBOR message
         apple_assertion: Some("aW52YWxpZA".to_string()),
     };
@@ -1097,7 +1105,6 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
 async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertion() {
     // This assertion can be obtained from `verify_assertion_failure_with_invalid_key`
     let invalid_assertion = "omlzaWduYXR1cmVYRzBFAiAzg4lX/q4SMY/HZLegpV+1I5eUE1fRldlC4yloghLWsQIhAMSlrYPwou6WJ0JsiVCE00G2+ZCBphnyOO3imjI68yCccWF1dGhlbnRpY2F0b3JEYXRhWEt0aGlzX2lzX25vdF9hX3ZhbGlkX2F1dGhlbnRpY2F0b3JfZGF0YV9idXRfdmVyaWZpY2F0aW9uX3dpbGxfbm90X3JlYWNoX2hlcmU";
-    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let api_router = get_api_router().await;
 
     let aws_config = get_aws_config_extension().await;
@@ -1107,11 +1114,13 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::IOSStageWorldApp,
-        test_key.to_string(),
+        TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
+        TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
         "receipt".to_string(),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
@@ -1120,7 +1129,7 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
         request_hash: "testhash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
-        apple_public_key: Some(test_key.to_string()),
+        apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(invalid_assertion.to_string()),
     };
 
@@ -1155,7 +1164,6 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
 #[tokio::test]
 #[serial]
 async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identifier_pair() {
-    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let api_router = get_api_router().await;
 
     let aws_config = get_aws_config_extension().await;
@@ -1165,22 +1173,24 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::IOSProdWorldApp, // <-- we also change this to test explicitly the `rp_id` check in the assertion
-        test_key.to_string(),
+        TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
+        TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
         "receipt".to_string(),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         // Notice the bundle identifier is different
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
-        request_hash: "testhash".to_string(),
+        request_hash: "test".to_string(),
         client_error: None,
         apple_initial_attestation: None,
-        apple_public_key: Some(test_key.to_string()),
-        apple_assertion: Some("omlzaWduYXR1cmVYRzBFAiBpd06ZONnjmJ2m/kD/DYQ5G5WQzEaXsuI68fo+746SRAIhAKEqmog8GorUtxeFcAHeB4yYj0xrTzQHenABYSwSDUBWcWF1dGhlbnRpY2F0b3JEYXRhWCXSWAiD9xYpCV0SrIZSuFuvEG/iP9ZomXOQHo30OaDrdUAAAAAB".to_string()),
+        apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
+        apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1214,7 +1224,6 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
 #[tokio::test]
 #[serial]
 async fn test_apple_token_generation_with_invalid_counter() {
-    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let api_router = get_api_router().await;
 
     let aws_config = get_aws_config_extension().await;
@@ -1225,17 +1234,22 @@ async fn test_apple_token_generation_with_invalid_counter() {
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::IOSStageWorldApp,
-        test_key.to_string(),
+        TEST_ATTESTATION_KEY_ID.to_string(),
         // this assertion has a `counter = 1`
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHB6lDlPsxyNES6JSYM+w5rIxF5nPeN19dwNlSLYGU9LFx5kYOKeajWrsEPT3laf1UL07S0ANVG+2Hr5lCieiDw==".to_string(),
+        TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
         "receipt".to_string(),
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     // increase the counter beyond the current assertion
     client
         .update_item()
         .table_name(APPLE_KEYS_DYNAMO_TABLE_NAME)
-        .key("key_id", AttributeValue::S(format!("key#{test_key}")))
+        .key(
+            "key_id",
+            AttributeValue::S(format!("key#{TEST_ATTESTATION_KEY_ID}")),
+        )
         .update_expression("SET key_counter = :new_counter")
         .expression_attribute_values(":new_counter", AttributeValue::N(2.to_string()))
         .return_values(aws_sdk_dynamodb::types::ReturnValue::UpdatedNew)
@@ -1247,11 +1261,11 @@ async fn test_apple_token_generation_with_invalid_counter() {
         integrity_token: None,
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
-        request_hash: "testhash".to_string(),
+        request_hash: "test".to_string(),
         client_error: None,
         apple_initial_attestation: None,
-        apple_public_key: Some(test_key.to_string()),
-        apple_assertion: Some("omlzaWduYXR1cmVYRzBFAiBpd06ZONnjmJ2m/kD/DYQ5G5WQzEaXsuI68fo+746SRAIhAKEqmog8GorUtxeFcAHeB4yYj0xrTzQHenABYSwSDUBWcWF1dGhlbnRpY2F0b3JEYXRhWCXSWAiD9xYpCV0SrIZSuFuvEG/iP9ZomXOQHo30OaDrdUAAAAAB".to_string()),
+        apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
+        apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1351,7 +1365,6 @@ async fn test_apple_counter_race_condition() {
 
     let api_router_base = get_api_router().await;
 
-    let test_key = "3tHEioTHHrX5wmvAiP/WTAjGRlwLNfoOiL7E7U8VmFQ=";
     let aws_config = get_aws_config_extension().await;
 
     let pk = base64::engine::general_purpose::STANDARD.encode(sk.public_key_to_der().unwrap());
@@ -1361,7 +1374,7 @@ async fn test_apple_counter_race_condition() {
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::IOSStageWorldApp,
-        test_key.to_string(),
+        TEST_ATTESTATION_KEY_ID.to_string(),
         pk,
         "receipt".to_string(),
     )
@@ -1384,7 +1397,7 @@ async fn test_apple_counter_race_condition() {
             request_hash: format!("testhash-{i}"),
             client_error: None,
             apple_initial_attestation: None,
-            apple_public_key: Some(test_key.to_string()),
+            apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
             apple_assertion: Some(assertion.to_string()),
         };
 

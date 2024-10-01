@@ -1,7 +1,6 @@
 use chrono::{TimeZone, Utc};
 use openssl::{
     asn1::Asn1Time,
-    bn::BigNum,
     ec::{EcGroup, EcKey},
     nid::Nid,
     pkey::{Private, Public},
@@ -28,14 +27,6 @@ fn helper_create_fake_root_ca() -> (X509, PKey<Private>) {
     // create a new fake root CA
     let mut ca_cert_builder = X509::builder().unwrap();
     ca_cert_builder.set_version(2).unwrap();
-    // let serial_number = {
-    //     let mut serial = BigNum::new().unwrap();
-    //     serial
-    //         .rand(159, openssl::bn::MsbOption::MAYBE_ZERO, false)
-    //         .unwrap();
-    //     serial.to_asn1_integer().unwrap()
-    // };
-    // ca_cert_builder.set_serial_number(&serial_number).unwrap();
 
     // Set the subject & issuer name
     let mut name = X509Name::builder().unwrap();
@@ -86,7 +77,8 @@ fn helper_create_fake_cert(
     issuer: &X509Name,
     issuer_key: &PKey<Private>,
     common_name: &str,
-) -> X509 {
+    is_expired: bool,
+) -> (X509, PKey<Private>) {
     // create an EC key pair to be attested in the certificate
     let group = EcGroup::from_curve_name(Nid::SECP256K1).unwrap();
     let ec_key = EcKey::generate(&group).unwrap();
@@ -109,15 +101,26 @@ fn helper_create_fake_cert(
     ca_cert_builder
         .set_not_before(Asn1Time::days_from_now(0).unwrap().as_ref())
         .unwrap();
-    ca_cert_builder
-        .set_not_after(Asn1Time::days_from_now(1).unwrap().as_ref())
-        .unwrap();
+    if is_expired {
+        let two_minutes_ago = Utc::now() - chrono::Duration::minutes(2);
+        ca_cert_builder
+            .set_not_after(
+                Asn1Time::from_unix(two_minutes_ago.timestamp())
+                    .unwrap()
+                    .as_ref(),
+            )
+            .unwrap();
+    } else {
+        ca_cert_builder
+            .set_not_after(Asn1Time::days_from_now(1).unwrap().as_ref())
+            .unwrap();
+    }
 
     ca_cert_builder
         .sign(issuer_key, MessageDigest::sha384())
         .unwrap();
 
-    ca_cert_builder.build()
+    (ca_cert_builder.build(), secret_key)
 }
 
 // SECTION --- initial attestation ---
@@ -149,26 +152,64 @@ fn test_verify_initial_attestation_success_real_attestation() {
     );
 }
 
+/// This is a test case of the test mechanism to use a fake root CA to sign the attestation.
+/// This test helps gurantee the validity of other failure test cases relying on a fake root CA.
 #[test]
-fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expected_apple_root_ca() {
-    let (ca_cert, ca_key) = helper_create_fake_root_ca();
+fn test_verify_initial_attestation_success_on_different_root_ca() {
+    let (root_cert, root_key) = helper_create_fake_root_ca();
 
-    let cert = helper_create_fake_cert(
-        &ca_cert.issuer_name().to_owned().unwrap(),
-        &ca_key,
+    let (cert, _) = helper_create_fake_cert(
+        &root_cert.issuer_name().to_owned().unwrap(),
+        &root_key,
         "testhash",
+        false,
     );
 
     let attestation_statement = AttestationStatement {
         x5c: vec![
-            ca_cert.to_der().unwrap().into(),
+            root_cert.to_der().unwrap().into(),
             cert.to_der().unwrap().into(),
         ],
         receipt: ByteBuf::new(),
     };
 
     let attestation = Attestation {
-        fmt: "apple".to_string(),
+        fmt: "apple-appattest".to_string(),
+        att_stmt: attestation_statement,
+        auth_data: ByteBuf::new(),
+    };
+
+    let mut store_builder = X509StoreBuilder::new().unwrap();
+    store_builder.add_cert(root_cert).unwrap();
+    let store = store_builder.build();
+
+    let result = unsafe { internal_verify_cert_chain(&attestation, &store) };
+    assert!(result.is_ok());
+}
+
+/// Tests an attestation from a different root CA which is not Apple's Root CA
+#[test]
+fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expected_apple_root_ca() {
+    let (root_cert, root_key) = helper_create_fake_root_ca();
+
+    let (cert, _) = helper_create_fake_cert(
+        &root_cert.issuer_name().to_owned().unwrap(),
+        &root_key,
+        "testhash",
+        false,
+    );
+
+    let attestation_statement = AttestationStatement {
+        // chain is root CA -> cert (total 2)
+        x5c: vec![
+            root_cert.to_der().unwrap().into(),
+            cert.to_der().unwrap().into(),
+        ],
+        receipt: ByteBuf::new(),
+    };
+
+    let attestation = Attestation {
+        fmt: "apple-appattest".to_string(),
         att_stmt: attestation_statement,
         auth_data: ByteBuf::new(),
     };
@@ -182,11 +223,102 @@ fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expect
 }
 
 #[test]
-fn test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca() {}
+fn test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca() {
+    let (root_cert, root_key) = helper_create_fake_root_ca();
+
+    let (intermediate_cert, intermediate_key) = helper_create_fake_cert(
+        &root_cert.issuer_name().to_owned().unwrap(),
+        &root_key,
+        "Apple App Attestation CA 1",
+        false,
+    );
+
+    let (cert, _) = helper_create_fake_cert(
+        &intermediate_cert.issuer_name().to_owned().unwrap(),
+        &intermediate_key,
+        "testhash",
+        false,
+    );
+
+    let attestation_statement = AttestationStatement {
+        // chain is root CA -> intermediate cert -> cert (total 3)
+        x5c: vec![
+            root_cert.to_der().unwrap().into(),
+            intermediate_cert.to_der().unwrap().into(),
+            cert.to_der().unwrap().into(),
+        ],
+        receipt: ByteBuf::new(),
+    };
+
+    let attestation = Attestation {
+        fmt: "apple-appattest".to_string(),
+        att_stmt: attestation_statement,
+        auth_data: ByteBuf::new(),
+    };
+
+    let result = verify_cert_chain(&attestation).unwrap_err();
+
+    assert_eq!(
+        result.to_string(),
+        "Certificate verification failed (validation failed)"
+    );
+}
 
 #[test]
 fn test_verify_initial_attestation_failure_on_self_signed_certificate() {
-    todo!("implement this");
+    let (ca_cert, _) = helper_create_fake_root_ca();
+
+    let attestation_statement = AttestationStatement {
+        // chain is root CA (self signed)
+        x5c: vec![ca_cert.to_der().unwrap().into()],
+        receipt: ByteBuf::new(),
+    };
+
+    let attestation = Attestation {
+        fmt: "apple-appattest".to_string(),
+        att_stmt: attestation_statement,
+        auth_data: ByteBuf::new(),
+    };
+
+    let result = verify_cert_chain(&attestation).unwrap_err();
+
+    assert_eq!(
+        result.to_string(),
+        "Certificate verification failed (validation failed)"
+    );
+}
+
+#[test]
+fn test_verify_initial_attestation_failure_on_expired_certificate() {
+    let (root_cert, root_key) = helper_create_fake_root_ca();
+
+    let (cert, _) = helper_create_fake_cert(
+        &root_cert.issuer_name().to_owned().unwrap(),
+        &root_key,
+        "testhash",
+        true,
+    );
+
+    let attestation_statement = AttestationStatement {
+        x5c: vec![
+            root_cert.to_der().unwrap().into(),
+            cert.to_der().unwrap().into(),
+        ],
+        receipt: ByteBuf::new(),
+    };
+
+    let attestation = Attestation {
+        fmt: "apple-appattest".to_string(),
+        att_stmt: attestation_statement,
+        auth_data: ByteBuf::new(),
+    };
+
+    let mut store_builder = X509StoreBuilder::new().unwrap();
+    store_builder.add_cert(root_cert).unwrap();
+    let store = store_builder.build();
+
+    let result = unsafe { internal_verify_cert_chain(&attestation, &store) };
+    assert!(result.is_ok());
 }
 
 #[test]
