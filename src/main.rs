@@ -5,6 +5,7 @@ use aws_sdk_kinesis::Client as KinesisClient;
 use dotenvy::dotenv;
 use metrics_exporter_statsd::StatsdBuilder;
 use redis::aio::ConnectionManager;
+use regex::Regex;
 use std::{env, fmt};
 
 mod android;
@@ -123,6 +124,25 @@ impl Environment {
             let use_tls = env::var("REDIS_USE_TLS")
                 .map(|val| val.to_lowercase() == "true")
                 .unwrap_or(false);
+
+            // assert port is in valid range
+            let port: u16 = port
+                .parse()
+                .expect("REDIS_PORT must be a valid port number");
+            assert!(port > 1024, "REDIS_PORT must be a valid port number");
+
+            let re = Regex::new(r"[^@%\/\\:,]+").unwrap();
+
+            // assert valid username & password
+            assert!(
+                !re.is_match(&username),
+                "redis username must not contain invalid characters"
+            );
+
+            assert!(
+                !re.is_match(&password),
+                "redis password must not contain invalid characters"
+            );
 
             format!(
                 "{}://{}:{}@{}:{}",

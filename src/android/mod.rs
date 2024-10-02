@@ -66,7 +66,7 @@ fn decrypt_outer_jwe(
     Ok(compact_jws)
 }
 
-/// Verifies the signature of the inner JWS (as well as expiration) and parses the payload into a `PlayIntegrityToken` struct
+/// Verifies the signature of the inner JWS and parses the payload into a `PlayIntegrityToken` struct
 /// <https://developer.android.com/google/play/integrity/classic#kotlin>
 ///
 fn verify_and_parse_inner_jws(
