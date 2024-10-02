@@ -326,7 +326,6 @@ unsafe fn internal_verify_cert_chain(
     for cert_der in &attestation.att_stmt.x5c.iter().rev().collect::<Vec<_>>() {
         let cert = X509::from_der(cert_der)?;
         cert_chain.push(cert.clone())?;
-        // store_builder.add_cert(cert)?;
     }
 
     let target_cert = cert_chain
@@ -334,6 +333,7 @@ unsafe fn internal_verify_cert_chain(
         .context("No certificate found")?;
 
     let mut context = X509StoreContext::new()?;
+
     match context.init(
         store,
         target_cert,
@@ -344,7 +344,7 @@ unsafe fn internal_verify_cert_chain(
             if result {
                 Ok(())
             } else {
-                eyre::bail!("Certificate verification failed (validation failed)")
+                eyre::bail!("Certificate verification failed ({})", context.error())
             }
         }
         Err(_) => eyre::bail!("Certificate verification failed"),

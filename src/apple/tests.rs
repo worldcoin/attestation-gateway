@@ -167,8 +167,8 @@ fn test_verify_initial_attestation_success_on_different_root_ca() {
 
     let attestation_statement = AttestationStatement {
         x5c: vec![
-            root_cert.to_der().unwrap().into(),
             cert.to_der().unwrap().into(),
+            root_cert.to_der().unwrap().into(),
         ],
         receipt: ByteBuf::new(),
     };
@@ -202,8 +202,8 @@ fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expect
     let attestation_statement = AttestationStatement {
         // chain is root CA -> cert (total 2)
         x5c: vec![
-            root_cert.to_der().unwrap().into(),
             cert.to_der().unwrap().into(),
+            root_cert.to_der().unwrap().into(),
         ],
         receipt: ByteBuf::new(),
     };
@@ -218,7 +218,7 @@ fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expect
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (validation failed)"
+        "Certificate verification failed (self-signed certificate in certificate chain)"
     );
 }
 
@@ -243,9 +243,9 @@ fn test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca() {
     let attestation_statement = AttestationStatement {
         // chain is root CA -> intermediate cert -> cert (total 3)
         x5c: vec![
-            root_cert.to_der().unwrap().into(),
-            intermediate_cert.to_der().unwrap().into(),
             cert.to_der().unwrap().into(),
+            intermediate_cert.to_der().unwrap().into(),
+            root_cert.to_der().unwrap().into(),
         ],
         receipt: ByteBuf::new(),
     };
@@ -260,7 +260,49 @@ fn test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca() {
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (validation failed)"
+        "Certificate verification failed (self-signed certificate in certificate chain)"
+    );
+}
+
+#[test]
+fn test_verify_cert_chain_failure_with_invalid_root_ca() {
+    let (root_cert, root_key) = helper_create_fake_root_ca();
+
+    let (intermediate_cert, intermediate_key) = helper_create_fake_cert(
+        &root_cert.issuer_name().to_owned().unwrap(),
+        &root_key,
+        "Apple App Attestation CA 1",
+        false,
+    );
+
+    let (cert, _) = helper_create_fake_cert(
+        &intermediate_cert.issuer_name().to_owned().unwrap(),
+        &intermediate_key,
+        "testhash",
+        false,
+    );
+
+    let attestation_statement = AttestationStatement {
+        // chain is root CA -> intermediate cert -> cert but root CA is not Apple's Root CA and is also not included in the chain
+        // note: test where root CA is included in the chain can be found in `test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca`
+        x5c: vec![
+            cert.to_der().unwrap().into(),
+            intermediate_cert.to_der().unwrap().into(),
+        ],
+        receipt: ByteBuf::new(),
+    };
+
+    let attestation = Attestation {
+        fmt: "apple-appattest".to_string(),
+        att_stmt: attestation_statement,
+        auth_data: ByteBuf::new(),
+    };
+
+    let result = verify_cert_chain(&attestation).unwrap_err();
+
+    assert_eq!(
+        result.to_string(),
+        "Certificate verification failed (unable to get local issuer certificate)"
     );
 }
 
@@ -284,7 +326,7 @@ fn test_verify_initial_attestation_failure_on_self_signed_certificate() {
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (validation failed)"
+        "Certificate verification failed (self-signed certificate)"
     );
 }
 
@@ -301,8 +343,8 @@ fn test_verify_initial_attestation_failure_on_expired_certificate() {
 
     let attestation_statement = AttestationStatement {
         x5c: vec![
-            root_cert.to_der().unwrap().into(),
             cert.to_der().unwrap().into(),
+            root_cert.to_der().unwrap().into(),
         ],
         receipt: ByteBuf::new(),
     };
@@ -317,8 +359,11 @@ fn test_verify_initial_attestation_failure_on_expired_certificate() {
     store_builder.add_cert(root_cert).unwrap();
     let store = store_builder.build();
 
-    let result = unsafe { internal_verify_cert_chain(&attestation, &store) };
-    assert!(result.is_ok());
+    let result = unsafe { internal_verify_cert_chain(&attestation, &store).unwrap_err() };
+    assert_eq!(
+        result.to_string(),
+        "Certificate verification failed (certificate has expired)"
+    );
 }
 
 #[test]
