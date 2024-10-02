@@ -347,7 +347,7 @@ unsafe fn internal_verify_cert_chain(
                 eyre::bail!("Certificate verification failed ({})", context.error())
             }
         }
-        Err(_) => eyre::bail!("Certificate verification failed"),
+        Err(e) => eyre::bail!("Certificate verification failed ({})", e),
     }
 }
 
