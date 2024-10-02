@@ -2,6 +2,10 @@ use crate::utils::DataReport;
 use aws_sdk_kinesis::{primitives::Blob, Client as KinesisClient};
 use serde_json::to_vec;
 
+/// Reports a parsed event to a Kinesis stream for debugging and monitoring purposes
+///
+/// # Errors
+/// Will return an `aws_sdk_kinesis::Error` if the request to Kinesis fails.
 pub async fn send_kinesis_stream_event(
     kinesis_client: &KinesisClient,
     stream_name: &str,
