@@ -323,7 +323,10 @@ unsafe fn internal_verify_cert_chain(
 ) -> eyre::Result<()> {
     let mut cert_chain = Stack::new()?;
 
-    for cert_der in &attestation.att_stmt.x5c.iter().rev().collect::<Vec<_>>() {
+    for cert_der in attestation.att_stmt.x5c.iter().rev() {
+        let cert = X509::from_der(cert_der)?;
+        cert_chain.push(cert)?;
+    }
         let cert = X509::from_der(cert_der)?;
         cert_chain.push(cert.clone())?;
     }
