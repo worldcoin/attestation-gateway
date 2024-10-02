@@ -624,7 +624,7 @@ async fn test_server_error_is_properly_logged() {
         })
     );
 
-    assert!(logs_contain("Error verifying Android or Apple integrity e=Invalid key format: The key size must be 32: 7"));
+    assert!(logs_contain("Error verifying Android or Apple integrity error=Invalid key format: The key size must be 32: 7"));
 }
 
 // SECTION --- apple initial attestation tests ---

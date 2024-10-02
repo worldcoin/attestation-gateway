@@ -19,29 +19,32 @@ mod utils;
 
 #[tokio::main]
 async fn main() {
-    dotenv().ok();
-
-    let environment = Environment::from_env();
-
+    // initialize logging early to make sure everything is reported
     tracing_subscriber::fmt()
         .json()
         .with_target(false)
         .flatten_event(true)
         .init();
 
+    tracing::info!("Starting attestation gateway...");
+
+    dotenv().ok();
+
+    let environment = Environment::from_env();
+
     // Initialize logging
     match environment {
         Environment::Production | Environment::Staging => {
             set_up_metrics(environment)
                 .map_err(|e| {
-                    tracing::error!("error setting up metrics: {:?}", e);
+                    tracing::error!(error = ?e, "Error setting up metrics");
                 })
                 .unwrap();
         }
         Environment::Development => {}
     }
 
-    tracing::info!("Starting attestation gateway...");
+    tracing::info!("✅ Configuration loaded successfully...");
 
     let redis = environment.redis_client().await;
     tracing::info!("✅ Connection to Redis established.");
@@ -135,12 +138,12 @@ impl Environment {
 
             // assert valid username & password
             assert!(
-                !re.is_match(&username),
+                re.is_match(&username),
                 "redis username must not contain invalid characters"
             );
 
             assert!(
-                !re.is_match(&password),
+                re.is_match(&password),
                 "redis password must not contain invalid characters"
             );
 
