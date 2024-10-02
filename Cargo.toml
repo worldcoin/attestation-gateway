@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/worldcoin/attestation-gateway"
 description = "Protects app integrity."
-license-file = "LICENSE"
+license = "MIT"
 keywords = ["integrity", "attestation", "PlayIntegrity", "DeviceCheck"]
 categories = ["web-programming"]
 
