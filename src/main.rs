@@ -19,15 +19,16 @@ mod utils;
 
 #[tokio::main]
 async fn main() {
-    dotenv().ok();
-
-    let environment = Environment::from_env();
-
+    // initialize logging early to make sure everything is reported
     tracing_subscriber::fmt()
         .json()
         .with_target(false)
         .flatten_event(true)
         .init();
+
+    dotenv().ok();
+
+    let environment = Environment::from_env();
 
     // Initialize logging
     match environment {

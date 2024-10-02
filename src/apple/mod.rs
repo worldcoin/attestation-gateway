@@ -185,7 +185,7 @@ fn decode_and_validate_initial_attestation(
     let attestation_bytes = general_purpose::STANDARD
         .decode(apple_initial_attestation)
         .map_err(|e| {
-            tracing::debug!(?e, "error decoding base64 encoded attestation.");
+            tracing::debug!(error = ?e, "error decoding base64 encoded attestation.");
             eyre::eyre!(ClientError {
                 code: ErrorCode::InvalidToken,
                 internal_debug_info: "error decoding base64 encoded attestation.".to_string(),
@@ -195,7 +195,7 @@ fn decode_and_validate_initial_attestation(
     let cursor = Cursor::new(attestation_bytes);
 
     let attestation: Attestation = ciborium::from_reader(cursor).map_err(|e| {
-        tracing::debug!(?e, "error decoding cbor formatted attestation.");
+        tracing::debug!(error = ?e, "error decoding cbor formatted attestation.");
         eyre::eyre!(ClientError {
             code: ErrorCode::InvalidToken,
             internal_debug_info: "error decoding cbor formatted attestation.".to_string(),
