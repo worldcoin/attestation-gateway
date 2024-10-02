@@ -8,7 +8,6 @@ license-file = "LICENSE"
 keywords = ["integrity", "attestation", "PlayIntegrity", "DeviceCheck"]
 categories = ["web-programming"]
 
-
 [dependencies]
 aide = { version = "0.13.4", features = ["axum", "macros", "scalar"] }
 anyhow = "1.0.86"
@@ -42,7 +41,6 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt","json"
 ] }
 x509-parser = "0.16.0"
-
 
 [build-dependencies]
 chrono = "0.4.38"
