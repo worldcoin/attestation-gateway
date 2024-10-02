@@ -308,16 +308,11 @@ fn verify_cert_chain(attestation: &Attestation) -> eyre::Result<()> {
     store_builder.add_cert(root_cert)?;
     let store = store_builder.build();
 
-    // # Safety
-    // It is safe to call this function because we've initialized the store with the trusted root CA from Apple.
-    unsafe { internal_verify_cert_chain(attestation, &store) }
+    internal_verify_cert_chain_with_store(attestation, &store)
 }
 
-/// Implements the verification of the certificate chain for `DeviceCheck` attestations.
-///
-/// # Safety
-/// This should only be called with the right trusted store.
-unsafe fn internal_verify_cert_chain(
+/// Implements the verification of the certificate chain for `DeviceCheck` attestations. Expects a store with the trusted root CA from Apple.
+fn internal_verify_cert_chain_with_store(
     attestation: &Attestation,
     store: &X509Store,
 ) -> eyre::Result<()> {
@@ -326,9 +321,6 @@ unsafe fn internal_verify_cert_chain(
     for cert_der in attestation.att_stmt.x5c.iter().rev() {
         let cert = X509::from_der(cert_der)?;
         cert_chain.push(cert)?;
-    }
-        let cert = X509::from_der(cert_der)?;
-        cert_chain.push(cert.clone())?;
     }
 
     let target_cert = cert_chain

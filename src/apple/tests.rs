@@ -183,7 +183,7 @@ fn test_verify_initial_attestation_success_on_different_root_ca() {
     store_builder.add_cert(root_cert).unwrap();
     let store = store_builder.build();
 
-    let result = unsafe { internal_verify_cert_chain(&attestation, &store) };
+    let result = internal_verify_cert_chain_with_store(&attestation, &store);
     assert!(result.is_ok());
 }
 
@@ -359,7 +359,7 @@ fn test_verify_initial_attestation_failure_on_expired_certificate() {
     store_builder.add_cert(root_cert).unwrap();
     let store = store_builder.build();
 
-    let result = unsafe { internal_verify_cert_chain(&attestation, &store).unwrap_err() };
+    let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
     assert_eq!(
         result.to_string(),
         "Certificate verification failed (certificate has expired)"
