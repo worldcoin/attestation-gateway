@@ -40,8 +40,8 @@ pub async fn handler(
 
     let integrity_verification_input = IntegrityVerificationInput::from_request(&request)?;
 
-    if global_config
-        .disabled_bundle_identifiers
+    if !global_config
+        .enabled_bundle_identifiers
         .contains(&request.bundle_identifier)
     {
         return Err(RequestError {
