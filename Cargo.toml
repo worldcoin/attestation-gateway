@@ -4,11 +4,10 @@ version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/worldcoin/attestation-gateway"
 description = "Protects app integrity."
-license-file = "LICENSE"
+license = "MIT"
 keywords = ["integrity", "attestation", "PlayIntegrity", "DeviceCheck"]
 categories = ["web-programming"]
 rust-version = "1.80"
-
 
 [dependencies]
 aide = { version = "0.13.4", features = ["axum", "macros", "scalar"] }
@@ -43,7 +42,6 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt","json"
 ] }
 x509-parser = "0.16.0"
-
 
 [build-dependencies]
 chrono = "0.4.38"

@@ -46,13 +46,16 @@ jobs:
             ${{ runner.os }}-cargo-build-
 
       - name: Install dependencies
-        run: cargo fetch
+        run: cargo fetch && cargo install cargo-sort
 
       - name: Check code formatting
         run: cargo fmt -- --check
 
       - name: Run clippy
-        run: cargo clippy --all-features -- -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+        run: cargo clippy
+
+      - name: Check cargo-sort
+        run: cargo sort --check
 
       - name: Build the project
         run: cargo build --release
@@ -154,3 +157,12 @@ jobs:
         run: |
           docker stop attestation-gateway-ci-container
           docker rm attestation-gateway-ci-container
+  deny:
+    name: Cargo deny
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: EmbarkStudios/cargo-deny-action@v1
