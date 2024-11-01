@@ -28,7 +28,7 @@ hex = "0.4.3"
 josekit = "0.10.0"
 metrics = "0.23.0"
 metrics-exporter-statsd = "0.8.0"
-openssl = "0.10.66"
+openssl = "0.10.68"
 redis = { version = "0.25.4", features = ["tokio-comp", "connection-manager", "tokio-native-tls-comp"] }
 regex = "1.11.0"
 schemars = "0.8.21"
