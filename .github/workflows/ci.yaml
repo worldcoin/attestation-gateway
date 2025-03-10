@@ -131,10 +131,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Cache Docker layers
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/docker
+            /var/lib/docker
           key: ${{ runner.os }}-docker-${{ hashFiles('**/Dockerfile') }}
 
       - name: Build Docker image
