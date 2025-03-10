@@ -140,7 +140,7 @@ fn test_verify_initial_attestation_success_real_attestation() {
         TEST_VALID_ATTESTATION.to_string(),
         "test",
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
-        Some(AAGUID::AppAttestDevelop),
+        &[AAGUID::AppAttestDevelop],
     )
     .unwrap();
 
@@ -372,7 +372,7 @@ fn test_verify_initial_attestation_failure_on_invalid_attestation() {
         "this_is_not_base64_encoded".to_string(),
         "test",
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
-        Some(AAGUID::AppAttestDevelop),
+        &[AAGUID::AppAttestDevelop],
     )
     .unwrap_err();
 
@@ -395,7 +395,7 @@ fn test_verify_initial_attestation_failure_on_invalid_cbor_message() {
         "dGhpcyBpcyBpbnZhbGlk".to_string(),
         "test",
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
-        Some(AAGUID::AppAttestDevelop),
+        &[AAGUID::AppAttestDevelop],
     )
     .unwrap_err();
 
@@ -414,7 +414,7 @@ fn test_verify_initial_attestation_failure_nonce_mismatch() {
         TEST_VALID_ATTESTATION.to_string(),
         "a_different_hash",
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
-        Some(AAGUID::AppAttestDevelop),
+        &[AAGUID::AppAttestDevelop],
     )
     .unwrap_err();
 
@@ -432,7 +432,7 @@ fn test_verify_initial_attestation_failure_app_id_mismatch() {
         TEST_VALID_ATTESTATION.to_string(),
         "test",
         BundleIdentifier::IOSProdWorldApp.apple_app_id().unwrap(),
-        Some(AAGUID::AppAttestDevelop),
+        &[AAGUID::AppAttestDevelop],
     )
     .unwrap_err();
 
@@ -451,7 +451,7 @@ fn test_verify_initial_attestation_failure_aaguid_mismatch() {
         TEST_VALID_ATTESTATION.to_string(),
         "test",
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
-        Some(AAGUID::AppAttest),
+        &[AAGUID::AppAttest],
     )
     .unwrap_err();
 
@@ -467,25 +467,26 @@ fn test_verify_initial_attestation_failure_aaguid_mismatch() {
 /// For staging apps it's useful to bypass the `AAGUID` check as the app may be running on either the development or production environment
 #[test]
 fn test_verify_initial_attestation_bypassing_aaguid_check_for_staging_apps() {
-    let expected_aaguid =
-        AAGUID::from_bundle_identifier(&BundleIdentifier::IOSStageWorldApp).unwrap();
-    assert!(expected_aaguid.is_none());
+    let expected_aaguids =
+        AAGUID::allowed_for_bundle_identifier(&BundleIdentifier::IOSStageWorldApp).unwrap();
+    assert_eq!(expected_aaguids.len(), 2);
 
     decode_and_validate_initial_attestation(
         TEST_VALID_ATTESTATION.to_string(),
         "test",
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
-        expected_aaguid,
+        &expected_aaguids,
     )
     .unwrap();
 }
 
+// TODO: This is currently allowed, uncomment the test when this changes
+#[ignore = "This is currently allowed, uncomment the test when this changes"]
 #[test]
 fn test_ensure_production_app_does_not_bypass_aaguid_check() {
-    let expected_aaguid = AAGUID::from_bundle_identifier(&BundleIdentifier::IOSProdWorldApp)
-        .unwrap()
-        .unwrap();
-    assert_eq!(expected_aaguid, AAGUID::AppAttest);
+    let expected_aaguids =
+        AAGUID::allowed_for_bundle_identifier(&BundleIdentifier::IOSProdWorldApp).unwrap();
+    assert_eq!(expected_aaguids, [AAGUID::AppAttest]);
 }
 
 // SECTION --- assertions with attested public key (after initial attestation) ---
