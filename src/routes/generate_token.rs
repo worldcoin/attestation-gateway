@@ -17,7 +17,7 @@ use crate::{
 };
 
 const REQUEST_HASH_REDIS_KEY_PREFIX: &str = "request_hash:";
-const REQUEST_HASH_CACHE_TTL: usize = 60 * 60 * 24; // 24 hours
+const REQUEST_HASH_CACHE_TTL: u64 = 60 * 60 * 24; // 24 hours
 
 // NOTE: Integration tests for route handlers are in the `/tests` module
 
@@ -278,7 +278,7 @@ async fn release_request_hash(
     redis: &mut ConnectionManager,
 ) -> Result<(), RequestError> {
     redis
-        .del::<_, _>(format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"))
+        .del::<String, usize>(format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"))
         .await
         .map_err(handle_redis_error)?;
     Ok(())
