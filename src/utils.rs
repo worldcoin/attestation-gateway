@@ -35,7 +35,7 @@ impl GlobalConfig {
             .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
 
         let log_client_errors = env::var("LOG_CLIENT_ERRORS")
-            .map_or(false, |val| val.to_lowercase() == "true" || val == "1");
+            .is_ok_and(|val| val.to_lowercase() == "true" || val == "1");
 
         let kinesis_stream_name = env::var("KINESIS_STREAM_NAME").ok();
 
@@ -265,6 +265,7 @@ impl IntegrityVerificationInput {
 }
 
 /// Represents an error that is attributable to the client and represents expected behavior for the API.
+///
 /// For example, when an expired integrity token is passed.
 /// `ClientError`s are not logged by default and result in a 4xx status code.
 #[derive(Debug, Clone, PartialEq, Eq)]
