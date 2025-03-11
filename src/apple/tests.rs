@@ -459,10 +459,9 @@ fn test_verify_initial_attestation_failure_aaguid_mismatch() {
     let result = result.downcast_ref::<ClientError>().unwrap();
     assert_eq!(result.code, ErrorCode::InvalidAttestationForApp);
     assert_eq!(
-    result.internal_debug_info,
-    "expected `AAGUID` for bundle identifier and `AAGUID` from attestation object do not match."
-        .to_string()
-);
+        result.internal_debug_info,
+        "unexpected `AAGUID` for bundle identifier.".to_string()
+    );
 }
 
 /// For staging apps it's useful to bypass the `AAGUID` check as the app may be running on either the development or production environment
