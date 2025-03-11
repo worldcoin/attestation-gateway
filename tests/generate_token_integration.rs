@@ -88,7 +88,9 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
 async fn get_redis_extension() -> Extension<redis::aio::ConnectionManager> {
     let client = redis::Client::open("redis://localhost").unwrap();
     // Reset Redis before each test run
-    redis::cmd("FlUSHALL").execute(&mut client.clone().get_connection().unwrap());
+    redis::cmd("FlUSHALL")
+        .exec(&mut client.clone().get_connection().unwrap())
+        .unwrap();
 
     Extension(redis::aio::ConnectionManager::new(client).await.unwrap())
 }
