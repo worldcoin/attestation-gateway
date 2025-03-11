@@ -2,7 +2,6 @@ use std::time::{Duration, Instant};
 
 use aws_sdk_kms::types::{KeySpec, Tag};
 use base64::{engine::general_purpose, Engine};
-use der_parser::nom::ToUsize;
 use eyre::OptionExt;
 use openssl::{
     bn::{BigNum, BigNumContext},
@@ -212,7 +211,7 @@ async fn store_new_key_in_redis(
     key: &SigningKey,
 ) -> eyre::Result<()> {
     redis
-        .lpush(SIGNING_KEYS_REDIS_KEY, serde_json::to_vec(key)?)
+        .lpush::<&str, Vec<u8>, usize>(SIGNING_KEYS_REDIS_KEY, serde_json::to_vec(key)?)
         .await?;
     tracing::info!("New key stored in Redis: {}", key.key_definition.id);
     Ok(())
@@ -227,7 +226,7 @@ async fn acquire_lock_with_backoff(redis: &mut ConnectionManager) -> eyre::Resul
 
     let opts = SetOptions::default()
         .conditional_set(ExistenceCheck::NX)
-        .with_expiration(SetExpiry::EX(max_retry_timeout.to_usize()));
+        .with_expiration(SetExpiry::EX(max_retry_timeout));
 
     tracing::info!(
         "Attempting to acquire lock for key generation. Current key count: {}",
@@ -276,7 +275,7 @@ async fn acquire_lock_with_backoff(redis: &mut ConnectionManager) -> eyre::Resul
 }
 
 async fn release_lock(redis: &mut ConnectionManager) -> eyre::Result<()> {
-    redis.del(CREATING_KEY_LOCK_KEY).await?;
+    redis.del::<&str, usize>(CREATING_KEY_LOCK_KEY).await?;
     Ok(())
 }
 
