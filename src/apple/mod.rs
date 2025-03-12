@@ -43,7 +43,7 @@ pub async fn verify_initial_attestation(
         bundle_identifier.apple_app_id().context(format!(
             "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
         ))?,
-        AAGUID::from_bundle_identifier(&bundle_identifier)?,
+        &AAGUID::allowed_for_bundle_identifier(&bundle_identifier)?,
     )?;
 
     dynamo::insert_apple_public_key(
@@ -160,12 +160,20 @@ impl FromStr for AAGUID {
 }
 
 impl AAGUID {
-    fn from_bundle_identifier(bundle_identifier: &BundleIdentifier) -> eyre::Result<Option<Self>> {
+    /// Returns the list of allowed `AAGUID`s for a given bundle identifier.
+    fn allowed_for_bundle_identifier(
+        bundle_identifier: &BundleIdentifier,
+    ) -> eyre::Result<Vec<Self>> {
         match bundle_identifier {
-            BundleIdentifier::IOSProdWorldApp => Ok(Some(Self::AppAttest)),
-            // NOTE: for staging apps we don't check the `AAGUID` because they can be operating in either
-            // the development environment (e.g. local development) or production environment (e.g. through TestFlight distribution)
-            BundleIdentifier::IOSStageWorldApp => Ok(None),
+            BundleIdentifier::IOSProdWorldApp => {
+                // REVIEW: Temporarily allowing local development for production app. Remove after April 10, 2025.
+                Ok([Self::AppAttest, Self::AppAttestDevelop].to_vec())
+            }
+            BundleIdentifier::IOSStageWorldApp => {
+                // Staging app can be operating in either the development environment (e.g. local development) or
+                // production environment (e.g. through TestFlight distribution)
+                Ok([Self::AppAttest, Self::AppAttestDevelop].to_vec())
+            }
             _ => eyre::bail!("Invalid bundle identifier for Apple verification."),
         }
     }
@@ -185,7 +193,7 @@ fn decode_and_validate_initial_attestation(
     apple_initial_attestation: String,
     request_hash: &str,
     expected_app_id: &str,
-    expected_aaguid: Option<AAGUID>,
+    allowed_aaguid: &[AAGUID],
 ) -> eyre::Result<InitialAttestationOutput> {
     let attestation_bytes = general_purpose::STANDARD
         .decode(apple_initial_attestation)
@@ -273,14 +281,11 @@ fn decode_and_validate_initial_attestation(
     // Step 8: verify `aaguid` is as expected from config
     let aaguid = AAGUID::from_str(std::str::from_utf8(&attestation.auth_data.clone()[37..53])?)?;
 
-    if let Some(expected_aaguid) = expected_aaguid {
-        if expected_aaguid != aaguid {
-            eyre::bail!(ClientError {
+    if !allowed_aaguid.contains(&aaguid) {
+        eyre::bail!(ClientError {
             code: ErrorCode::InvalidAttestationForApp,
-            internal_debug_info: "expected `AAGUID` for bundle identifier and `AAGUID` from attestation object do not match."
-                .to_string(),
+            internal_debug_info: "unexpected `AAGUID` for bundle identifier.".to_string(),
         });
-        }
     }
 
     // Step 9: verify the `credentialId` is the same as the public key
