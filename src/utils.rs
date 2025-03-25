@@ -13,7 +13,7 @@ pub struct GlobalConfig {
     pub android_outer_jwe_private_key: String,
     pub android_inner_jws_public_key: String,
     pub apple_keys_dynamo_table_name: String,
-    pub disabled_bundle_identifiers: Vec<BundleIdentifier>,
+    pub enabled_bundle_identifiers: Vec<BundleIdentifier>,
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
     pub log_client_errors: bool,
     pub kinesis_stream_name: Option<String>,
@@ -35,13 +35,13 @@ impl GlobalConfig {
             .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
 
         let log_client_errors = env::var("LOG_CLIENT_ERRORS")
-            .map_or(false, |val| val.to_lowercase() == "true" || val == "1");
+            .is_ok_and(|val| val.to_lowercase() == "true" || val == "1");
 
         let kinesis_stream_name = env::var("KINESIS_STREAM_NAME").ok();
 
-        // Disabling bundle identifiers is helpful so that the production deployment of this app does not accept staging apps (or viceversa)
-        let disabled_bundle_identifiers = env::var("DISABLED_BUNDLE_IDENTIFIERS");
-        let disabled_bundle_identifiers: Vec<BundleIdentifier> = disabled_bundle_identifiers
+        // Disabling bundle identifiers is helpful so that the production deployment of this service does not accept staging apps (or viceversa)
+        let enabled_bundle_identifiers = env::var("ENABLED_BUNDLE_IDENTIFIERS");
+        let enabled_bundle_identifiers: Vec<BundleIdentifier> = enabled_bundle_identifiers
             .map_or_else(
                 |_| Vec::new(),
                 |val| {
@@ -52,15 +52,15 @@ impl GlobalConfig {
             );
 
         tracing::info!(
-            "Running with disabled bundle identifiers: {:?}",
-            disabled_bundle_identifiers
+            "Running with enabled bundle identifiers: {:?}",
+            enabled_bundle_identifiers
         );
 
         Self {
             android_outer_jwe_private_key,
             android_inner_jws_public_key,
             apple_keys_dynamo_table_name,
-            disabled_bundle_identifiers,
+            enabled_bundle_identifiers,
             log_client_errors,
             kinesis_stream_name,
         }
@@ -265,6 +265,7 @@ impl IntegrityVerificationInput {
 }
 
 /// Represents an error that is attributable to the client and represents expected behavior for the API.
+///
 /// For example, when an expired integrity token is passed.
 /// `ClientError`s are not logged by default and result in a 4xx status code.
 #[derive(Debug, Clone, PartialEq, Eq)]

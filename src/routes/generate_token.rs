@@ -17,7 +17,7 @@ use crate::{
 };
 
 const REQUEST_HASH_REDIS_KEY_PREFIX: &str = "request_hash:";
-const REQUEST_HASH_CACHE_TTL: usize = 60 * 60 * 24; // 24 hours
+const REQUEST_HASH_CACHE_TTL: u64 = 60 * 60 * 24; // 24 hours
 
 // NOTE: Integration tests for route handlers are in the `/tests` module
 
@@ -40,8 +40,8 @@ pub async fn handler(
 
     let integrity_verification_input = IntegrityVerificationInput::from_request(&request)?;
 
-    if global_config
-        .disabled_bundle_identifiers
+    if !global_config
+        .enabled_bundle_identifiers
         .contains(&request.bundle_identifier)
     {
         return Err(RequestError {
@@ -86,9 +86,9 @@ pub async fn handler(
         // Check if we have a ClientError in the error chain and return to the client without further logging
         if let Some(client_error) = e.downcast_ref::<ClientError>() {
             if global_config.log_client_errors {
-                tracing::warn!(?e, "Client failure verifying Android or Apple integrity");
+                tracing::warn!(error = ?e, "Client failure verifying Android or Apple integrity");
             }else {
-                tracing::debug!(?e, "Client failure verifying Android or Apple integrity");
+                tracing::debug!(error = ?e, "Client failure verifying Android or Apple integrity");
             }
 
             metrics::counter!("generate_token.client_error",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string()).increment(1);
@@ -99,7 +99,7 @@ pub async fn handler(
             };
         }
 
-        tracing::error!(?e, "Error verifying Android or Apple integrity");
+        tracing::error!(error = ?e, "Error verifying Android or Apple integrity");
         RequestError {
             code: ErrorCode::InternalServerError,
             details: None,
@@ -248,7 +248,7 @@ async fn process_and_finalize_report(
     .generate()?;
 
     let key = fetch_active_key(redis, &aws_config).await.map_err(|e| {
-        tracing::error!(?e, "Error fetching active key");
+        tracing::error!(error = ?e, "Error fetching active key");
         RequestError {
             code: ErrorCode::InternalServerError,
             details: None,
@@ -259,7 +259,7 @@ async fn process_and_finalize_report(
         kms_jws::generate_output_token(&aws_config, key.key_definition.arn, output_token_payload)
             .await
             .map_err(|e| {
-                tracing::error!(?e, "Error generating output token");
+                tracing::error!(error = ?e, "Error generating output token");
                 RequestError {
                     code: ErrorCode::InternalServerError,
                     details: None,
@@ -278,7 +278,7 @@ async fn release_request_hash(
     redis: &mut ConnectionManager,
 ) -> Result<(), RequestError> {
     redis
-        .del::<_, _>(format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"))
+        .del::<String, usize>(format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"))
         .await
         .map_err(handle_redis_error)?;
     Ok(())

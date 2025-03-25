@@ -19,7 +19,7 @@ pub async fn handler(
     Extension(mut redis): Extension<ConnectionManager>,
 ) -> Result<Json<KeysOutput>, RequestError> {
     let signing_keys = fetch_all(&mut redis, &aws_config).await.map_err(|e| {
-        tracing::error!(?e, "error fetching signing keys.");
+        tracing::error!(error = ?e, "error fetching signing keys.");
         RequestError {
             code: ErrorCode::InternalServerError,
             details: None,
