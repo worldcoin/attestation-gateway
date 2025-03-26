@@ -81,6 +81,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         enabled_bundle_identifiers: vec![BundleIdentifier::AndroidStageWorldApp, BundleIdentifier::AndroidDevWorldApp, BundleIdentifier::IOSStageWorldApp, BundleIdentifier::IOSProdWorldApp],
         log_client_errors: false,
         kinesis_stream_name: None,
+        kinesis_stream_arn: None,
     };
     Extension(config)
 }
@@ -580,6 +581,7 @@ async fn test_server_error_is_properly_logged() {
             enabled_bundle_identifiers: vec![BundleIdentifier::AndroidDevWorldApp],
             log_client_errors: false,
             kinesis_stream_name: None,
+            kinesis_stream_arn: None,
         };
         Extension(config)
     }
