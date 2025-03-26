@@ -17,6 +17,7 @@ pub struct GlobalConfig {
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
     pub log_client_errors: bool,
     pub kinesis_stream_name: Option<String>,
+    pub kinesis_stream_arn: Option<String>,
 }
 
 impl GlobalConfig {
@@ -38,6 +39,7 @@ impl GlobalConfig {
             .is_ok_and(|val| val.to_lowercase() == "true" || val == "1");
 
         let kinesis_stream_name = env::var("KINESIS_STREAM_NAME").ok();
+        let kinesis_stream_arn = env::var("KINESIS_STREAM_ARN").ok();
 
         // Disabling bundle identifiers is helpful so that the production deployment of this service does not accept staging apps (or viceversa)
         let enabled_bundle_identifiers = env::var("ENABLED_BUNDLE_IDENTIFIERS");
@@ -63,6 +65,7 @@ impl GlobalConfig {
             enabled_bundle_identifiers,
             log_client_errors,
             kinesis_stream_name,
+            kinesis_stream_arn,
         }
     }
 }

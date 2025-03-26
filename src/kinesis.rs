@@ -8,7 +8,7 @@ use serde_json::to_vec;
 /// Will return an `aws_sdk_kinesis::Error` if the request to Kinesis fails.
 pub async fn send_kinesis_stream_event(
     kinesis_client: &KinesisClient,
-    stream_name: &str,
+    stream_arn: &str,
     data_report: &DataReport,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let partition_key: &str = "request_hash";
@@ -19,7 +19,7 @@ pub async fn send_kinesis_stream_event(
     // Send the serialized data to Kinesis
     kinesis_client
         .put_record()
-        .stream_name(stream_name)
+        .stream_arn(stream_arn)
         .partition_key(partition_key)
         .data(Blob::new(payload_bytes))
         .send()
