@@ -122,7 +122,7 @@ pub async fn handler(
         &mut redis,
         aws_config,
         &kinesis_client,
-        global_config.kinesis_stream_name.as_deref().unwrap_or(""),
+        global_config.kinesis_stream_arn.as_deref().unwrap_or(""),
     )
     .await
     {
@@ -219,12 +219,11 @@ async fn process_and_finalize_report(
     redis: &mut ConnectionManager,
     aws_config: aws_config::SdkConfig,
     kinesis_client: &KinesisClient,
-    kinesis_stream_name: &str,
+    kinesis_stream_arn: &str,
 ) -> Result<TokenGenerationResponse, RequestError> {
     // Report result to Kinesis
-    if !kinesis_stream_name.is_empty() {
-        if let Err(e) =
-            send_kinesis_stream_event(kinesis_client, kinesis_stream_name, &report).await
+    if !kinesis_stream_arn.is_empty() {
+        if let Err(e) = send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report).await
         {
             tracing::error!("Failed to send Kinesis event: {:?}", e);
         }
