@@ -50,7 +50,7 @@ async fn main() {
     tracing::info!("✅ Connection to Redis established.");
 
     let aws_config = environment.aws_config().await;
-    tracing::info!("✅ AWS configuration setup complete.");
+    tracing::info!("✅ AWS configuration setup complete!!");
 
     let kinesis_client = environment.kinesis_client().await;
     tracing::info!("✅ Kinesis client created.");
