@@ -48,7 +48,7 @@ pub struct AccountDetails {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppAccessRiskVerdict {
-    pub apps_detected: Vec<String>,
+    pub apps_detected: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -171,7 +171,7 @@ impl PlayIntegrityToken {
         self.validate_account_details(bundle_identifier)?;
 
         // Step 5: Environment details
-        self.validate_environment_details()?;
+        self.validate_environment_details(bundle_identifier)?;
 
         Ok(())
     }
@@ -279,12 +279,31 @@ impl PlayIntegrityToken {
         Ok(())
     }
 
-    fn validate_environment_details(&self) -> eyre::Result<()> {
+    fn validate_environment_details(
+        &self,
+        bundle_identifier: &BundleIdentifier,
+    ) -> eyre::Result<()> {
         if let Some(value) = &self.environment_details {
             if value.play_protect_verdict == Some(PlayProtectVerdict::HighRisk) {
                 return Err(eyre::eyre!(ClientError {
                     code: ErrorCode::IntegrityFailed,
                     internal_debug_info: "PlayProtectVerdict reported as HighRisk".to_string(),
+                }));
+            }
+            // For staging & dev apps, allow empty apps_detected, while we're debugging an issue.
+            let allow_empty_apps_detected = [
+                BundleIdentifier::AndroidStageWorldApp,
+                BundleIdentifier::AndroidDevWorldApp,
+            ]
+            .contains(bundle_identifier);
+            if value.app_access_risk_verdict.apps_detected.is_none() && !allow_empty_apps_detected {
+                // https://developer.android.com/google/play/integrity/verdicts#environment-details-fields:
+                // "appAccessRiskVerdict: {}" => "App access risk is not evaluated because a necessary
+                // requirement was missed. For example, the device was not trustworthy enough."
+                return Err(eyre::eyre!(ClientError {
+                    code: ErrorCode::IntegrityFailed,
+                    internal_debug_info: "app_access_risk_verdict.apps_detected is None"
+                        .to_string(),
                 }));
             }
         }
@@ -323,7 +342,7 @@ mod tests {
             },
             environment_details: Some(EnvironmentDetails {
                 app_access_risk_verdict: AppAccessRiskVerdict {
-                    apps_detected: vec![],
+                    apps_detected: Some(vec![]),
                 },
                 play_protect_verdict: Some(PlayProtectVerdict::NoIssues),
             }),
@@ -559,19 +578,24 @@ mod tests {
     #[test]
     fn test_validate_environment_details() {
         let token = create_test_token();
+        let bundle_identifier = BundleIdentifier::AndroidProdWorldApp;
 
         // Test valid environment details
-        assert!(token.validate_environment_details().is_ok());
+        assert!(token
+            .validate_environment_details(&bundle_identifier)
+            .is_ok());
 
         // Test high-risk environment
         let mut invalid_token = create_test_token();
         invalid_token.environment_details = Some(EnvironmentDetails {
             app_access_risk_verdict: AppAccessRiskVerdict {
-                apps_detected: vec![],
+                apps_detected: Some(vec![]),
             },
             play_protect_verdict: Some(PlayProtectVerdict::HighRisk),
         });
-        let error = invalid_token.validate_environment_details().unwrap_err();
+        let error = invalid_token
+            .validate_environment_details(&bundle_identifier)
+            .unwrap_err();
         assert_eq!(
             error.downcast::<ClientError>().unwrap(),
             ClientError {
@@ -583,6 +607,71 @@ mod tests {
         // Test with no environment details (this is still a valid token)
         let mut valid_token = create_test_token();
         valid_token.environment_details = None;
-        assert!(valid_token.validate_environment_details().is_ok());
+        assert!(valid_token
+            .validate_environment_details(&bundle_identifier)
+            .is_ok());
+
+        // Test with no apps detected in the environment details on a production app
+        let mut invalid_token = create_test_token();
+        invalid_token.environment_details = Some(EnvironmentDetails {
+            app_access_risk_verdict: AppAccessRiskVerdict {
+                apps_detected: None,
+            },
+            play_protect_verdict: Some(PlayProtectVerdict::NoIssues),
+        });
+        let error = invalid_token
+            .validate_environment_details(&bundle_identifier)
+            .unwrap_err();
+        assert_eq!(
+            error.downcast::<ClientError>().unwrap(),
+            ClientError {
+                code: ErrorCode::IntegrityFailed,
+                internal_debug_info: "app_access_risk_verdict.apps_detected is None".to_string(),
+            }
+        );
+
+        // Test with no apps detected in the environment details on a staging app
+        let mut valid_token = create_test_token();
+        valid_token.environment_details = Some(EnvironmentDetails {
+            app_access_risk_verdict: AppAccessRiskVerdict {
+                apps_detected: None,
+            },
+            play_protect_verdict: Some(PlayProtectVerdict::NoIssues),
+        });
+        assert!(valid_token
+            .validate_environment_details(&BundleIdentifier::AndroidStageWorldApp)
+            .is_ok());
+    }
+
+    #[test]
+    fn test_environment_details_apps_detected_parsed_as_expected() {
+        let environment_details_json = r#"
+        {
+            "appAccessRiskVerdict": {
+                "appsDetected": [
+                    "KNOWN_INSTALLED",
+                    "UNKNOWN_INSTALLED",
+                    "UNKNOWN_CAPTURING"
+                ]
+            }
+        }"#;
+        let environment_details: EnvironmentDetails =
+            serde_json::from_str(environment_details_json).unwrap();
+        assert_eq!(
+            environment_details.app_access_risk_verdict.apps_detected,
+            Some(vec![
+                "KNOWN_INSTALLED".to_string(),
+                "UNKNOWN_INSTALLED".to_string(),
+                "UNKNOWN_CAPTURING".to_string(),
+            ])
+        );
+
+        let no_apps_detected_json = r#"
+        {
+            "appAccessRiskVerdict": {}
+        }"#;
+        let no_apps_detected: EnvironmentDetails =
+            serde_json::from_str(no_apps_detected_json).unwrap();
+        assert_eq!(no_apps_detected.app_access_risk_verdict.apps_detected, None);
     }
 }
