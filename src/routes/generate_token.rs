@@ -116,6 +116,7 @@ pub async fn handler(
     };
 
     let response = match process_and_finalize_report(
+        &global_config,
         report,
         request_hash.clone(),
         aud,
@@ -212,7 +213,9 @@ async fn verify_android_or_apple_integrity(
     Ok(report)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_and_finalize_report(
+    global_config: &GlobalConfig,
     report: DataReport,
     request_hash: String,
     aud: String,
@@ -231,6 +234,12 @@ async fn process_and_finalize_report(
 
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
+        if global_config.log_client_errors {
+            tracing::warn!(
+                message = "Integrity verification failed",
+                internal_debug_info = report.internal_debug_info
+            );
+        }
         return Err(RequestError {
             code: ErrorCode::IntegrityFailed,
             details: None,
