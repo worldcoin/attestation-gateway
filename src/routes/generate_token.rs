@@ -330,14 +330,10 @@ async fn handle_client_error_if_applicable(
             Some("`client_error` provided in the request".to_string()),
         );
 
-        dbg!(&report);
-        dbg!(&kinesis_stream_arn);
-
         send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report)
             .await
             .map_err(|e| {
-                dbg!(&e);
-                //tracing::error!("Failed to send `client_error` to Kinesis: {:?}", e);
+                tracing::error!("Failed to send `client_error` to Kinesis: {:?}", e);
                 RequestError {
                     code: ErrorCode::InternalServerError,
                     details: None,
