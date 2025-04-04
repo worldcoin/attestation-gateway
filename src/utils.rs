@@ -314,17 +314,26 @@ impl Display for RequestError {
 impl IntoResponse for RequestError {
     fn into_response(self) -> axum::response::Response {
         #[derive(serde::Serialize)]
-        struct ErrorResponse {
+        struct ErrorObjectResponse {
             code: String,
-            details: String,
+            message: String,
+        }
+        #[derive(serde::Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ErrorResponse {
+            allow_retry: bool,
+            error: ErrorObjectResponse,
         }
         (
             self.code.into_http_status_code(),
             axum::Json(ErrorResponse {
-                code: self.code.to_string(),
-                details: self
-                    .details
-                    .unwrap_or_else(|| self.code.into_default_error_message().to_string()),
+                allow_retry: self.code.into_allow_retry(),
+                error: ErrorObjectResponse {
+                    code: self.code.to_string(),
+                    message: self
+                        .details
+                        .unwrap_or_else(|| self.code.into_default_error_message().to_string()),
+                },
             }),
         )
             .into_response()
@@ -388,6 +397,21 @@ impl ErrorCode {
             Self::InvalidInitialAttestation => "This public key has already gone through initial attestation. Use assertion instead.",
             Self::InvalidPublicKey => "Public key has not been attested.",
             Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
+        }
+    }
+
+    /// Determines whether the request is retryable (**as-is**) or not.
+    const fn into_allow_retry(self) -> bool {
+        match self {
+            Self::InternalServerError => true,
+            Self::BadRequest
+            | Self::ExpiredToken
+            | Self::IntegrityFailed
+            | Self::InvalidAttestationForApp
+            | Self::InvalidInitialAttestation
+            | Self::InvalidPublicKey
+            | Self::InvalidToken
+            | Self::DuplicateRequestHash => false,
         }
     }
 }

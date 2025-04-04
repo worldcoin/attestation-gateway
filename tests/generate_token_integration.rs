@@ -338,7 +338,7 @@ async fn test_token_generation_fails_on_disabled_bundle_identifier() {
     let body: Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(
-        body["details"],
+        body["error"]["message"],
         "This bundle identifier is currently unavailable.".to_string()
     );
 }
@@ -381,8 +381,11 @@ async fn test_android_token_generation_with_invalid_attributes() {
     assert_eq!(
         body,
         json!({
-            "code": "bad_request",
-            "details": "`integrity_token` is required for this bundle identifier."
+            "allowRetry": false,
+            "error": {
+                "code": "bad_request",
+                "message": "`integrity_token` is required for this bundle identifier."
+            }
         })
     );
 }
@@ -437,8 +440,11 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
 
-    assert_eq!(body["code"], "duplicate_request_hash");
-    assert_eq!(body["details"], "The `request_hash` has already been used.");
+    assert_eq!(body["error"]["code"], "duplicate_request_hash");
+    assert_eq!(
+        body["error"]["message"],
+        "The `request_hash` has already been used."
+    );
 }
 
 #[tokio::test]
@@ -547,7 +553,7 @@ async fn test_request_hash_is_released_if_request_fails() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(body["code"], "integrity_failed");
+    assert_eq!(body["error"]["code"], "integrity_failed");
 
     // Subsequent request succeeds (request hash is freed up)
     token_generation_request.bundle_identifier = BundleIdentifier::AndroidDevWorldApp;
@@ -627,8 +633,11 @@ async fn test_server_error_is_properly_logged() {
     assert_eq!(
         body,
         json!({
-            "code": "internal_server_error",
-            "details": "Internal server error. Please try again."
+            "allowRetry": true,
+            "error": {
+                "message": "Internal server error. Please try again.",
+                "code": "internal_server_error"
+            },
         })
     );
 
@@ -753,8 +762,11 @@ async fn test_apple_initial_attestation_e2e_success() {
     assert_eq!(
         response,
         json!({
-            "code": "invalid_initial_attestation",
-            "details": "This public key has already gone through initial attestation. Use assertion instead."
+            "allowRetry": false,
+            "error": {
+                "code": "invalid_initial_attestation",
+                "message": "This public key has already gone through initial attestation. Use assertion instead."
+            }
         })
     );
 }
@@ -796,8 +808,11 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
     assert_eq!(
         response,
         json!({
-            "code": "bad_request",
-            "details": "For initial attestations, `apple_assertion` and `apple_public_key` attributes are not allowed."
+            "allowRetry": false,
+            "error": {
+                "message": "For initial attestations, `apple_assertion` and `apple_public_key` attributes are not allowed.",
+                "code": "bad_request"
+            }
         })
     );
 }
@@ -952,8 +967,11 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
     assert_eq!(
         response,
         json!({
-            "code": "invalid_token",
-            "details": "The provided token or attestation is invalid or malformed."
+            "allowRetry": false,
+            "error": {
+                "message": "The provided token or attestation is invalid or malformed.",
+                "code": "invalid_token"
+            }
         })
     );
 }
@@ -1013,8 +1031,11 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
     assert_eq!(
         response,
         json!({
-            "code": "invalid_token",
-            "details": "The provided token or attestation is invalid or malformed."
+            "allowRetry": false,
+            "error": {
+                "message": "The provided token or attestation is invalid or malformed.",
+                "code": "invalid_token"
+            }
         })
     );
 }
@@ -1056,8 +1077,11 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
     assert_eq!(
         body,
         json!({
-            "code": "bad_request",
-            "details": "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
+            "allowRetry": false,
+            "error": {
+                "code": "bad_request",
+                "message": "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
+            }
         })
     );
 }
@@ -1099,8 +1123,11 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
     assert_eq!(
         body,
         json!({
-            "code": "invalid_public_key",
-            "details": "Public key has not been attested."
+            "allowRetry": false,
+            "error": {
+                "code": "invalid_public_key",
+                "message": "Public key has not been attested."
+            }
         })
     );
 }
@@ -1160,8 +1187,11 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
     assert_eq!(
         response,
         json!({
-            "code": "invalid_token",
-            "details": "The provided token or attestation is invalid or malformed."
+            "allowRetry": false,
+            "error": {
+                "message": "The provided token or attestation is invalid or malformed.",
+                "code": "invalid_token"
+            }
         })
     );
 }
@@ -1220,8 +1250,11 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
     assert_eq!(
         response,
         json!({
-            "code": "invalid_attestation_for_app",
-            "details": "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object."
+            "allowRetry": false,
+            "error": {
+                "message": "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object.",
+                "code": "invalid_attestation_for_app"
+            }
         })
     );
 }
@@ -1295,8 +1328,11 @@ async fn test_apple_token_generation_with_invalid_counter() {
     assert_eq!(
         response,
         json!({
-            "code": "expired_token",
-            "details": "The integrity token has expired. Please generate a new one."
+            "allowRetry": false,
+            "error": {
+                "message": "The integrity token has expired. Please generate a new one.",
+                "code": "expired_token"
+            },
         })
     );
 }
@@ -1427,7 +1463,7 @@ async fn test_apple_counter_race_condition() {
                     StatusCode::BAD_REQUEST => {
                         let response = response.into_body().collect().await.unwrap().to_bytes();
                         let response: Value = serde_json::from_slice(&response).unwrap();
-                        response["code"].as_str().unwrap().to_string()
+                        response["error"]["code"].as_str().unwrap().to_string()
                     }
                     _ => panic!("Unexpected status code: {:?}", code),
                 };
