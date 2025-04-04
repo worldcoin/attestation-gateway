@@ -1,6 +1,6 @@
 use std::{io::Cursor, str::FromStr};
 
-use crate::utils::{BundleIdentifier, ClientError, ErrorCode, VerificationOutput};
+use crate::utils::{BundleIdentifier, ClientException, ErrorCode, VerificationOutput};
 use base64::{engine::general_purpose, Engine as _};
 use der_parser::parse_der;
 use dynamo::{fetch_apple_public_key, update_apple_public_key_counter_plus};
@@ -59,7 +59,7 @@ pub async fn verify_initial_attestation(
     Ok(VerificationOutput {
         success: true,
         parsed_play_integrity_token: None,
-        client_error: None,
+        client_exception: None,
     })
 }
 
@@ -85,7 +85,7 @@ pub async fn verify(
     .await?;
 
     if &key.bundle_identifier != bundle_identifier {
-        eyre::bail!(ClientError {
+        eyre::bail!(ClientException {
             code: ErrorCode::InvalidPublicKey,
             internal_debug_info: "the key_id is not valid for this bundle identifier".to_string(),
         });
@@ -113,7 +113,7 @@ pub async fn verify(
     Ok(VerificationOutput {
         success: true,
         parsed_play_integrity_token: None,
-        client_error: None,
+        client_exception: None,
     })
 }
 
@@ -199,7 +199,7 @@ fn decode_and_validate_initial_attestation(
         .decode(apple_initial_attestation)
         .map_err(|e| {
             tracing::debug!(error = ?e, "error decoding base64 encoded attestation.");
-            eyre::eyre!(ClientError {
+            eyre::eyre!(ClientException {
                 code: ErrorCode::InvalidToken,
                 internal_debug_info: "error decoding base64 encoded attestation.".to_string(),
             })
@@ -209,7 +209,7 @@ fn decode_and_validate_initial_attestation(
 
     let attestation: Attestation = ciborium::from_reader(cursor).map_err(|e| {
         tracing::debug!(error = ?e, "error decoding cbor formatted attestation.");
-        eyre::eyre!(ClientError {
+        eyre::eyre!(ClientException {
             code: ErrorCode::InvalidToken,
             internal_debug_info: "error decoding cbor formatted attestation.".to_string(),
         })
@@ -242,7 +242,7 @@ fn decode_and_validate_initial_attestation(
     let attested_nonce = value.as_slice()?;
 
     if nonce != attested_nonce {
-        eyre::bail!(ClientError {
+        eyre::bail!(ClientException {
             code: ErrorCode::IntegrityFailed,
             internal_debug_info: "nonce in attestation object does not match provided nonce."
                 .to_string(),
@@ -261,7 +261,7 @@ fn decode_and_validate_initial_attestation(
     let hashed_app_id: &[u8] = &hasher.finish();
 
     if rp_id != hashed_app_id {
-        eyre::bail!(ClientError {
+        eyre::bail!(ClientException {
             code: ErrorCode::InvalidAttestationForApp,
             internal_debug_info: "expected `app_id` for bundle identifier and `rp_id` from attestation object do not match."
                 .to_string(),
@@ -272,7 +272,7 @@ fn decode_and_validate_initial_attestation(
     let counter = u32::from_be_bytes(attestation.auth_data.clone()[33..37].try_into()?);
 
     if counter > 0 {
-        eyre::bail!(ClientError {
+        eyre::bail!(ClientException {
             code: ErrorCode::IntegrityFailed,
             internal_debug_info: "counter larger than 0".to_string(),
         });
@@ -282,7 +282,7 @@ fn decode_and_validate_initial_attestation(
     let aaguid = AAGUID::from_str(std::str::from_utf8(&attestation.auth_data.clone()[37..53])?)?;
 
     if !allowed_aaguid.contains(&aaguid) {
-        eyre::bail!(ClientError {
+        eyre::bail!(ClientException {
             code: ErrorCode::InvalidAttestationForApp,
             internal_debug_info: "unexpected `AAGUID` for bundle identifier.".to_string(),
         });
@@ -295,7 +295,7 @@ fn decode_and_validate_initial_attestation(
     let hashed_public_key: &[u8] = &hasher.finish();
 
     if hashed_public_key != credential_id {
-        eyre::bail!(ClientError {
+        eyre::bail!(ClientException {
             code: ErrorCode::IntegrityFailed,
             internal_debug_info: "hashed public key and credential_id do not match.".to_string(),
         });
@@ -365,7 +365,7 @@ fn decode_and_validate_assertion(
     last_counter: u32,
 ) -> eyre::Result<u32> {
     let assertion_bytes = general_purpose::STANDARD.decode(assertion).map_err(|_| {
-        eyre::eyre!(ClientError {
+        eyre::eyre!(ClientException {
             code: ErrorCode::InvalidToken,
             internal_debug_info: "error decoding base64 encoded assertion.".to_string(),
         })
@@ -390,7 +390,7 @@ fn decode_and_validate_assertion(
     let mut verifier = Verifier::new(MessageDigest::sha256(), &public_key)?;
     verifier.update(nonce)?;
     if !verifier.verify(&assertion.signature)? {
-        eyre::bail!(ClientError {
+        eyre::bail!(ClientException {
             code: ErrorCode::InvalidToken,
             internal_debug_info:
                 "signature failed validation for public key (request_hash may be wrong)".to_string(),
@@ -404,7 +404,7 @@ fn decode_and_validate_assertion(
     let hashed_app_id: &[u8] = &hasher.finish();
 
     if rp_id != hashed_app_id {
-        eyre::bail!(ClientError {
+        eyre::bail!(ClientException {
             code: ErrorCode::InvalidAttestationForApp,
             internal_debug_info: "expected `app_id` for bundle identifier and `rp_id` from assertion object do not match."
                 .to_string(),
@@ -415,7 +415,7 @@ fn decode_and_validate_assertion(
     let counter = u32::from_be_bytes(assertion.authenticator_data.clone()[33..37].try_into()?);
 
     if counter <= last_counter {
-        eyre::bail!(ClientError {
+        eyre::bail!(ClientException {
             code: ErrorCode::ExpiredToken,
             internal_debug_info: "last_counter is greater than provided counter.".to_string(),
         });

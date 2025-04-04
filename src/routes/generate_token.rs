@@ -10,7 +10,7 @@ use crate::{
     kinesis::send_kinesis_stream_event,
     kms_jws,
     utils::{
-        handle_redis_error, BundleIdentifier, ClientError, DataReport, ErrorCode, GlobalConfig,
+        handle_redis_error, BundleIdentifier, ClientException, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
         TokenGenerationRequest, TokenGenerationResponse,
     },
@@ -81,15 +81,15 @@ pub async fn handler(
     )
     .await
     .map_err(|e| {
-        // Check if we have a ClientError in the error chain and return to the client without further logging
-        if let Some(client_error) = e.downcast_ref::<ClientError>() {
+        // Check if we have a `ClientException` in the error chain and return to the client without further logging
+        if let Some(client_error) = e.downcast_ref::<ClientException>() {
             if global_config.log_client_errors {
-                tracing::warn!(error = ?e, "Client failure verifying Android or Apple integrity");
+                tracing::warn!(error = ?e, "Client exception verifying Android or Apple integrity");
             }else {
-                tracing::debug!(error = ?e, "Client failure verifying Android or Apple integrity");
+                tracing::debug!(error = ?e, "Client exception verifying Android or Apple integrity");
             }
 
-            metrics::counter!("generate_token.client_error",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string()).increment(1);
+            metrics::counter!("generate_token.client_exception",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string()).increment(1);
 
             return RequestError {
                 code: client_error.code,
@@ -229,7 +229,7 @@ async fn verify_android_or_apple_integrity(
         OutEnum::Fail
     };
     report.internal_debug_info = verify_result
-        .client_error
+        .client_exception
         .map(|err| err.internal_debug_info);
 
     Ok(report)

@@ -273,17 +273,17 @@ impl IntegrityVerificationInput {
     }
 }
 
-/// Represents an error that is attributable to the client and represents expected behavior for the API.
+/// Represents an exception that is attributable to the client and represents expected behavior for the API.
 ///
-/// For example, when an expired integrity token is passed.
-/// `ClientError`s are not logged by default and result in a 4xx status code.
+/// For example, when an expired integrity token is passed or when an invalid request is made.
+/// `ClientException`s are not logged by default and result in a 4xx status code.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClientError {
+pub struct ClientException {
     pub code: ErrorCode,
     pub internal_debug_info: String,
 }
 
-impl Display for ClientError {
+impl Display for ClientException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -435,7 +435,7 @@ impl Display for OutEnum {
 pub struct VerificationOutput {
     pub success: bool,
     pub parsed_play_integrity_token: Option<PlayIntegrityToken>,
-    pub client_error: Option<ClientError>,
+    pub client_exception: Option<ClientException>,
 }
 
 /// `DataReport` is used to serialize the output logged to Kinesis for analytics and debugging purposes.
