@@ -1562,13 +1562,16 @@ async fn test_client_error_gets_logged_to_kinesis() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
 
-    // assert_eq!(
-    //     body,
-    //     json!({
-    //         "code": "bad_request",
-    //         "details": "Missing integrity token."
-    //     })
-    // );
+    assert_eq!(
+        body,
+        json!({
+            "allowRetry": false,
+            "error": {
+                "code": "integrity_failed",
+                "message": "Integrity checks have not passed."
+            }
+        })
+    );
 
     let response = kinesis_client
         .get_records()
