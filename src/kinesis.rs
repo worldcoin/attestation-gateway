@@ -17,7 +17,7 @@ pub async fn send_kinesis_stream_event(
     let payload_bytes = to_vec(data_report)?;
 
     // Send the serialized data to Kinesis
-    kinesis_client
+    let result = kinesis_client
         .put_record()
         .stream_arn(stream_arn)
         .partition_key(partition_key)
@@ -25,5 +25,6 @@ pub async fn send_kinesis_stream_event(
         .send()
         .await?;
 
+    dbg!(&result);
     Ok(())
 }

@@ -199,6 +199,11 @@ pub enum IntegrityVerificationInput {
         apple_assertion: String,
         apple_public_key: String,
     },
+    /// Represents the state where a `client_error` is passed from the client, indicating a failure with upstream services.
+    /// Under normal circumstances, this is simply logged for analytics and the request is rejected.
+    ClientError {
+        client_error: String,
+    },
 }
 
 impl IntegrityVerificationInput {
@@ -210,6 +215,10 @@ impl IntegrityVerificationInput {
     /// # Panics
     /// No panics expected.
     pub fn from_request(request: &TokenGenerationRequest) -> Result<Self, RequestError> {
+        if let Some(client_error) = request.client_error.clone() {
+            return Ok(Self::ClientError { client_error });
+        }
+
         match request.bundle_identifier.platform() {
             Platform::Android => {
                 if request.integrity_token.is_none() {
@@ -383,7 +392,7 @@ impl ErrorCode {
     }
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum OutEnum {
     Pass,
     Fail,
@@ -407,7 +416,7 @@ pub struct VerificationOutput {
 
 /// `DataReport` is used to serialize the output logged to Kinesis for analytics and debugging purposes.
 /// The `request_hash` has a retention period of 30 days.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataReport {
     pub pass: bool,
@@ -420,6 +429,29 @@ pub struct DataReport {
     pub internal_debug_info: Option<String>,
     pub play_integrity: Option<PlayIntegrityToken>,
     // apple_device_check: None,
+}
+
+impl DataReport {
+    #[must_use]
+    pub fn from_client_error(
+        client_error: String,
+        request_hash: String,
+        bundle_identifier: BundleIdentifier,
+        aud: String,
+        internal_debug_info: Option<String>,
+    ) -> Self {
+        Self {
+            pass: false,
+            out: OutEnum::Fail,
+            client_error: Some(client_error),
+            request_hash,
+            timestamp: SystemTime::now(),
+            bundle_identifier,
+            aud,
+            internal_debug_info,
+            play_integrity: None,
+        }
+    }
 }
 
 #[derive(Debug)]
