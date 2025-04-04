@@ -179,7 +179,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.6.0",
  "josekit",
- "metrics 0.24.1",
+ "metrics",
  "metrics-exporter-statsd",
  "mime",
  "openssl",
@@ -856,9 +856,9 @@ dependencies = [
 
 [[package]]
 name = "cadence"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f338b979d9ebfff4bb9801ae8f3af0dc3615f7f1ca963f2e4782bcf9acb3753"
+checksum = "62fd689c825a93386a2ac05a46f88342c6df9ec3e79416f665650614e92e7475"
 dependencies = [
  "crossbeam-channel",
 ]
@@ -1986,16 +1986,6 @@ checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
 name = "metrics"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "884adb57038347dfbaf2d5065887b6cf4312330dc8e94bc30a1a839bd79d3261"
-dependencies = [
- "ahash",
- "portable-atomic",
-]
-
-[[package]]
-name = "metrics"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a7deb012b3b2767169ff203fadb4c6b0b82b947512e5eb9e0b78c2e186ad9e3"
@@ -2006,12 +1996,12 @@ dependencies = [
 
 [[package]]
 name = "metrics-exporter-statsd"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0905009f54328c743a2046a86c88157621f473a2202cfa922cb716615c4b292"
+checksum = "57971e32cdee88619fb6c673fd89cfd37c12f2dd7c187fb400b7aae0ede0ed9e"
 dependencies = [
  "cadence",
- "metrics 0.23.0",
+ "metrics",
  "thiserror",
 ]
 
