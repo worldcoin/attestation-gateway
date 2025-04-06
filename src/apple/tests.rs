@@ -377,8 +377,8 @@ fn test_verify_initial_attestation_failure_on_invalid_attestation() {
     )
     .unwrap_err();
 
-    // NOTE: We particularly want to make sure this returns a `ClientError` as this indicates an invalid token was provided
-    let result = result.downcast_ref::<ClientError>().unwrap();
+    // NOTE: We particularly want to make sure this returns a `ClientException` as this indicates an invalid token was provided
+    let result = result.downcast_ref::<ClientException>().unwrap();
 
     assert_eq!(result.code, ErrorCode::InvalidToken);
     assert_eq!(
@@ -400,7 +400,7 @@ fn test_verify_initial_attestation_failure_on_invalid_cbor_message() {
     )
     .unwrap_err();
 
-    let result = result.downcast_ref::<ClientError>().unwrap();
+    let result = result.downcast_ref::<ClientException>().unwrap();
 
     assert_eq!(result.code, ErrorCode::InvalidToken);
     assert_eq!(
@@ -419,7 +419,7 @@ fn test_verify_initial_attestation_failure_nonce_mismatch() {
     )
     .unwrap_err();
 
-    let result = result.downcast_ref::<ClientError>().unwrap();
+    let result = result.downcast_ref::<ClientException>().unwrap();
     assert_eq!(result.code, ErrorCode::IntegrityFailed);
     assert_eq!(
         result.internal_debug_info,
@@ -437,7 +437,7 @@ fn test_verify_initial_attestation_failure_app_id_mismatch() {
     )
     .unwrap_err();
 
-    let result = result.downcast_ref::<ClientError>().unwrap();
+    let result = result.downcast_ref::<ClientException>().unwrap();
     assert_eq!(result.code, ErrorCode::InvalidAttestationForApp);
     assert_eq!(
         result.internal_debug_info,
@@ -456,7 +456,7 @@ fn test_verify_initial_attestation_failure_aaguid_mismatch() {
     )
     .unwrap_err();
 
-    let result = result.downcast_ref::<ClientError>().unwrap();
+    let result = result.downcast_ref::<ClientException>().unwrap();
     assert_eq!(result.code, ErrorCode::InvalidAttestationForApp);
     assert_eq!(
         result.internal_debug_info,
@@ -538,7 +538,7 @@ fn verify_assertion_failure_with_invalid_counter() {
         1,
     ).unwrap_err();
 
-    let result = result.downcast_ref::<ClientError>().unwrap();
+    let result = result.downcast_ref::<ClientException>().unwrap();
 
     assert_eq!(result.code, ErrorCode::ExpiredToken);
     assert_eq!(
@@ -560,7 +560,7 @@ fn verify_assertion_failure_with_invalid_hash() {
         0,
     ).unwrap_err();
 
-    let result = result.downcast_ref::<ClientError>().unwrap();
+    let result = result.downcast_ref::<ClientException>().unwrap();
 
     assert_eq!(result.code, ErrorCode::InvalidToken);
     assert_eq!(
@@ -619,7 +619,7 @@ fn verify_assertion_failure_with_invalid_key() {
     )
     .unwrap_err();
 
-    let result = result.downcast_ref::<ClientError>().unwrap();
+    let result = result.downcast_ref::<ClientException>().unwrap();
 
     assert_eq!(result.code, ErrorCode::InvalidToken);
     assert_eq!(
@@ -675,7 +675,7 @@ fn verify_assertion_failure_with_invalid_authenticator_data() {
     )
     .unwrap_err();
 
-    let result = result.downcast_ref::<ClientError>().unwrap();
+    let result = result.downcast_ref::<ClientException>().unwrap();
 
     // This error is returned because the first bytes of authenticator_data represent the App ID
     assert_eq!(result.code, ErrorCode::InvalidAttestationForApp);

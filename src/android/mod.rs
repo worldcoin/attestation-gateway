@@ -1,4 +1,4 @@
-use crate::utils::{BundleIdentifier, ClientError, ErrorCode, VerificationOutput};
+use crate::utils::{BundleIdentifier, ClientException, ErrorCode, VerificationOutput};
 use base64::Engine;
 pub use integrity_token_data::PlayIntegrityToken;
 use josekit::jwe::{self, A256KW};
@@ -28,12 +28,12 @@ pub fn verify(
     let validation_result = parsed_token.validate_all_claims(bundle_identifier, request_hash);
 
     if let Err(err) = validation_result {
-        if let Some(client_error) = err.downcast_ref::<ClientError>() {
+        if let Some(client_error) = err.downcast_ref::<ClientException>() {
             // We do this additional error handling to return the parsed token in the response and be able to log it for analytics purposes
             return Ok(VerificationOutput {
                 success: false,
                 parsed_play_integrity_token: Some(parsed_token),
-                client_error: Some(client_error.clone()),
+                client_exception: Some(client_error.clone()),
             });
         }
         return Err(err);
@@ -42,7 +42,7 @@ pub fn verify(
     Ok(VerificationOutput {
         success: true,
         parsed_play_integrity_token: Some(parsed_token),
-        client_error: None,
+        client_exception: None,
     })
 }
 
@@ -57,7 +57,7 @@ fn decrypt_outer_jwe(
     let decrypter = A256KW.decrypter_from_bytes(key)?;
 
     let (compact_jws, _) = jwe::deserialize_compact(integrity_token, &decrypter).map_err(|e| {
-        eyre::eyre!(ClientError {
+        eyre::eyre!(ClientException {
             code: ErrorCode::InvalidToken,
             internal_debug_info: format!("JWE failed decryption {e}"),
         })
@@ -88,7 +88,7 @@ fn verify_and_parse_inner_jws(
 mod tests {
 
     use super::{verify, verify_and_parse_inner_jws};
-    use crate::utils::{BundleIdentifier, ClientError, ErrorCode};
+    use crate::utils::{BundleIdentifier, ClientException, ErrorCode};
     use josekit::jwe::{self, JweHeader, A128KW, A256KW};
     use josekit::jws::{JwsHeader, ES256};
     use josekit::jwt::{self, JwtPayload};
@@ -130,8 +130,8 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(
-            error_report.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error_report.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::InvalidToken,
                 internal_debug_info:
                     "JWE failed decryption Invalid JWE format: Failed to unwrap key.".to_string()
@@ -165,8 +165,8 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(
-            error_report.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error_report.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::InvalidToken,
                 internal_debug_info: "JWE failed decryption Invalid JWE format: The JWE alg header claim is not A256KW: A128KW".to_string()
             }

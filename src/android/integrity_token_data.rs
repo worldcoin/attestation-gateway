@@ -4,7 +4,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use crate::utils::{BundleIdentifier, ClientError, ErrorCode};
+use crate::utils::{BundleIdentifier, ClientException, ErrorCode};
 
 const ALLOWED_TIMESTAMP_WINDOW: u64 = 10 * 60; // 10 minutes
 
@@ -151,7 +151,7 @@ impl PlayIntegrityToken {
     ///  Validates all relevant claims are validated to determine if the token passes the business rules for integrity.
     ///
     /// # Errors
-    /// - Returns a `ClientError` if business rules fail for the payload of the integrity token.
+    /// - Returns a `ClientException` if business rules fail for the payload of the integrity token.
     /// - Returns an `eyre::Error` if there are any unexpected issues verifying the token.
     pub fn validate_all_claims(
         &self,
@@ -183,7 +183,7 @@ impl PlayIntegrityToken {
     ) -> eyre::Result<()> {
         if self.request_details.request_package_name != bundle_identifier.to_string() {
             return Err(
-                eyre::eyre!(ClientError {
+                eyre::eyre!(ClientException {
                     code: ErrorCode::IntegrityFailed,
                     internal_debug_info: "Provided `bundle_identifier` does not match request_details.request_package_name".to_string(),
                 })
@@ -193,7 +193,7 @@ impl PlayIntegrityToken {
         let duration = SystemTime::now().duration_since(self.request_details.timestamp_millis)?;
 
         if duration.as_secs() > ALLOWED_TIMESTAMP_WINDOW {
-            return Err(eyre::eyre!(ClientError {
+            return Err(eyre::eyre!(ClientException {
                 code: ErrorCode::ExpiredToken,
                 internal_debug_info:
                     "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string(),
@@ -201,7 +201,7 @@ impl PlayIntegrityToken {
         }
 
         if self.request_details.nonce != request_hash {
-            return Err(eyre::eyre!(ClientError {
+            return Err(eyre::eyre!(ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info: "Provided `request_hash` does not match request_details.nonce"
                     .to_string(),
@@ -213,7 +213,7 @@ impl PlayIntegrityToken {
 
     fn validate_app_integrity(&self, bundle_identifier: &BundleIdentifier) -> eyre::Result<()> {
         if self.app_integrity.package_name != bundle_identifier.to_string() {
-            return Err(eyre::eyre!(ClientError {
+            return Err(eyre::eyre!(ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
                     "Provided `bundle_identifier` does not match app_integrity.package_name"
@@ -224,7 +224,7 @@ impl PlayIntegrityToken {
         if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
             // Only in Production: App should come from Play Store
             if self.app_integrity.app_recognition_verdict != AppIntegrityVerdict::PlayRecognized {
-                return Err(eyre::eyre!(ClientError {
+                return Err(eyre::eyre!(ClientException {
                     code: ErrorCode::IntegrityFailed,
                     internal_debug_info: "AppIntegrityVerdict does not match PlayRecognized"
                         .to_string(),
@@ -238,7 +238,7 @@ impl PlayIntegrityToken {
                 .certificate_sha_256_digest
                 .contains(&digest.to_string())
             {
-                return Err(eyre::eyre!(ClientError {
+                return Err(eyre::eyre!(ClientException {
                     code: ErrorCode::IntegrityFailed,
                     internal_debug_info:
                         "certificate_sha_256_digest does not match the expected value".to_string(),
@@ -257,7 +257,7 @@ impl PlayIntegrityToken {
             .device_recognition_verdict
             .contains(&"MEETS_DEVICE_INTEGRITY".to_string())
         {
-            return Err(eyre::eyre!(ClientError {
+            return Err(eyre::eyre!(ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
                     "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY".to_string(),
@@ -270,7 +270,7 @@ impl PlayIntegrityToken {
         if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
             // Only in Production: App should come from Play Store
             if self.account_details.app_licensing_verdict != AppLicensingVerdict::Licensed {
-                return Err(eyre::eyre!(ClientError {
+                return Err(eyre::eyre!(ClientException {
                     code: ErrorCode::IntegrityFailed,
                     internal_debug_info: "AppLicensingVerdict does not match LICENSED".to_string(),
                 }));
@@ -285,7 +285,7 @@ impl PlayIntegrityToken {
     ) -> eyre::Result<()> {
         if let Some(value) = &self.environment_details {
             if value.play_protect_verdict == Some(PlayProtectVerdict::HighRisk) {
-                return Err(eyre::eyre!(ClientError {
+                return Err(eyre::eyre!(ClientException {
                     code: ErrorCode::IntegrityFailed,
                     internal_debug_info: "PlayProtectVerdict reported as HighRisk".to_string(),
                 }));
@@ -300,7 +300,7 @@ impl PlayIntegrityToken {
                 // https://developer.android.com/google/play/integrity/verdicts#environment-details-fields:
                 // "appAccessRiskVerdict: {}" => "App access risk is not evaluated because a necessary
                 // requirement was missed. For example, the device was not trustworthy enough."
-                return Err(eyre::eyre!(ClientError {
+                return Err(eyre::eyre!(ClientException {
                     code: ErrorCode::IntegrityFailed,
                     internal_debug_info: "app_access_risk_verdict.apps_detected is None"
                         .to_string(),
@@ -408,7 +408,7 @@ mod tests {
 
         let client_error = result
             .expect_err("Expected an error, but got success")
-            .downcast::<ClientError>()
+            .downcast::<ClientException>()
             .expect("Unexpected non-client error");
 
         assert_eq!(client_error.code, ErrorCode::IntegrityFailed);
@@ -455,8 +455,8 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(
-            error.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info: "Provided `bundle_identifier` does not match request_details.request_package_name".to_string(),
             }
@@ -469,8 +469,8 @@ mod tests {
             .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "valid_nonce")
             .unwrap_err();
         assert_eq!(
-            error.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::ExpiredToken,
                 internal_debug_info:
                     "The timestamp_millis of the token is older than the TOKEN_MAX_AGE".to_string()
@@ -482,8 +482,8 @@ mod tests {
             .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "invalid_nonce")
             .unwrap_err();
         assert_eq!(
-            error.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info: "Provided `request_hash` does not match request_details.nonce"
                     .to_string()
@@ -505,8 +505,8 @@ mod tests {
             .validate_app_integrity(&BundleIdentifier::AndroidProdWorldApp)
             .unwrap_err();
         assert_eq!(
-            error.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
                     "Provided `bundle_identifier` does not match app_integrity.package_name"
@@ -522,8 +522,8 @@ mod tests {
             .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
             .unwrap_err();
         assert_eq!(
-            error.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info: "certificate_sha_256_digest does not match the expected value"
                     .to_string()
@@ -543,8 +543,8 @@ mod tests {
         invalid_token.device_integrity.device_recognition_verdict = vec![];
         let error = invalid_token.validate_device_integrity().unwrap_err();
         assert_eq!(
-            error.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
                     "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY".to_string()
@@ -567,8 +567,8 @@ mod tests {
             .validate_account_details(&bundle_identifier)
             .unwrap_err();
         assert_eq!(
-            error.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info: "AppLicensingVerdict does not match LICENSED".to_string(),
             }
@@ -597,8 +597,8 @@ mod tests {
             .validate_environment_details(&bundle_identifier)
             .unwrap_err();
         assert_eq!(
-            error.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info: "PlayProtectVerdict reported as HighRisk".to_string(),
             }
@@ -623,8 +623,8 @@ mod tests {
             .validate_environment_details(&bundle_identifier)
             .unwrap_err();
         assert_eq!(
-            error.downcast::<ClientError>().unwrap(),
-            ClientError {
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info: "app_access_risk_verdict.apps_detected is None".to_string(),
             }

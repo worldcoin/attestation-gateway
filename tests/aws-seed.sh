@@ -12,3 +12,6 @@ awslocal dynamodb create-table \
     --attribute-definitions AttributeName=key_id,AttributeType=S \
     --billing-mode PAY_PER_REQUEST \
     --region us-east-1
+
+# Kinesis stream
+awslocal kinesis create-stream --stream-name attestation-gateway-data-reports --shard-count 1

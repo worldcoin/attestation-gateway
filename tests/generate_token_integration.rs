@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 use attestation_gateway::{
     apple,
     keys::fetch_active_key,
-    utils::{BundleIdentifier, TokenGenerationRequest},
+    utils::{BundleIdentifier, DataReport, TokenGenerationRequest},
 };
 use aws_sdk_dynamodb::types::AttributeValue;
+use aws_sdk_kinesis::types::ShardIteratorType;
 use axum::{
     body::Body,
     http::{self, Request, StatusCode},
@@ -80,7 +81,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         enabled_bundle_identifiers: vec![BundleIdentifier::AndroidStageWorldApp, BundleIdentifier::AndroidDevWorldApp, BundleIdentifier::IOSStageWorldApp, BundleIdentifier::IOSProdWorldApp],
         log_client_errors: false,
-        kinesis_stream_arn: None,
+        kinesis_stream_arn: Some("arn:aws:kinesis:us-east-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
     };
     Extension(config)
 }
@@ -1496,4 +1497,107 @@ async fn test_apple_counter_race_condition() {
         .filter(|&code| code == "expired_token")
         .count();
     assert_eq!(count_expired, num_calls - 1);
+}
+
+// SECTION --- general failure cases ---
+
+#[tokio::test]
+#[serial]
+async fn test_client_error_gets_logged_to_kinesis() {
+    let api_router = get_api_router().await;
+
+    let kinesis_client = get_kinesis_extension().await;
+    let kinesis_stream_arn =
+        "arn:aws:kinesis:us-east-1:000000000000:stream/attestation-gateway-data-reports";
+
+    let shard_id = kinesis_client
+        .describe_stream()
+        .stream_arn(kinesis_stream_arn)
+        .send()
+        .await
+        .unwrap()
+        .stream_description
+        .unwrap()
+        .shards[0]
+        .shard_id
+        .clone();
+
+    let shard_iterator = kinesis_client
+        .get_shard_iterator()
+        .stream_arn(kinesis_stream_arn)
+        .shard_id(shard_id)
+        .shard_iterator_type(ShardIteratorType::Latest)
+        .send()
+        .await
+        .unwrap()
+        .shard_iterator
+        .unwrap();
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None, // note the missing token
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        request_hash: "i_am_a_sample_request_hash".to_string(),
+        client_error: Some("play_integrity_api_is_down".to_string()),
+        apple_initial_attestation: None,
+        apple_public_key: None,
+        apple_assertion: None,
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(
+        body,
+        json!({
+            "allowRetry": false,
+            "error": {
+                "code": "integrity_failed",
+                "message": "Integrity checks have not passed."
+            }
+        })
+    );
+
+    let response = kinesis_client
+        .get_records()
+        .shard_iterator(shard_iterator)
+        .stream_arn(kinesis_stream_arn)
+        .send()
+        .await
+        .unwrap();
+
+    let record = response.records[0].clone();
+    assert_eq!(record.partition_key, "request_hash");
+    let record_body = String::from_utf8(record.data.into_inner()).unwrap();
+
+    let data_report: DataReport = serde_json::from_str(&record_body).unwrap();
+
+    assert_eq!(
+        data_report.client_error,
+        Some("play_integrity_api_is_down".to_string())
+    );
+    assert!(!data_report.pass);
+    assert_eq!(
+        data_report.bundle_identifier,
+        BundleIdentifier::AndroidStageWorldApp
+    );
+    assert_eq!(
+        data_report.request_hash,
+        "i_am_a_sample_request_hash".to_string()
+    );
 }

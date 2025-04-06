@@ -1,11 +1,11 @@
 use aws_sdk_dynamodb::{operation::get_item::GetItemOutput, types::AttributeValue};
 
-use crate::utils::{BundleIdentifier, ClientError, ErrorCode};
+use crate::utils::{BundleIdentifier, ClientException, ErrorCode};
 
 /// Insert a new attested public key into the `DynamoDB` table
 ///
 /// # Errors
-/// Will return a `ClientError` if the `key_id` is already registered in the DB.
+/// Will return a `ClientException` if the `key_id` is already registered in the DB.
 /// Returns an `aws_sdk_dynamodb::Error` if the request fails.
 pub async fn insert_apple_public_key(
     aws_config: &aws_config::SdkConfig,
@@ -43,7 +43,7 @@ pub async fn insert_apple_public_key(
     if let Err(e) = response {
         let e = e.into_service_error();
         if e.is_conditional_check_failed_exception() {
-            eyre::bail!(ClientError {
+            eyre::bail!(ClientException {
                 code: ErrorCode::InvalidInitialAttestation,
                 internal_debug_info: "the attested apple key ID is already registered in DB"
                     .to_string(),
@@ -101,7 +101,7 @@ impl ApplePublicKeyRecordOutput {
                 })
             }
             None => {
-                eyre::bail!(ClientError {
+                eyre::bail!(ClientException {
                     code: ErrorCode::InvalidPublicKey,
                     internal_debug_info: "the key_id was not found in Dynamo".to_string(),
                 });
@@ -113,7 +113,7 @@ impl ApplePublicKeyRecordOutput {
 /// Fetches an Apple public key from the relevant table
 ///
 /// # Errors
-/// Will return a `ClientError` if the `key_id` is not found in the DB.
+/// Will return a `ClientException` if the `key_id` is not found in the DB.
 /// Returns an `aws_sdk_dynamodb::Error` if the request fails.
 pub async fn fetch_apple_public_key(
     aws_config: &aws_config::SdkConfig,
@@ -172,7 +172,7 @@ pub async fn update_apple_public_key_counter_plus(
         Err(e) => {
             let service_error = e.into_service_error();
             if service_error.is_conditional_check_failed_exception() {
-                eyre::bail!(ClientError {
+                eyre::bail!(ClientException {
                     code: ErrorCode::ExpiredToken,
                     internal_debug_info:
                         "Counter has already been used in Dynamo, race condition prevented."

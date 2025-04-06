@@ -10,7 +10,7 @@ use crate::{
     kinesis::send_kinesis_stream_event,
     kms_jws,
     utils::{
-        handle_redis_error, BundleIdentifier, ClientError, DataReport, ErrorCode, GlobalConfig,
+        handle_redis_error, BundleIdentifier, ClientException, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
         TokenGenerationRequest, TokenGenerationResponse,
     },
@@ -36,9 +36,18 @@ pub async fn handler(
         "generate_token",
         request_hash = request_hash
     );
+
     let _enter = my_span.enter();
 
     let integrity_verification_input = IntegrityVerificationInput::from_request(&request)?;
+
+    handle_client_error_if_applicable(
+        &integrity_verification_input,
+        &request,
+        &kinesis_client,
+        global_config.kinesis_stream_arn.as_deref().unwrap_or(""),
+    )
+    .await?;
 
     if !global_config
         .enabled_bundle_identifiers
@@ -52,19 +61,8 @@ pub async fn handler(
 
     metrics::counter!("generate_token",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
 
-    let request_hash_lock_options = SetOptions::default()
-        .conditional_set(ExistenceCheck::NX)
-        .with_expiration(SetExpiry::EX(REQUEST_HASH_CACHE_TTL));
-
-    let lock_set = redis
-        .set_options::<String, bool, bool>(
-            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:}", request_hash.clone()),
-            true,
-            request_hash_lock_options,
-        )
-        .await
-        .map_err(handle_redis_error)?;
-
+    // Lock the `request_hash` in Redis to prevent duplicate requests and race conditions
+    let lock_set = set_redis_lock(request_hash.clone(), &mut redis).await?;
     if !lock_set {
         return Err(RequestError {
             code: ErrorCode::DuplicateRequestHash,
@@ -74,7 +72,7 @@ pub async fn handler(
 
     let report = verify_android_or_apple_integrity(
         integrity_verification_input,
-        request.request_hash,
+        request_hash.clone(),
         request.bundle_identifier.clone(),
         &request.aud,
         request.client_error,
@@ -83,15 +81,15 @@ pub async fn handler(
     )
     .await
     .map_err(|e| {
-        // Check if we have a ClientError in the error chain and return to the client without further logging
-        if let Some(client_error) = e.downcast_ref::<ClientError>() {
+        // Check if we have a `ClientException` in the error chain and return to the client without further logging
+        if let Some(client_error) = e.downcast_ref::<ClientException>() {
             if global_config.log_client_errors {
-                tracing::warn!(error = ?e, "Client failure verifying Android or Apple integrity");
+                tracing::warn!(error = ?e, "Client exception verifying Android or Apple integrity");
             }else {
-                tracing::debug!(error = ?e, "Client failure verifying Android or Apple integrity");
+                tracing::debug!(error = ?e, "Client exception verifying Android or Apple integrity");
             }
 
-            metrics::counter!("generate_token.client_error",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string()).increment(1);
+            metrics::counter!("generate_token.client_exception",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string()).increment(1);
 
             return RequestError {
                 code: client_error.code,
@@ -137,6 +135,26 @@ pub async fn handler(
     metrics::counter!("generate_token.success",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
 
     Ok(Json(response))
+}
+
+async fn set_redis_lock(
+    request_hash: String,
+    redis: &mut ConnectionManager,
+) -> Result<bool, RequestError> {
+    let request_hash_lock_options = SetOptions::default()
+        .conditional_set(ExistenceCheck::NX)
+        .with_expiration(SetExpiry::EX(REQUEST_HASH_CACHE_TTL));
+
+    let lock_set = redis
+        .set_options::<String, bool, bool>(
+            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:}", request_hash.clone()),
+            true,
+            request_hash_lock_options,
+        )
+        .await
+        .map_err(handle_redis_error)?;
+
+    Ok(lock_set)
 }
 
 async fn verify_android_or_apple_integrity(
@@ -197,6 +215,10 @@ async fn verify_android_or_apple_integrity(
             )
             .await?
         }
+
+        IntegrityVerificationInput::ClientError { client_error: _ } => {
+            eyre::bail!("Unexpected variant reached in verify_android_or_apple_integrity.");
+        }
     };
 
     report.play_integrity = verify_result.parsed_play_integrity_token;
@@ -207,7 +229,7 @@ async fn verify_android_or_apple_integrity(
         OutEnum::Fail
     };
     report.internal_debug_info = verify_result
-        .client_error
+        .client_exception
         .map(|err| err.internal_debug_info);
 
     Ok(report)
@@ -289,5 +311,40 @@ async fn release_request_hash(
         .del::<String, usize>(format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"))
         .await
         .map_err(handle_redis_error)?;
+    Ok(())
+}
+
+/// If the request comes with a `client_error` from the mobile apps, log it and return an integrity failed response. Note the request hash is not locked.
+async fn handle_client_error_if_applicable(
+    integrity_verification_input: &IntegrityVerificationInput,
+    request: &TokenGenerationRequest,
+    kinesis_client: &KinesisClient,
+    kinesis_stream_arn: &str,
+) -> Result<(), RequestError> {
+    if let IntegrityVerificationInput::ClientError { client_error } = integrity_verification_input {
+        let report = DataReport::from_client_error(
+            client_error.clone(),
+            request.request_hash.clone(),
+            request.bundle_identifier.clone(),
+            request.aud.clone(),
+            Some("`client_error` provided in the request".to_string()),
+        );
+
+        send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to send `client_error` to Kinesis: {:?}", e);
+                RequestError {
+                    code: ErrorCode::InternalServerError,
+                    details: None,
+                }
+            })?;
+
+        return Err(RequestError {
+            code: ErrorCode::IntegrityFailed,
+            details: None,
+        });
+    }
+
     Ok(())
 }
