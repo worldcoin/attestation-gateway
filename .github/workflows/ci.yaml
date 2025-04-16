@@ -19,7 +19,7 @@ jobs:
 
       - name: Set up Rust
         run: |
-          rustup update stable && rustup default stable
+          rustup update
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -70,7 +70,7 @@ jobs:
 
       - name: Set up Rust
         run: |
-          rustup update stable && rustup default stable
+          rustup update
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -166,4 +166,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - uses: EmbarkStudios/cargo-deny-action@v1
+      - name: Set up Rust
+        run: |
+          rustup update
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
