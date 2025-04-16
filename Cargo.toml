@@ -29,17 +29,22 @@ josekit = "0.10.0"
 metrics = "0.24.1"
 metrics-exporter-statsd = "0.9.0"
 openssl = "0.10.71"
-redis = { version = "0.29.1", features = ["tokio-comp", "connection-manager", "tokio-native-tls-comp"] }
+redis = { version = "0.29.1", features = [
+    "tokio-comp",
+    "connection-manager",
+    "tokio-native-tls-comp",
+] }
 regex = "1.11.0"
 schemars = "0.8.21"
 serde = { version = "1.0.210", features = ["derive"] }
 serde_bytes = "0.11.15"
 serde_json = "1.0.134"
-tokio = { version = "1.40.0", features = ["full"] }
+tokio = { version = "1.44.2", features = ["full"] }
 tower-http = { version = "0.5.2", features = ["trace", "timeout"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
-    "fmt","json"
+    "fmt",
+    "json",
 ] }
 x509-parser = "0.16.0"
 
