@@ -46,6 +46,7 @@ pub async fn handler(
         &request,
         &kinesis_client,
         global_config.kinesis_stream_arn.as_deref().unwrap_or(""),
+        global_config.log_client_errors,
     )
     .await?;
 
@@ -320,6 +321,7 @@ async fn handle_client_error_if_applicable(
     request: &TokenGenerationRequest,
     kinesis_client: &KinesisClient,
     kinesis_stream_arn: &str,
+    log_client_errors: bool,
 ) -> Result<(), RequestError> {
     if let IntegrityVerificationInput::ClientError { client_error } = integrity_verification_input {
         let report = DataReport::from_client_error(
@@ -339,6 +341,15 @@ async fn handle_client_error_if_applicable(
                     details: None,
                 }
             })?;
+
+        if log_client_errors {
+            tracing::warn!(
+                client_error = client_error,
+                bundle_identifier = ?request.bundle_identifier,
+                request_hash = ?request.request_hash,
+                "Client error provided in the request",
+            );
+        }
 
         return Err(RequestError {
             code: ErrorCode::IntegrityFailed,
