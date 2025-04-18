@@ -14,4 +14,4 @@ awslocal dynamodb create-table \
     --region eu-central-1
 
 # Kinesis stream
-awslocal kinesis create-stream --region eu-central-1 --stream-name attestation-gateway-data-reports --shard-count 1
+awslocal kinesis create-stream --region us-west-1 --stream-name attestation-gateway-data-reports --shard-count 1
