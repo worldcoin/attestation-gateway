@@ -11,7 +11,7 @@ use super::*;
 
 /// This key ID is set in `/tests/aws-seed.sh` & `.env.example`
 static TEST_KEY_ARN: &str =
-    "arn:aws:kms:us-east-1:000000000000:key/c7956b9c-5235-4e8e-bb35-7310fb80f4ca";
+    "arn:aws:kms:eu-central-1:000000000000:key/c7956b9c-5235-4e8e-bb35-7310fb80f4ca";
 
 async fn get_aws_config() -> aws_config::SdkConfig {
     // Required to load default AWS Config variables

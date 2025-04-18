@@ -145,7 +145,15 @@ impl PlayIntegrityToken {
     /// # Errors
     /// Will return a `serde_json` error if parsing fails.
     pub fn from_json(integrity_token_json_payload: &str) -> eyre::Result<Self> {
-        Ok(serde_json::from_str::<Self>(integrity_token_json_payload)?)
+        let parsed_json = serde_json::from_str::<Self>(integrity_token_json_payload);
+
+        if parsed_json.is_err() {
+            // Parsing failures for integrity tokens is unexpected because tokens are encrypted and signed,
+            // hence not a client request. The unparsed payload is logged to help debug and fix.
+            tracing::warn!(unparsed_integrity_token = ?integrity_token_json_payload, "JSON parsing failed for Android Play Integrity token.");
+        }
+
+        Ok(parsed_json?)
     }
 
     ///  Validates all relevant claims are validated to determine if the token passes the business rules for integrity.
