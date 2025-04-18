@@ -81,7 +81,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         enabled_bundle_identifiers: vec![BundleIdentifier::AndroidStageWorldApp, BundleIdentifier::AndroidDevWorldApp, BundleIdentifier::IOSStageWorldApp, BundleIdentifier::IOSProdWorldApp],
         log_client_errors: false,
-        kinesis_stream_arn: Some("arn:aws:kinesis:us-east-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
+        kinesis_stream_arn: Some("arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
     };
     Extension(config)
 }
@@ -1508,7 +1508,7 @@ async fn test_client_error_gets_logged_to_kinesis() {
 
     let kinesis_client = get_kinesis_extension().await;
     let kinesis_stream_arn =
-        "arn:aws:kinesis:us-east-1:000000000000:stream/attestation-gateway-data-reports";
+        "arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports";
 
     let shard_id = kinesis_client
         .describe_stream()
