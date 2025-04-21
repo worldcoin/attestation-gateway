@@ -20,9 +20,9 @@ pub struct RequestDetails {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppIntegrity {
-    pub package_name: String,
-    pub version_code: String,
-    pub certificate_sha_256_digest: Vec<String>,
+    pub package_name: Option<String>, // May be `None` for `UNEVALUATED` verdicts
+    pub version_code: Option<String>, // May be `None` for `UNEVALUATED` verdicts
+    pub certificate_sha_256_digest: Option<Vec<String>>, // May be `None` for `UNEVALUATED` verdicts
     pub app_recognition_verdict: AppIntegrityVerdict,
 }
 
@@ -35,7 +35,8 @@ pub struct RecentDeviceActivity {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceIntegrity {
-    pub device_recognition_verdict: Vec<String>,
+    pub device_recognition_verdict: Option<Vec<String>>,
+    // pub legacy_device_recognition_verdict: Option<Vec<String>>,
     pub recent_device_activity: Option<RecentDeviceActivity>,
 }
 
@@ -220,15 +221,6 @@ impl PlayIntegrityToken {
     }
 
     fn validate_app_integrity(&self, bundle_identifier: &BundleIdentifier) -> eyre::Result<()> {
-        if self.app_integrity.package_name != bundle_identifier.to_string() {
-            return Err(eyre::eyre!(ClientException {
-                code: ErrorCode::IntegrityFailed,
-                internal_debug_info:
-                    "Provided `bundle_identifier` does not match app_integrity.package_name"
-                        .to_string(),
-            }));
-        }
-
         if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
             // Only in Production: App should come from Play Store
             if self.app_integrity.app_recognition_verdict != AppIntegrityVerdict::PlayRecognized {
@@ -240,20 +232,53 @@ impl PlayIntegrityToken {
             }
         }
 
-        if let Some(digest) = bundle_identifier.certificate_sha256_digest() {
-            if !self
-                .app_integrity
-                .certificate_sha_256_digest
-                .contains(&digest.to_string())
-            {
+        if let Some(package_name) = &self.app_integrity.package_name {
+            if package_name != &bundle_identifier.to_string() {
                 return Err(eyre::eyre!(ClientException {
                     code: ErrorCode::IntegrityFailed,
                     internal_debug_info:
-                        "certificate_sha_256_digest does not match the expected value".to_string(),
+                        "Provided `bundle_identifier` does not match app_integrity.package_name"
+                            .to_string(),
                 }));
             }
         } else {
-            return Err(eyre::eyre!("certificate_sha_256_digest is None"));
+            // Application integrity was not evaluated. A necessary requirement was missed, such as the device not being trustworthy enough.
+            // Reference: <https://developer.android.com/google/play/integrity/verdicts#application-integrity-field>
+            let message =
+                if self.app_integrity.app_recognition_verdict == AppIntegrityVerdict::Unevaluated {
+                    "AppIntegrityVerdict is `UNEVALUATED`"
+                } else {
+                    "app_integrity.package_name is None"
+                };
+
+            return Err(eyre::eyre!(ClientException {
+                code: ErrorCode::IntegrityFailed,
+                internal_debug_info: message.to_string(),
+            }));
+        }
+
+        if let Some(digest) = bundle_identifier.certificate_sha256_digest() {
+            if let Some(certificate_sha_256_digest) = &self.app_integrity.certificate_sha_256_digest
+            {
+                if !certificate_sha_256_digest.contains(&digest.to_string()) {
+                    return Err(eyre::eyre!(ClientException {
+                        code: ErrorCode::IntegrityFailed,
+                        internal_debug_info:
+                            "certificate_sha_256_digest does not match the expected value"
+                                .to_string(),
+                    }));
+                }
+            } else {
+                return Err(eyre::eyre!(ClientException {
+                    code: ErrorCode::IntegrityFailed,
+                    internal_debug_info: "app_integrity.certificate_sha_256_digest is None"
+                        .to_string(),
+                }));
+            }
+        } else {
+            return Err(eyre::eyre!(
+                "bundle identifier certificate_sha_256_digest is None"
+            ));
         }
 
         Ok(())
@@ -263,6 +288,8 @@ impl PlayIntegrityToken {
         if !self
             .device_integrity
             .device_recognition_verdict
+            .clone()
+            .unwrap_or_default()
             .contains(&"MEETS_DEVICE_INTEGRITY".to_string())
         {
             return Err(eyre::eyre!(ClientException {
@@ -328,12 +355,12 @@ mod tests {
     fn create_test_token() -> PlayIntegrityToken {
         PlayIntegrityToken {
             app_integrity: AppIntegrity {
-                package_name: "com.worldcoin.staging".to_string(),
-                version_code: "25700".to_string(),
-                certificate_sha_256_digest: vec![
+                package_name: Some("com.worldcoin.staging".to_string()),
+                version_code: Some("25700".to_string()),
+                certificate_sha_256_digest: Some(vec![
                     // cspell:disable-next-line
                     "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8".to_string(),
-                ],
+                ]),
                 app_recognition_verdict: AppIntegrityVerdict::PlayRecognized,
             },
             account_details: AccountDetails {
@@ -345,7 +372,7 @@ mod tests {
                 request_package_name: "com.worldcoin.staging".to_string(),
             },
             device_integrity: DeviceIntegrity {
-                device_recognition_verdict: vec!["MEETS_DEVICE_INTEGRITY".to_string()],
+                device_recognition_verdict: Some(vec!["MEETS_DEVICE_INTEGRITY".to_string()]),
                 recent_device_activity: None,
             },
             environment_details: Some(EnvironmentDetails {
@@ -525,7 +552,7 @@ mod tests {
         // Test invalid certificate sha256
         let mut invalid_token = create_test_token();
         invalid_token.app_integrity.certificate_sha_256_digest =
-            vec!["different_sha_256".to_string()];
+            Some(vec!["different_sha_256".to_string()]);
         let error = invalid_token
             .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
             .unwrap_err();
@@ -535,6 +562,49 @@ mod tests {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info: "certificate_sha_256_digest does not match the expected value"
                     .to_string()
+            }
+        );
+
+        // Test `None` certificate_sha_256_digest
+        let mut invalid_token = create_test_token();
+        invalid_token.app_integrity.certificate_sha_256_digest = None;
+        let error = invalid_token
+            .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+            .unwrap_err();
+        assert_eq!(
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
+                code: ErrorCode::IntegrityFailed,
+                internal_debug_info: "app_integrity.certificate_sha_256_digest is None".to_string(),
+            }
+        );
+
+        // Test empty certificate_sha_256_digest
+        let mut invalid_token = create_test_token();
+        invalid_token.app_integrity.certificate_sha_256_digest = Some(vec![]);
+        let error = invalid_token
+            .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+            .unwrap_err();
+        assert_eq!(
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
+                code: ErrorCode::IntegrityFailed,
+                internal_debug_info: "certificate_sha_256_digest does not match the expected value"
+                    .to_string(),
+            }
+        );
+
+        // Test package_name is `None`
+        let mut invalid_token = create_test_token();
+        invalid_token.app_integrity.package_name = None;
+        let error = invalid_token
+            .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+            .unwrap_err();
+        assert_eq!(
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
+                code: ErrorCode::IntegrityFailed,
+                internal_debug_info: "app_integrity.package_name is None".to_string(),
             }
         );
     }
@@ -548,7 +618,20 @@ mod tests {
 
         // Test device which is running on a device with signs of attack
         let mut invalid_token = create_test_token();
-        invalid_token.device_integrity.device_recognition_verdict = vec![];
+        invalid_token.device_integrity.device_recognition_verdict = Some(vec![]);
+        let error = invalid_token.validate_device_integrity().unwrap_err();
+        assert_eq!(
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
+                code: ErrorCode::IntegrityFailed,
+                internal_debug_info:
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY".to_string()
+            }
+        );
+
+        // Test where device_recognition_verdict is None
+        let mut invalid_token = create_test_token();
+        invalid_token.device_integrity.device_recognition_verdict = None;
         let error = invalid_token.validate_device_integrity().unwrap_err();
         assert_eq!(
             error.downcast::<ClientException>().unwrap(),
@@ -681,5 +764,50 @@ mod tests {
         let no_apps_detected: EnvironmentDetails =
             serde_json::from_str(no_apps_detected_json).unwrap();
         assert_eq!(no_apps_detected.app_access_risk_verdict.apps_detected, None);
+    }
+
+    /// Tests that a token with an `unevaluated` verdict is properly parsed and integrity failure is logged as such.
+    /// This verifies a very specific pattern provided by Google when integrity cannot be evaluated.
+    #[test]
+    fn test_validate_unevaluated_token() {
+        // cspell:disable
+        let token_payload_str = r#"
+        {
+            "requestDetails": {
+                "requestPackageName": "com.worldcoin.staging",
+                "nonce": "i_am_a_sample_request_hash",
+                "timestampMillis": "{timestamp}"
+            },
+            "appIntegrity": {
+                "appRecognitionVerdict": "UNEVALUATED"
+            },
+            "deviceIntegrity": {},
+            "accountDetails": {
+                "appLicensingVerdict": "UNEVALUATED"
+            }
+        }"#;
+        let token_payload_str = token_payload_str.replace(
+            "{timestamp}",
+            chrono::Utc::now().timestamp_millis().to_string().as_str(),
+        );
+        // cspell:enable
+
+        let token = PlayIntegrityToken::from_json(&token_payload_str).unwrap();
+
+        let result = token.validate_all_claims(
+            &BundleIdentifier::AndroidStageWorldApp,
+            "i_am_a_sample_request_hash",
+        );
+
+        let client_error = result
+            .expect_err("Expected an error, but got success")
+            .downcast::<ClientException>()
+            .expect("Unexpected non-client error");
+
+        assert_eq!(client_error.code, ErrorCode::IntegrityFailed);
+        assert_eq!(
+            client_error.internal_debug_info,
+            "AppIntegrityVerdict is `UNEVALUATED`"
+        );
     }
 }
