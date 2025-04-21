@@ -380,6 +380,7 @@ mod tests {
             },
             device_integrity: DeviceIntegrity {
                 device_recognition_verdict: Some(vec!["MEETS_DEVICE_INTEGRITY".to_string()]),
+                legacy_device_recognition_verdict: None,
                 recent_device_activity: None,
             },
             environment_details: Some(EnvironmentDetails {
@@ -632,7 +633,7 @@ mod tests {
             ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
-                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY".to_string()
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Legacy device integrity has the following verdicts: [].".to_string()
             }
         );
 
@@ -645,7 +646,7 @@ mod tests {
             ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
-                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY".to_string()
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Legacy device integrity has the following verdicts: [].".to_string()
             }
         );
     }
