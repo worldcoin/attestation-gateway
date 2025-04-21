@@ -92,6 +92,7 @@ async fn test_generate_output_token() {
         pass: true,
         out: OutEnum::Pass,
         error: None,
+        app_version: Some("1.25.0".to_string()),
     }
     .generate()
     .unwrap();
@@ -150,4 +151,9 @@ async fn test_generate_output_token() {
         Some(&josekit::Value::String("pass".to_string()))
     );
     assert_eq!(payload.claim("error"), None);
+
+    assert_eq!(
+        payload.claim("app_version"),
+        Some(&josekit::Value::String("1.25.0".to_string()))
+    );
 }

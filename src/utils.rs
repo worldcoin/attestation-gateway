@@ -436,6 +436,7 @@ pub struct VerificationOutput {
     pub success: bool,
     pub parsed_play_integrity_token: Option<PlayIntegrityToken>,
     pub client_exception: Option<ClientException>,
+    pub app_version: Option<String>,
 }
 
 /// `DataReport` is used to serialize the output logged to Kinesis for analytics and debugging purposes.
@@ -452,6 +453,7 @@ pub struct DataReport {
     pub aud: String,
     pub internal_debug_info: Option<String>,
     pub play_integrity: Option<PlayIntegrityToken>,
+    pub app_version: Option<String>,
     // apple_device_check: None,
 }
 
@@ -474,6 +476,7 @@ impl DataReport {
             aud,
             internal_debug_info,
             play_integrity: None,
+            app_version: None,
         }
     }
 }
@@ -485,6 +488,7 @@ pub struct OutputTokenPayload {
     pub pass: bool,
     pub out: OutEnum,
     pub error: Option<String>,
+    pub app_version: Option<String>,
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -541,6 +545,15 @@ impl OutputTokenPayload {
                 .map_err(handle_jose_error)?;
         }
 
+        if let Some(app_version) = &self.app_version {
+            payload
+                .set_claim(
+                    "app_version",
+                    Some(josekit::Value::String(app_version.clone())),
+                )
+                .map_err(handle_jose_error)?;
+        }
+
         Ok(payload)
     }
 }
@@ -574,6 +587,7 @@ mod tests {
             pass: true,
             out: OutEnum::Pass,
             error: None,
+            app_version: Some("1.25.0".to_string()),
         };
 
         let jwt_payload = payload.generate().unwrap();
@@ -610,5 +624,9 @@ mod tests {
             Some(&josekit::Value::String("pass".to_string()))
         );
         assert_eq!(jwt_payload.claim("error"), None);
+        assert_eq!(
+            jwt_payload.claim("app_version"),
+            Some(&josekit::Value::String("1.25.0".to_string()))
+        );
     }
 }

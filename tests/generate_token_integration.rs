@@ -267,6 +267,11 @@ async fn test_android_e2e_success() {
         payload.claim("out"),
         Some(&josekit::Value::String("pass".to_string()))
     );
+
+    assert_eq!(
+        payload.claim("app_version"),
+        Some(&josekit::Value::String("25700".to_string()))
+    );
 }
 
 #[tokio::test]

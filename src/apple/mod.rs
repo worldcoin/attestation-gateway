@@ -60,6 +60,7 @@ pub async fn verify_initial_attestation(
         success: true,
         parsed_play_integrity_token: None,
         client_exception: None,
+        app_version: None,
     })
 }
 
@@ -114,6 +115,7 @@ pub async fn verify(
         success: true,
         parsed_play_integrity_token: None,
         client_exception: None,
+        app_version: None,
     })
 }
 

@@ -179,6 +179,7 @@ async fn verify_android_or_apple_integrity(
         aud: aud.to_string(),
         internal_debug_info: None,
         play_integrity: None,
+        app_version: None,
     };
 
     let verify_result = match verification_input {
@@ -224,6 +225,7 @@ async fn verify_android_or_apple_integrity(
 
     report.play_integrity = verify_result.parsed_play_integrity_token;
     report.pass = verify_result.success;
+    report.app_version = verify_result.app_version;
     report.out = if verify_result.success {
         OutEnum::Pass
     } else {
@@ -275,6 +277,7 @@ async fn process_and_finalize_report(
         pass: report.pass,
         out: report.out,
         error: None, // TODO: Implement in the future (see L76)
+        app_version: report.app_version.clone(),
     }
     .generate()?;
 
