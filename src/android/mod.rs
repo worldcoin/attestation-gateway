@@ -32,6 +32,7 @@ pub fn verify(
             // We do this additional error handling to return the parsed token in the response and be able to log it for analytics purposes
             return Ok(VerificationOutput {
                 success: false,
+                app_version: parsed_token.app_integrity.version_code.clone(),
                 parsed_play_integrity_token: Some(parsed_token),
                 client_exception: Some(client_error.clone()),
             });
@@ -41,6 +42,7 @@ pub fn verify(
 
     Ok(VerificationOutput {
         success: true,
+        app_version: parsed_token.app_integrity.version_code.clone(),
         parsed_play_integrity_token: Some(parsed_token),
         client_exception: None,
     })
