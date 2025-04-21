@@ -36,7 +36,7 @@ pub struct RecentDeviceActivity {
 #[serde(rename_all = "camelCase")]
 pub struct DeviceIntegrity {
     pub device_recognition_verdict: Option<Vec<String>>,
-    // pub legacy_device_recognition_verdict: Option<Vec<String>>,
+    pub legacy_device_recognition_verdict: Option<Vec<String>>,
     pub recent_device_activity: Option<RecentDeviceActivity>,
 }
 
@@ -292,10 +292,17 @@ impl PlayIntegrityToken {
             .unwrap_or_default()
             .contains(&"MEETS_DEVICE_INTEGRITY".to_string())
         {
+            // Logging legacy device integrity verdicts for debugging purposes. This will be deprecated in 2025 by Google.
+            let legacy_device_integrity = self
+                .device_integrity
+                .legacy_device_recognition_verdict
+                .clone()
+                .unwrap_or_default();
+
             return Err(eyre::eyre!(ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
-                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY".to_string(),
+                format!("device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Legacy device integrity has the following verdicts: {legacy_device_integrity:?}."),
             }));
         }
         Ok(())
