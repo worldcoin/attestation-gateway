@@ -629,4 +629,70 @@ mod tests {
             Some(&josekit::Value::String("1.25.0".to_string()))
         );
     }
+
+    #[test]
+    fn test_data_report_does_not_serialize_nonce() {
+        let token_payload_str = r#"
+        {
+            "requestDetails": {
+                "requestPackageName": "com.worldcoin.staging",
+                "nonce": "i_am_a_sample_request_hash",
+                "timestampMillis": "1745276275999"
+            },
+            "appIntegrity": {
+                "appRecognitionVerdict": "PLAY_RECOGNIZED",
+                "packageName": "com.worldcoin.staging",
+                "certificateSha256Digest": [
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"
+                ],
+                "versionCode": "25700"
+            },
+            "deviceIntegrity": {
+                "deviceRecognitionVerdict": [
+                    "MEETS_DEVICE_INTEGRITY"
+                ]
+            },
+            "accountDetails": {
+                "appLicensingVerdict": "LICENSED"
+            },
+            "environmentDetails": {
+                "appAccessRiskVerdict": {
+                    "appsDetected": [
+                        "KNOWN_INSTALLED",
+                        "UNKNOWN_INSTALLED",
+                        "UNKNOWN_CAPTURING"
+                    ]
+                }
+            }
+        }"#;
+
+        let token = PlayIntegrityToken::from_json(token_payload_str).unwrap();
+
+        let data_report = DataReport {
+            pass: true,
+            out: OutEnum::Pass,
+            client_error: None,
+            request_hash: "i_am_a_sample_request_hash".to_string(),
+            timestamp: SystemTime::now(),
+            bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+            aud: "example.worldcoin.org".to_string(),
+            internal_debug_info: None,
+            play_integrity: Some(token),
+            app_version: Some("1.25.0".to_string()),
+        };
+        let serialized =
+            serde_json::to_string(&data_report).expect("failed to serialize `DataReport` as json");
+
+        let raw_deserialized: serde_json::Value =
+            serde_json::from_str(&serialized).expect("Failed to deserialize");
+
+        assert_eq!(
+            raw_deserialized["playIntegrity"]["requestDetails"]["nonce"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            raw_deserialized["playIntegrity"]["requestDetails"]["requestPackageName"],
+            serde_json::Value::String("com.worldcoin.staging".to_string())
+        );
+    }
 }

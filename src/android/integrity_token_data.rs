@@ -11,6 +11,7 @@ const ALLOWED_TIMESTAMP_WINDOW: u64 = 10 * 60; // 10 minutes
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestDetails {
+    #[serde(skip_serializing)] // NOTE this field isn't serialized to avoid logging it
     pub nonce: String,
     #[serde(deserialize_with = "deserialize_system_time_from_millis")]
     pub timestamp_millis: SystemTime,
