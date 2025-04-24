@@ -5,6 +5,7 @@ use josekit::{jwt::JwtPayload, JoseError};
 use redis::RedisError;
 use schemars::JsonSchema;
 use std::{env, fmt::Display, time::SystemTime};
+use uuid::Uuid;
 
 static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 
@@ -478,6 +479,28 @@ impl DataReport {
             play_integrity: None,
             app_version: None,
         }
+    }
+
+    /// Formats the `DataReport` as a JSON object and serializes it to a byte vector.
+    ///
+    /// This method generates a random identifier to act as partition key for the Kinesis stream.
+    /// This is used because the `request_hash` is deleted after some time.
+    ///
+    /// # Errors
+    /// Will return an `eyre::Error` if the serialization fails.
+    pub fn as_vec(&self) -> eyre::Result<Vec<u8>> {
+        let mut payload = serde_json::to_value(self)?;
+        let obj = payload
+            .as_object_mut()
+            .ok_or_else(|| eyre::eyre!("Error serializing DataReport as JSON object"))?;
+
+        let id = Uuid::new_v4().simple().to_string();
+        obj.insert(
+            "id".to_string(),
+            serde_json::Value::String(format!("report_{id}")),
+        );
+
+        serde_json::to_vec(&payload).map_err(Into::into)
     }
 }
 

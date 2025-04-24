@@ -1,6 +1,5 @@
 use crate::utils::DataReport;
 use aws_sdk_kinesis::{primitives::Blob, Client as KinesisClient};
-use serde_json::to_vec;
 
 /// Reports a parsed event to a Kinesis stream for debugging and monitoring purposes
 ///
@@ -11,10 +10,10 @@ pub async fn send_kinesis_stream_event(
     stream_arn: &str,
     data_report: &DataReport,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let partition_key: &str = "request_hash";
+    let partition_key: &str = "id";
 
     // Serialize DataReport to JSON
-    let payload_bytes = to_vec(data_report)?;
+    let payload_bytes = data_report.as_vec()?;
 
     // Send the serialized data to Kinesis
     kinesis_client

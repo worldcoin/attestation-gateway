@@ -20,6 +20,7 @@ use josekit::{
     jwt::{self, JwtPayload},
 };
 use openssl::{pkey::Private, sha::Sha256};
+use regex::Regex;
 use serde_bytes::ByteBuf;
 use serde_json::{json, Value};
 use serial_test::serial;
@@ -1587,8 +1588,16 @@ async fn test_client_error_gets_logged_to_kinesis() {
         .unwrap();
 
     let record = response.records[0].clone();
-    assert_eq!(record.partition_key, "request_hash");
+    assert_eq!(record.partition_key, "id");
     let record_body = String::from_utf8(record.data.into_inner()).unwrap();
+
+    let json_body = serde_json::from_str::<Value>(&record_body).unwrap();
+
+    let re = Regex::new(r"^report_[0-9a-f]{32}$").unwrap();
+    assert!(
+        re.is_match(json_body["id"].as_str().unwrap()),
+        "Kinesis DataReport.id format is incorrect"
+    );
 
     let data_report: DataReport = serde_json::from_str(&record_body).unwrap();
 
