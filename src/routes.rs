@@ -30,8 +30,7 @@ async fn log_ip_middleware(req: Request<Body>, next: Next) -> Response {
             "unknown".to_string()
         };
 
-    let span =
-        tracing::info_span!("request", client_ip = %client_ip, method = %method, path = %uri);
+    let span = tracing::info_span!("request", "network.client.ip" = %client_ip, method = %method, path = %uri);
 
     let _guard = span.enter();
 
