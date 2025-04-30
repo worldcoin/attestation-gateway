@@ -23,21 +23,24 @@ async fn log_ip_middleware(req: Request<Body>, next: Next) -> Response {
     let method = req.method().clone();
     let uri = req.uri().clone();
 
-    if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>() {
-        tracing::info!(
-            client_ip = %addr,
-            method = %method,
-            path = %uri,
-            "Request received"
-        );
-    } else {
-        tracing::info!(
-            client_ip = "unknown",
-            method = %method,
-            path = %uri,
-            "Request received without client IP"
-        );
-    }
+    let client_ip =
+        if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>() {
+            addr.to_string()
+        } else {
+            "unknown".to_string()
+        };
+
+    let span =
+        tracing::info_span!("request", client_ip = %client_ip, method = %method, path = %uri);
+
+    tracing::info!(
+        client_ip = %client_ip,
+        method = %method,
+        path = %uri,
+        "Request received"
+    );
+
+    let _guard = span.enter();
 
     next.run(req).await
 }
