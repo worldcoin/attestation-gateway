@@ -34,7 +34,8 @@ pub async fn handler(
     let my_span = tracing::span!(
         tracing::Level::DEBUG,
         "generate_token",
-        request_hash = request_hash
+        request_hash = %request_hash,
+        endpoint = "/g"
     );
 
     let _enter = my_span.enter();
@@ -71,6 +72,7 @@ pub async fn handler(
         });
     }
 
+    // REVIEW: failures from DataReport.pass vs. ClientException
     let report = verify_android_or_apple_integrity(
         integrity_verification_input,
         request_hash.clone(),
@@ -85,7 +87,7 @@ pub async fn handler(
         // Check if we have a `ClientException` in the error chain and return to the client without further logging
         if let Some(client_error) = e.downcast_ref::<ClientException>() {
             if global_config.log_client_errors {
-                tracing::warn!(error = ?e, "Client exception verifying Android or Apple integrity");
+                tracing::info!(error = ?e, request_hash = request_hash, bundle_identifier = %request.bundle_identifier, "Client exception verifying Android or Apple integrity");
             }else {
                 tracing::debug!(error = ?e, "Client exception verifying Android or Apple integrity");
             }
@@ -260,7 +262,9 @@ async fn process_and_finalize_report(
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
         if global_config.log_client_errors {
-            tracing::warn!(
+            tracing::info!(
+                request_hash = request_hash,
+                bundle_identifier = %report.bundle_identifier,
                 message = "Integrity verification failed",
                 internal_debug_info = report.internal_debug_info
             );
@@ -346,10 +350,10 @@ async fn handle_client_error_if_applicable(
             })?;
 
         if log_client_errors {
-            tracing::warn!(
+            tracing::info!(
                 client_error = client_error,
                 bundle_identifier = ?request.bundle_identifier,
-                request_hash = ?request.request_hash,
+                request_hash = request.request_hash,
                 "Client error provided in the request",
             );
         }
