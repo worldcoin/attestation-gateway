@@ -33,13 +33,6 @@ async fn log_ip_middleware(req: Request<Body>, next: Next) -> Response {
     let span =
         tracing::info_span!("request", client_ip = %client_ip, method = %method, path = %uri);
 
-    tracing::info!(
-        client_ip = %client_ip,
-        method = %method,
-        path = %uri,
-        "Request received"
-    );
-
     let _guard = span.enter();
 
     next.run(req).await
