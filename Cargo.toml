@@ -15,7 +15,7 @@ anyhow = "1.0.97"
 aws-config = "1.6.1"
 aws-sdk-dynamodb = "1.71.0"
 aws-sdk-kinesis = "1.66.0"
-aws-sdk-kms = "1.65.0"
+aws-sdk-kms = "1.66.0"
 axum = "0.7.5"
 axum-jsonschema = { version = "0.8.0", features = ["aide"] }
 base64 = "0.22.1"
