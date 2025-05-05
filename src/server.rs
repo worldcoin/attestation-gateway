@@ -55,7 +55,10 @@ pub async fn start(
         .expect("Failed to bind address");
 
     println!("😈 Attestation gateway started on http://{address}");
-    axum::serve(listener, app.into_make_service())
-        .await
-        .expect("Failed to start server");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("Failed to start server");
 }
