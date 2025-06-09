@@ -19,7 +19,7 @@ aws-sdk-kms = "1.66.0"
 axum = "0.7.5"
 axum-jsonschema = { version = "0.8.0", features = ["aide"] }
 base64 = "0.22.1"
-chrono = "0.4.38"
+chrono = "0.4.41"
 ciborium = "0.2.2"
 der-parser = "9.0.0"
 dotenvy = "0.15.7"
@@ -47,7 +47,7 @@ uuid = { version = "1.16.0", default-features = false, features = ["v4"] }
 x509-parser = "0.16.0"
 
 [build-dependencies]
-chrono = "0.4.38"
+chrono = "0.4.41"
 
 [dev-dependencies]
 http-body-util = "0.1.2"
