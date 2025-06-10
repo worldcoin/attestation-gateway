@@ -21,7 +21,7 @@ axum-jsonschema = { version = "0.8.0", features = ["aide"] }
 base64 = "0.22.1"
 chrono = "0.4.41"
 ciborium = "0.2.2"
-der-parser = "9.0.0"
+der-parser = "10.0.0"
 dotenvy = "0.15.7"
 eyre = "0.6.12"
 hex = "0.4.3"
