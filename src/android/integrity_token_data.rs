@@ -310,13 +310,6 @@ impl PlayIntegrityToken {
     }
 
     fn validate_account_details(&self, bundle_identifier: &BundleIdentifier) -> eyre::Result<()> {
-        // FIXME: Temporary whitelist for debugging purposes
-        if let Some(version_code) = &self.app_integrity.version_code {
-            if version_code == "2088600" {
-                return Ok(());
-            }
-        }
-
         if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
             // Only in Production: App should come from Play Store
             if self.account_details.app_licensing_verdict != AppLicensingVerdict::Licensed {
