@@ -10,7 +10,7 @@ categories = ["web-programming"]
 rust-version = "1.80"
 
 [dependencies]
-aide = { version = "0.13.4", features = ["axum", "macros", "scalar"] }
+aide = { version = "0.15.0", features = ["axum", "macros", "scalar"] }
 anyhow = "1.0.97"
 aws-config = "1.6.3"
 aws-sdk-dynamodb = "1.72.1"
