@@ -641,7 +641,7 @@ mod tests {
             ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
-                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Legacy device integrity has the following verdicts: [].".to_string()
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Device recognition verdict: []. Legacy device integrity has the following verdicts: [].".to_string()
             }
         );
 
@@ -654,7 +654,7 @@ mod tests {
             ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
-                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Legacy device integrity has the following verdicts: [].".to_string()
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Device recognition verdict: []. Legacy device integrity has the following verdicts: [].".to_string()
             }
         );
     }
