@@ -300,10 +300,16 @@ impl PlayIntegrityToken {
                 .clone()
                 .unwrap_or_default();
 
+            let device_recognition_verdict = self
+                .device_integrity
+                .device_recognition_verdict
+                .clone()
+                .unwrap_or_default();
+
             return Err(eyre::eyre!(ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
-                format!("device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Legacy device integrity has the following verdicts: {legacy_device_integrity:?}."),
+                format!("device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Device recognition verdict: {device_recognition_verdict:?}. Legacy device integrity has the following verdicts: {legacy_device_integrity:?}."),
             }));
         }
         Ok(())
@@ -635,7 +641,7 @@ mod tests {
             ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
-                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Legacy device integrity has the following verdicts: [].".to_string()
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Device recognition verdict: []. Legacy device integrity has the following verdicts: [].".to_string()
             }
         );
 
@@ -648,7 +654,7 @@ mod tests {
             ClientException {
                 code: ErrorCode::IntegrityFailed,
                 internal_debug_info:
-                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Legacy device integrity has the following verdicts: [].".to_string()
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Device recognition verdict: []. Legacy device integrity has the following verdicts: [].".to_string()
             }
         );
     }
