@@ -11,7 +11,7 @@ env:
 jobs:
   lint:
     name: Format, Clippy & Build
-    runs-on: ubuntu-latest
+    runs-on: arc-large-amd64-runner
 
     steps:
       - name: Checkout code
@@ -62,7 +62,7 @@ jobs:
 
   test:
     name: Tests
-    runs-on: ubuntu-latest
+    runs-on: arc-large-amd64-runner
 
     steps:
       - name: Checkout code
@@ -114,7 +114,7 @@ jobs:
 
   docker-build:
     name: Test docker build
-    runs-on: ubuntu-latest
+    runs-on: arc-large-amd64-runner
     services:
       redis:
         image: redis
@@ -160,7 +160,7 @@ jobs:
           docker rm attestation-gateway-ci-container
   deny:
     name: Cargo deny
-    runs-on: ubuntu-latest
+    runs-on: arc-large-amd64-runner
 
     steps:
       - name: Checkout code
