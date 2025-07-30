@@ -5,15 +5,15 @@ use josekit::jws::ES512;
 
 mod integrity_token_data;
 
-pub async fn verify(
+pub fn verify(
     tools_for_humanity_outer_token: &str,
     request_hash: &str,
     tools_for_humanity_inner_jwt_verifier_key: String,
 ) -> eyre::Result<VerificationOutput> {
-    // Parse outer JWS
+    // Parse outer JWT
     let outer_jwt_payload = parse_outer_jwt(tools_for_humanity_outer_token)?;
 
-    // Verify request hash against outer JWS
+    // Verify request hash against outer JWT
     if request_hash != outer_jwt_payload.request_hash {
         return Err(eyre::eyre!(
             "Request hash mismatch: {} != {}",
@@ -52,7 +52,7 @@ fn parse_outer_jwt(tools_for_humanity_token: &str) -> eyre::Result<ToolsForHuman
         .map_err(|e| eyre::eyre!("Failed to decode JWT payload as base64url: {e}"))?;
 
     let parsed_payload: serde_json::Value = serde_json::from_slice(&payload_bytes)?;
-    println!("parsed_payload: {:?}", parsed_payload);
+
     let parsed_token: ToolsForHumanityOuterToken =
         ToolsForHumanityOuterToken::from_json(&parsed_payload.to_string())?;
 

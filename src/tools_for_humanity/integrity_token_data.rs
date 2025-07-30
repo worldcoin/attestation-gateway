@@ -1,10 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::Display,
-    time::{Duration, SystemTime},
-};
-
-use crate::utils::{BundleIdentifier, ClientException, ErrorCode};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,9 +10,9 @@ pub struct ToolsForHumanityInnerToken {
 
 impl ToolsForHumanityInnerToken {
     pub fn from_json(integrity_token_json_payload: &str) -> eyre::Result<Self> {
-        let parsed_json = serde_json::from_str::<Self>(integrity_token_json_payload);
+        let parsed_json = serde_json::from_str::<Self>(integrity_token_json_payload)?;
 
-        Ok(parsed_json?)
+        Ok(parsed_json)
     }
 }
 
@@ -32,8 +26,8 @@ pub struct ToolsForHumanityOuterToken {
 
 impl ToolsForHumanityOuterToken {
     pub fn from_json(integrity_token_json_payload: &str) -> eyre::Result<Self> {
-        let parsed_json = serde_json::from_str::<Self>(integrity_token_json_payload);
+        let parsed_json = serde_json::from_str::<Self>(integrity_token_json_payload)?;
 
-        Ok(parsed_json?)
+        Ok(parsed_json)
     }
 }

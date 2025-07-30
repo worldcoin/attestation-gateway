@@ -159,8 +159,9 @@ impl BundleIdentifier {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
             Self::AndroidDevWorldApp => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
-            Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
-            Self::ToolsForHumanityProdApp
+            Self::IOSProdWorldApp
+            | Self::IOSStageWorldApp
+            | Self::ToolsForHumanityProdApp
             | Self::ToolsForHumanityStagingApp
             | Self::ToolsForHumanityDevApp => None,
         }
@@ -169,16 +170,16 @@ impl BundleIdentifier {
     #[must_use]
     pub const fn apple_app_id(&self) -> Option<&str> {
         match self {
-            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
-                None
-            }
+            Self::AndroidProdWorldApp
+            | Self::AndroidStageWorldApp
+            | Self::AndroidDevWorldApp
+            | Self::ToolsForHumanityProdApp
+            | Self::ToolsForHumanityStagingApp
+            | Self::ToolsForHumanityDevApp => None,
             // cspell:disable
             Self::IOSStageWorldApp => Some("35RXKB6738.org.worldcoin.insight.staging"),
             Self::IOSProdWorldApp => Some("35RXKB6738.org.worldcoin.insight"),
             // cspell:enable
-            Self::ToolsForHumanityProdApp
-            | Self::ToolsForHumanityStagingApp
-            | Self::ToolsForHumanityDevApp => None,
         }
     }
 }
