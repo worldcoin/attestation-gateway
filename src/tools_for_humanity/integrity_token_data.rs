@@ -9,10 +9,16 @@ pub struct ToolsForHumanityInnerToken {
 }
 
 impl ToolsForHumanityInnerToken {
-    pub fn from_json(integrity_token_json_payload: &str) -> eyre::Result<Self> {
-        let parsed_json = serde_json::from_str::<Self>(integrity_token_json_payload)?;
+    pub fn from_json(inner_token_payload: &str) -> eyre::Result<Self> {
+        let parsed_json = serde_json::from_str::<Self>(inner_token_payload);
 
-        Ok(parsed_json)
+        if parsed_json.is_err() {
+            // Parsing failures for integrity tokens is unexpected because tokens are igned,
+            // hence not a client request. The unparsed payload is logged to help debug and fix.
+            tracing::warn!(unparsed_inner_token_payload = ?inner_token_payload, "JSON parsing failed for Tools for Humanity Inner token.");
+        }
+
+        Ok(parsed_json?)
     }
 }
 
@@ -25,9 +31,15 @@ pub struct ToolsForHumanityOuterToken {
 }
 
 impl ToolsForHumanityOuterToken {
-    pub fn from_json(integrity_token_json_payload: &str) -> eyre::Result<Self> {
-        let parsed_json = serde_json::from_str::<Self>(integrity_token_json_payload)?;
+    pub fn from_json(outer_token_payload: &str) -> eyre::Result<Self> {
+        let parsed_json = serde_json::from_str::<Self>(outer_token_payload);
 
-        Ok(parsed_json)
+        if parsed_json.is_err() {
+            // Parsing failures for integrity tokens is unexpected because tokens are igned,
+            // hence not a client request. The unparsed payload is logged to help debug and fix.
+            tracing::warn!(unparsed_outer_token_payload = ?outer_token_payload, "JSON parsing failed for Tools for Humanity Outer token.");
+        }
+
+        Ok(parsed_json?)
     }
 }
