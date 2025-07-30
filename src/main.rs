@@ -15,6 +15,7 @@ mod kinesis;
 mod kms_jws;
 mod routes;
 mod server;
+mod tools_for_humanity;
 mod utils;
 
 #[tokio::main]

@@ -14,6 +14,7 @@ pub struct GlobalConfig {
     pub android_outer_jwe_private_key: String,
     pub android_inner_jws_public_key: String,
     pub apple_keys_dynamo_table_name: String,
+    pub tools_for_humanity_inner_jws_public_key: String,
     pub enabled_bundle_identifiers: Vec<BundleIdentifier>,
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
     pub log_client_errors: bool,
@@ -34,6 +35,10 @@ impl GlobalConfig {
 
         let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
             .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
+
+        let tools_for_humanity_inner_jws_public_key =
+            env::var("TOOLS_FOR_HUMANITY_INNER_JWS_PUBLIC_KEY")
+                .expect("env var `TOOLS_FOR_HUMANITY_INNER_JWS_PUBLIC_KEY` is required");
 
         let log_client_errors = env::var("LOG_CLIENT_ERRORS")
             .is_ok_and(|val| val.to_lowercase() == "true" || val == "1");
@@ -61,6 +66,7 @@ impl GlobalConfig {
             android_outer_jwe_private_key,
             android_inner_jws_public_key,
             apple_keys_dynamo_table_name,
+            tools_for_humanity_inner_jws_public_key,
             enabled_bundle_identifiers,
             log_client_errors,
             kinesis_stream_arn,
@@ -96,6 +102,7 @@ pub const SIGNING_CONFIG: SigningConfigDefinition = SigningConfigDefinition {
 pub enum Platform {
     AppleIOS,
     Android,
+    ToolsForHumanity,
 }
 
 impl Display for Platform {
@@ -103,6 +110,7 @@ impl Display for Platform {
         match self {
             Self::AppleIOS => write!(f, "ios"),
             Self::Android => write!(f, "android"),
+            Self::ToolsForHumanity => write!(f, "tools_for_humanity"),
         }
     }
 }
@@ -121,6 +129,12 @@ pub enum BundleIdentifier {
     IOSProdWorldApp,
     #[serde(rename = "org.worldcoin.insight.staging")]
     IOSStageWorldApp,
+    #[serde(rename = "com.toolsforhumanity")]
+    ToolsForHumanityProdApp,
+    #[serde(rename = "com.toolsforhumanity.staging")]
+    ToolsForHumanityStagingApp,
+    #[serde(rename = "com.toolsforhumanity.dev")]
+    ToolsForHumanityDevApp,
 }
 
 impl BundleIdentifier {
@@ -131,6 +145,9 @@ impl BundleIdentifier {
                 Platform::Android
             }
             Self::IOSProdWorldApp | Self::IOSStageWorldApp => Platform::AppleIOS,
+            Self::ToolsForHumanityDevApp
+            | Self::ToolsForHumanityStagingApp
+            | Self::ToolsForHumanityProdApp => Platform::ToolsForHumanity,
         }
     }
 
@@ -143,6 +160,9 @@ impl BundleIdentifier {
             }
             Self::AndroidDevWorldApp => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
             Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
+            Self::ToolsForHumanityProdApp
+            | Self::ToolsForHumanityStagingApp
+            | Self::ToolsForHumanityDevApp => None,
         }
     }
 
@@ -156,6 +176,9 @@ impl BundleIdentifier {
             Self::IOSStageWorldApp => Some("35RXKB6738.org.worldcoin.insight.staging"),
             Self::IOSProdWorldApp => Some("35RXKB6738.org.worldcoin.insight"),
             // cspell:enable
+            Self::ToolsForHumanityProdApp
+            | Self::ToolsForHumanityStagingApp
+            | Self::ToolsForHumanityDevApp => None,
         }
     }
 }
@@ -168,6 +191,9 @@ impl Display for BundleIdentifier {
             Self::AndroidDevWorldApp => write!(f, "com.worldcoin.dev"),
             Self::IOSProdWorldApp => write!(f, "org.worldcoin.insight"),
             Self::IOSStageWorldApp => write!(f, "org.worldcoin.insight.staging"),
+            Self::ToolsForHumanityProdApp => write!(f, "com.toolsforhumanity"),
+            Self::ToolsForHumanityStagingApp => write!(f, "com.toolsforhumanity.staging"),
+            Self::ToolsForHumanityDevApp => write!(f, "com.toolsforhumanity.dev"),
         }
     }
 }
@@ -182,6 +208,7 @@ pub struct TokenGenerationRequest {
     pub apple_initial_attestation: Option<String>,
     pub apple_public_key: Option<String>,
     pub apple_assertion: Option<String>,
+    pub tools_for_humanity_token: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, JsonSchema)]
@@ -199,6 +226,9 @@ pub enum IntegrityVerificationInput {
     AppleAssertion {
         apple_assertion: String,
         apple_public_key: String,
+    },
+    ToolsForHumanity {
+        tools_for_humanity_token: String,
     },
     /// Represents the state where a `client_error` is passed from the client, indicating a failure with upstream services.
     /// Under normal circumstances, this is simply logged for analytics and the request is rejected.
@@ -268,6 +298,21 @@ impl IntegrityVerificationInput {
                 Ok(Self::AppleAssertion {
                     apple_assertion: request.apple_assertion.clone().unwrap(),
                     apple_public_key: request.apple_public_key.clone().unwrap(),
+                })
+            }
+            Platform::ToolsForHumanity => {
+                if request.tools_for_humanity_token.is_none() {
+                    return Err(RequestError {
+                        code: ErrorCode::BadRequest,
+                        details: Some(
+                            "`tools_for_humanity_token` is required for this bundle identifier."
+                                .to_string(),
+                        ),
+                    });
+                }
+
+                Ok(Self::ToolsForHumanity {
+                    tools_for_humanity_token: request.tools_for_humanity_token.clone().unwrap(),
                 })
             }
         }
