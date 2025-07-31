@@ -26,6 +26,7 @@ pub async fn handler(
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Extension(kinesis_client): Extension<KinesisClient>,
+    Extension(tfh_user): Extension<Option<tools_for_humanity::User>>,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
     let aud = request.aud.clone();

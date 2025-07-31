@@ -2,8 +2,19 @@ use crate::utils::VerificationOutput;
 use base64::Engine;
 pub use integrity_token_data::{ToolsForHumanityInnerToken, ToolsForHumanityOuterToken};
 use josekit::jws::ES512;
+use axum::{
+    http::{self, StatusCode},
+    response::{IntoResponse, Response},
+    middleware::{Next},
+    extract::{Request},
+};
 
 mod integrity_token_data;
+
+#[derive(Clone)]
+pub struct User {
+  pub principal: String,
+}
 
 pub fn verify(
     tools_for_humanity_outer_token: &str,
@@ -87,4 +98,25 @@ fn verify_outer_jwt(
     josekit::jwt::decode_with_verifier(tools_for_humanity_outer_token, &verifier)?;
 
     Ok(())
+}
+
+pub async fn middleware(mut req: Request, next: Next) -> Result<Response, StatusCode> {
+  let auth_header = req.headers()
+    .get(http::header::AUTHORIZATION)
+    .and_then(|header| header.to_str().ok());
+
+  match auth_header {
+    Some(auth_header) => {
+      let user = User {
+        principal: String::from("test"),
+      };
+
+      req.extensions_mut().insert(Option::Some(user));
+      return Ok(next.run(req).await);
+    }
+    None => {
+      req.extensions_mut().insert(Option::<User>::None);
+      return Ok(next.run(req).await);
+    }
+  }
 }
