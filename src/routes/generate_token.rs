@@ -220,13 +220,6 @@ async fn verify_android_or_apple_integrity(
             .await?
         }
 
-        IntegrityVerificationInput::ToolsForHumanity {
-            tools_for_humanity_token,
-        } => tools_for_humanity::verify(
-            &tools_for_humanity_token,
-            &request_hash,
-            config.tools_for_humanity_inner_jws_public_key,
-        )?,
         IntegrityVerificationInput::ClientError { client_error: _ } => {
             eyre::bail!("Unexpected variant reached in verify_android_or_apple_integrity.");
         }

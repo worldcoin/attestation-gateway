@@ -22,11 +22,11 @@ pub fn verify(
         ));
     }
 
-    // Parse inner JWT
+    // Verify and parse inner JWT
     let inner_jwt_payload =
         verify_and_parse_inner_jwt(outer_jwt_payload, tools_for_humanity_inner_jwt_verifier_key)?;
 
-    // Verify outer JWT
+    // Verify outer JWT against inner JWT public key
     verify_outer_jwt(tools_for_humanity_outer_token, inner_jwt_payload)?;
 
     // Return verification output
