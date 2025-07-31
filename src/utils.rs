@@ -1,4 +1,4 @@
-use crate::android::PlayIntegrityToken;
+use crate::{android::PlayIntegrityToken, tools_for_humanity};
 use aide::OperationIo;
 use axum::response::IntoResponse;
 use josekit::{jwt::JwtPayload, JoseError};
@@ -14,7 +14,7 @@ pub struct GlobalConfig {
     pub android_outer_jwe_private_key: String,
     pub android_inner_jws_public_key: String,
     pub apple_keys_dynamo_table_name: String,
-    pub tools_for_humanity_inner_jws_public_key: String,
+    pub tools_for_humanity_inner_jwt_public_key: String,
     pub enabled_bundle_identifiers: Vec<BundleIdentifier>,
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
     pub log_client_errors: bool,
@@ -36,9 +36,9 @@ impl GlobalConfig {
         let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
             .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
 
-        let tools_for_humanity_inner_jws_public_key =
-            env::var("TOOLS_FOR_HUMANITY_INNER_JWS_PUBLIC_KEY")
-                .expect("env var `TOOLS_FOR_HUMANITY_INNER_JWS_PUBLIC_KEY` is required");
+        let tools_for_humanity_inner_jwt_public_key =
+            env::var("TOOLS_FOR_HUMANITY_INNER_JWT_PUBLIC_KEY")
+                .expect("env var `TOOLS_FOR_HUMANITY_INNER_JWT_PUBLIC_KEY` is required");
 
         let log_client_errors = env::var("LOG_CLIENT_ERRORS")
             .is_ok_and(|val| val.to_lowercase() == "true" || val == "1");
@@ -66,7 +66,7 @@ impl GlobalConfig {
             android_outer_jwe_private_key,
             android_inner_jws_public_key,
             apple_keys_dynamo_table_name,
-            tools_for_humanity_inner_jws_public_key,
+            tools_for_humanity_inner_jwt_public_key,
             enabled_bundle_identifiers,
             log_client_errors,
             kinesis_stream_arn,
@@ -211,6 +211,9 @@ pub enum IntegrityVerificationInput {
     ClientError {
         client_error: String,
     },
+    ToolsForHumanity {
+        principal: String,
+    },
 }
 
 impl IntegrityVerificationInput {
@@ -221,9 +224,18 @@ impl IntegrityVerificationInput {
     ///
     /// # Panics
     /// No panics expected.
-    pub fn from_request(request: &TokenGenerationRequest) -> Result<Self, RequestError> {
+    pub fn from_request(
+        request: &TokenGenerationRequest,
+        tfh_user: &Option<tools_for_humanity::User>,
+    ) -> Result<Self, RequestError> {
         if let Some(client_error) = request.client_error.clone() {
             return Ok(Self::ClientError { client_error });
+        }
+
+        if let Some(user) = tfh_user {
+            return Ok(Self::ToolsForHumanity {
+                principal: user.principal.clone(),
+            });
         }
 
         match request.bundle_identifier.platform() {

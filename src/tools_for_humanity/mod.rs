@@ -1,9 +1,10 @@
-use crate::utils::VerificationOutput;
+use crate::utils::GlobalConfig;
 use axum::{
     extract::Request,
     http::{self, StatusCode},
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::Response,
+    Extension,
 };
 use base64::Engine;
 pub use integrity_token_data::{ToolsForHumanityInnerToken, ToolsForHumanityOuterToken};
@@ -18,35 +19,24 @@ pub struct User {
 
 pub fn verify(
     tools_for_humanity_outer_token: &str,
-    request_hash: &str,
     tools_for_humanity_inner_jwt_verifier_key: String,
-) -> eyre::Result<VerificationOutput> {
+) -> eyre::Result<User> {
     // Parse outer JWT
     let outer_jwt_payload = parse_outer_jwt(tools_for_humanity_outer_token)?;
-
-    // Verify request hash against outer JWT
-    if request_hash != outer_jwt_payload.request_hash {
-        return Err(eyre::eyre!(
-            "Request hash mismatch: {} != {}",
-            request_hash,
-            outer_jwt_payload.request_hash
-        ));
-    }
 
     // Verify and parse inner JWT
     let inner_jwt_payload =
         verify_and_parse_inner_jwt(outer_jwt_payload, tools_for_humanity_inner_jwt_verifier_key)?;
 
+    let user = User {
+        principal: inner_jwt_payload.principal.clone(),
+    };
+
     // Verify outer JWT against inner JWT public key
     verify_outer_jwt(tools_for_humanity_outer_token, inner_jwt_payload)?;
 
     // Return verification output
-    Ok(VerificationOutput {
-        success: true,
-        app_version: None,
-        parsed_play_integrity_token: None,
-        client_exception: None,
-    })
+    Ok(user)
 }
 
 fn parse_outer_jwt(tools_for_humanity_token: &str) -> eyre::Result<ToolsForHumanityOuterToken> {
@@ -90,17 +80,24 @@ fn verify_and_parse_inner_jwt(
 fn verify_outer_jwt(
     tools_for_humanity_outer_token: &str,
     tools_for_humanity_inner_token: ToolsForHumanityInnerToken,
-) -> eyre::Result<()> {
+) -> eyre::Result<ToolsForHumanityOuterToken> {
     let decoded_key = base64::engine::general_purpose::STANDARD
         .decode(tools_for_humanity_inner_token.public_key.into_bytes())?;
     let verifier = ES512.verifier_from_der(decoded_key)?;
 
-    josekit::jwt::decode_with_verifier(tools_for_humanity_outer_token, &verifier)?;
+    let (jwt, _) = josekit::jwt::decode_with_verifier(tools_for_humanity_outer_token, &verifier)?;
+    let parsed_payload = serde_json::to_string(jwt.claims_set())?;
+    let parsed_token: ToolsForHumanityOuterToken =
+        ToolsForHumanityOuterToken::from_json(&parsed_payload)?;
 
-    Ok(())
+    Ok(parsed_token)
 }
 
-pub async fn middleware(mut req: Request, next: Next) -> Result<Response, StatusCode> {
+pub async fn middleware(
+    Extension(global_config): Extension<GlobalConfig>,
+    mut req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
     let auth_header = req
         .headers()
         .get(http::header::AUTHORIZATION)
@@ -108,16 +105,21 @@ pub async fn middleware(mut req: Request, next: Next) -> Result<Response, Status
 
     match auth_header {
         Some(auth_header) => {
-            let user = User {
-                principal: String::from("test"),
-            };
+            let user = verify(
+                auth_header,
+                global_config.tools_for_humanity_inner_jwt_public_key,
+            );
 
-            req.extensions_mut().insert(Option::Some(user));
-            return Ok(next.run(req).await);
+            if user.is_ok() {
+                let user = user.unwrap();
+
+                req.extensions_mut().insert(user);
+            }
         }
         None => {
             req.extensions_mut().insert(Option::<User>::None);
-            return Ok(next.run(req).await);
         }
-    }
+    };
+
+    Ok(next.run(req).await)
 }

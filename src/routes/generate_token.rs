@@ -13,7 +13,7 @@ use crate::{
     utils::{
         handle_redis_error, BundleIdentifier, ClientException, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
-        TokenGenerationRequest, TokenGenerationResponse,
+        TokenGenerationRequest, TokenGenerationResponse, VerificationOutput,
     },
 };
 
@@ -27,7 +27,7 @@ pub async fn handler(
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Extension(kinesis_client): Extension<KinesisClient>,
-    Extension(tfh_user): Extension<Option<tools_for_humanity::User>>,
+    Extension(tfh_user): Extension<tools_for_humanity::User>,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
     let aud = request.aud.clone();
@@ -42,7 +42,8 @@ pub async fn handler(
 
     let _enter = my_span.enter();
 
-    let integrity_verification_input = IntegrityVerificationInput::from_request(&request)?;
+    let integrity_verification_input =
+        IntegrityVerificationInput::from_request(&request, &Some(tfh_user))?;
 
     handle_client_error_if_applicable(
         &integrity_verification_input,
@@ -224,6 +225,16 @@ async fn verify_android_or_apple_integrity(
 
         IntegrityVerificationInput::ClientError { client_error: _ } => {
             eyre::bail!("Unexpected variant reached in verify_android_or_apple_integrity.");
+        }
+
+        IntegrityVerificationInput::ToolsForHumanity { principal } => {
+            tracing::info!(principal = principal, "Tools for Humanity verification");
+            VerificationOutput {
+                success: true,
+                app_version: None,
+                parsed_play_integrity_token: None,
+                client_exception: None,
+            }
         }
     };
 

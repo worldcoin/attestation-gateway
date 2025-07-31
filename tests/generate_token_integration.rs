@@ -83,7 +83,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         enabled_bundle_identifiers: vec![BundleIdentifier::AndroidStageWorldApp, BundleIdentifier::AndroidDevWorldApp, BundleIdentifier::IOSStageWorldApp, BundleIdentifier::IOSProdWorldApp],
         log_client_errors: false,
         kinesis_stream_arn: Some("arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
-        tools_for_humanity_inner_jws_public_key: std::env::var("TOOLS_FOR_HUMANITY_INNER_JWS_PUBLIC_KEY").expect("`TOOLS_FOR_HUMANITY_INNER_JWS_PUBLIC_KEY` must be set for tests."),
+        tools_for_humanity_inner_jwt_public_key: std::env::var("TOOLS_FOR_HUMANITY_INNER_JWT_PUBLIC_KEY").expect("`TOOLS_FOR_HUMANITY_INNER_JWT_PUBLIC_KEY` must be set for tests."),
     };
     Extension(config)
 }
@@ -594,7 +594,7 @@ async fn test_server_error_is_properly_logged() {
             enabled_bundle_identifiers: vec![BundleIdentifier::AndroidDevWorldApp],
             log_client_errors: false,
             kinesis_stream_arn: None,
-            tools_for_humanity_inner_jws_public_key: "irrelevant".to_string(),
+            tools_for_humanity_inner_jwt_public_key: "irrelevant".to_string(),
         };
         Extension(config)
     }
