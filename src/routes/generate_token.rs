@@ -8,7 +8,7 @@ use crate::{
     android, apple,
     keys::fetch_active_key,
     kinesis::send_kinesis_stream_event,
-    kms_jws, tools_for_humanity,
+    kms_jws,
     utils::{
         handle_redis_error, BundleIdentifier, ClientException, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
