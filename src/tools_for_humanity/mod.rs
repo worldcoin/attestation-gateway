@@ -113,7 +113,7 @@ pub async fn middleware(
             if user.is_ok() {
                 let user = user.unwrap();
 
-                req.extensions_mut().insert(user);
+                req.extensions_mut().insert(Some(user));
             }
         }
         None => {

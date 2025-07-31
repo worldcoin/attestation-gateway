@@ -27,7 +27,7 @@ pub async fn handler(
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Extension(kinesis_client): Extension<KinesisClient>,
-    Extension(tfh_user): Extension<tools_for_humanity::User>,
+    Extension(tfh_user): Extension<Option<tools_for_humanity::User>>,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
     let aud = request.aud.clone();
@@ -43,7 +43,7 @@ pub async fn handler(
     let _enter = my_span.enter();
 
     let integrity_verification_input =
-        IntegrityVerificationInput::from_request(&request, &Some(tfh_user))?;
+        IntegrityVerificationInput::from_request(&request, &tfh_user)?;
 
     handle_client_error_if_applicable(
         &integrity_verification_input,
