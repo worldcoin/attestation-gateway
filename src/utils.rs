@@ -102,7 +102,6 @@ pub const SIGNING_CONFIG: SigningConfigDefinition = SigningConfigDefinition {
 pub enum Platform {
     AppleIOS,
     Android,
-    ToolsForHumanity,
 }
 
 impl Display for Platform {
@@ -110,7 +109,6 @@ impl Display for Platform {
         match self {
             Self::AppleIOS => write!(f, "ios"),
             Self::Android => write!(f, "android"),
-            Self::ToolsForHumanity => write!(f, "tools_for_humanity"),
         }
     }
 }
@@ -129,12 +127,6 @@ pub enum BundleIdentifier {
     IOSProdWorldApp,
     #[serde(rename = "org.worldcoin.insight.staging")]
     IOSStageWorldApp,
-    #[serde(rename = "com.toolsforhumanity")]
-    ToolsForHumanityProdApp,
-    #[serde(rename = "com.toolsforhumanity.staging")]
-    ToolsForHumanityStagingApp,
-    #[serde(rename = "com.toolsforhumanity.dev")]
-    ToolsForHumanityDevApp,
 }
 
 impl BundleIdentifier {
@@ -145,9 +137,6 @@ impl BundleIdentifier {
                 Platform::Android
             }
             Self::IOSProdWorldApp | Self::IOSStageWorldApp => Platform::AppleIOS,
-            Self::ToolsForHumanityDevApp
-            | Self::ToolsForHumanityStagingApp
-            | Self::ToolsForHumanityProdApp => Platform::ToolsForHumanity,
         }
     }
 
@@ -159,23 +148,16 @@ impl BundleIdentifier {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
             Self::AndroidDevWorldApp => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
-            Self::IOSProdWorldApp
-            | Self::IOSStageWorldApp
-            | Self::ToolsForHumanityProdApp
-            | Self::ToolsForHumanityStagingApp
-            | Self::ToolsForHumanityDevApp => None,
+            Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
         }
     }
 
     #[must_use]
     pub const fn apple_app_id(&self) -> Option<&str> {
         match self {
-            Self::AndroidProdWorldApp
-            | Self::AndroidStageWorldApp
-            | Self::AndroidDevWorldApp
-            | Self::ToolsForHumanityProdApp
-            | Self::ToolsForHumanityStagingApp
-            | Self::ToolsForHumanityDevApp => None,
+            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
+                None
+            }
             // cspell:disable
             Self::IOSStageWorldApp => Some("35RXKB6738.org.worldcoin.insight.staging"),
             Self::IOSProdWorldApp => Some("35RXKB6738.org.worldcoin.insight"),
@@ -192,9 +174,6 @@ impl Display for BundleIdentifier {
             Self::AndroidDevWorldApp => write!(f, "com.worldcoin.dev"),
             Self::IOSProdWorldApp => write!(f, "org.worldcoin.insight"),
             Self::IOSStageWorldApp => write!(f, "org.worldcoin.insight.staging"),
-            Self::ToolsForHumanityProdApp => write!(f, "com.toolsforhumanity"),
-            Self::ToolsForHumanityStagingApp => write!(f, "com.toolsforhumanity.staging"),
-            Self::ToolsForHumanityDevApp => write!(f, "com.toolsforhumanity.dev"),
         }
     }
 }
@@ -209,7 +188,6 @@ pub struct TokenGenerationRequest {
     pub apple_initial_attestation: Option<String>,
     pub apple_public_key: Option<String>,
     pub apple_assertion: Option<String>,
-    pub tools_for_humanity_token: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, JsonSchema)]
@@ -227,9 +205,6 @@ pub enum IntegrityVerificationInput {
     AppleAssertion {
         apple_assertion: String,
         apple_public_key: String,
-    },
-    ToolsForHumanity {
-        tools_for_humanity_token: String,
     },
     /// Represents the state where a `client_error` is passed from the client, indicating a failure with upstream services.
     /// Under normal circumstances, this is simply logged for analytics and the request is rejected.
@@ -299,21 +274,6 @@ impl IntegrityVerificationInput {
                 Ok(Self::AppleAssertion {
                     apple_assertion: request.apple_assertion.clone().unwrap(),
                     apple_public_key: request.apple_public_key.clone().unwrap(),
-                })
-            }
-            Platform::ToolsForHumanity => {
-                if request.tools_for_humanity_token.is_none() {
-                    return Err(RequestError {
-                        code: ErrorCode::BadRequest,
-                        details: Some(
-                            "`tools_for_humanity_token` is required for this bundle identifier."
-                                .to_string(),
-                        ),
-                    });
-                }
-
-                Ok(Self::ToolsForHumanity {
-                    tools_for_humanity_token: request.tools_for_humanity_token.clone().unwrap(),
                 })
             }
         }
