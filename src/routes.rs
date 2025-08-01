@@ -1,16 +1,15 @@
-use std::time::Duration;
-
+use crate::tools_for_humanity;
 use aide::axum::{
     routing::{get, post},
     ApiRouter,
 };
+use std::time::Duration;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 mod generate_token;
 mod health;
 mod jwks;
-use crate::tools_for_humanity;
 
 #[must_use]
 pub fn get_timeout_layer() -> TimeoutLayer {
