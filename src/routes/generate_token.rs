@@ -43,7 +43,7 @@ pub async fn handler(
     let _enter = my_span.enter();
 
     let integrity_verification_input =
-        IntegrityVerificationInput::from_request(&request, &tfh_user)?;
+        IntegrityVerificationInput::from_request(&request, tfh_user)?;
 
     handle_client_error_if_applicable(
         &integrity_verification_input,

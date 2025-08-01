@@ -17,6 +17,10 @@ pub struct User {
     pub principal: String,
 }
 
+/// Verifies a Tools for Humanity token and returns the user.
+///
+/// # Errors
+/// Will return a `eyre::Error` if there is an error verifying the token.
 pub fn verify(
     tools_for_humanity_outer_token: &str,
     tools_for_humanity_inner_jwt_verifier_key: String,
@@ -93,6 +97,10 @@ fn verify_outer_jwt(
     Ok(parsed_token)
 }
 
+/// Middleware to verify Tools for Humanity tokens and insert the user into the request extensions.
+///
+/// # Errors
+/// Will catch and log any errors verifying the token.
 pub async fn middleware(
     Extension(global_config): Extension<GlobalConfig>,
     mut req: Request,
@@ -105,21 +113,23 @@ pub async fn middleware(
 
     match auth_header {
         Some(auth_header) => {
-            let user = verify(
+            match verify(
                 auth_header,
                 global_config.tools_for_humanity_inner_jwt_public_key,
-            );
-
-            if user.is_ok() {
-                let user = user.unwrap();
-
-                req.extensions_mut().insert(Some(user));
+            ) {
+                Ok(user) => {
+                    req.extensions_mut().insert(Some(user));
+                }
+                Err(e) => {
+                    tracing::error!("Error verifying Tools for Humanity token: {:?}", e);
+                    req.extensions_mut().insert(Option::<User>::None);
+                }
             }
         }
         None => {
             req.extensions_mut().insert(Option::<User>::None);
         }
-    };
+    }
 
     Ok(next.run(req).await)
 }

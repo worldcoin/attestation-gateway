@@ -9,6 +9,10 @@ pub struct ToolsForHumanityInnerToken {
 }
 
 impl ToolsForHumanityInnerToken {
+    /// Initializes a `ToolsForHumanityInnerToken` struct from a JSON payload.
+    ///
+    /// # Errors
+    /// Will return a `serde_json` error if parsing fails.
     pub fn from_json(inner_token_payload: &str) -> eyre::Result<Self> {
         let parsed_json = serde_json::from_str::<Self>(inner_token_payload);
 
@@ -31,6 +35,10 @@ pub struct ToolsForHumanityOuterToken {
 }
 
 impl ToolsForHumanityOuterToken {
+    /// Initializes a `ToolsForHumanityOuterToken` struct from a JSON payload.
+    ///
+    /// # Errors
+    /// Will return a `serde_json` error if parsing fails.
     pub fn from_json(outer_token_payload: &str) -> eyre::Result<Self> {
         let parsed_json = serde_json::from_str::<Self>(outer_token_payload);
 

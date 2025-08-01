@@ -226,7 +226,7 @@ impl IntegrityVerificationInput {
     /// No panics expected.
     pub fn from_request(
         request: &TokenGenerationRequest,
-        tfh_user: &Option<tools_for_humanity::User>,
+        tfh_user: Option<tools_for_humanity::User>,
     ) -> Result<Self, RequestError> {
         if let Some(client_error) = request.client_error.clone() {
             return Ok(Self::ClientError { client_error });
@@ -234,7 +234,7 @@ impl IntegrityVerificationInput {
 
         if let Some(user) = tfh_user {
             return Ok(Self::ToolsForHumanity {
-                principal: user.principal.clone(),
+                principal: user.principal,
             });
         }
 
