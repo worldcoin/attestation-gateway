@@ -14,7 +14,7 @@ pub struct GlobalConfig {
     pub android_outer_jwe_private_key: String,
     pub android_inner_jws_public_key: String,
     pub apple_keys_dynamo_table_name: String,
-    pub tools_for_humanity_inner_jwt_public_key: String,
+    pub tools_for_humanity_inner_jwks_url: String,
     pub enabled_bundle_identifiers: Vec<BundleIdentifier>,
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
     pub log_client_errors: bool,
@@ -36,9 +36,8 @@ impl GlobalConfig {
         let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
             .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
 
-        let tools_for_humanity_inner_jwt_public_key =
-            env::var("TOOLS_FOR_HUMANITY_INNER_JWT_PUBLIC_KEY")
-                .expect("env var `TOOLS_FOR_HUMANITY_INNER_JWT_PUBLIC_KEY` is required");
+        let tools_for_humanity_inner_jwks_url = env::var("TOOLS_FOR_HUMANITY_INNER_JWKS_URL")
+            .expect("env var `TOOLS_FOR_HUMANITY_INNER_JWKS_URL` is required");
 
         let log_client_errors = env::var("LOG_CLIENT_ERRORS")
             .is_ok_and(|val| val.to_lowercase() == "true" || val == "1");
@@ -66,7 +65,7 @@ impl GlobalConfig {
             android_outer_jwe_private_key,
             android_inner_jws_public_key,
             apple_keys_dynamo_table_name,
-            tools_for_humanity_inner_jwt_public_key,
+            tools_for_humanity_inner_jwks_url,
             enabled_bundle_identifiers,
             log_client_errors,
             kinesis_stream_arn,
