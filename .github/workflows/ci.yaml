@@ -19,6 +19,7 @@ jobs:
 
       - name: Set up Rust
         run: |
+          rustup default 1.85.0
           rustup update
 
       - name: Cache Cargo registry
@@ -70,6 +71,7 @@ jobs:
 
       - name: Set up Rust
         run: |
+          rustup default 1.85.0
           rustup update
 
       - name: Cache Cargo registry
@@ -168,6 +170,7 @@ jobs:
 
       - name: Set up Rust
         run: |
+          rustup default 1.85.0
           rustup update
 
       - uses: EmbarkStudios/cargo-deny-action@v2
