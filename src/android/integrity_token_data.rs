@@ -308,8 +308,9 @@ impl PlayIntegrityToken {
 
             return Err(eyre::eyre!(ClientException {
                 code: ErrorCode::IntegrityFailed,
-                internal_debug_info:
-                format!("device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Device recognition verdict: {device_recognition_verdict:?}. Legacy device integrity has the following verdicts: {legacy_device_integrity:?}."),
+                internal_debug_info: format!(
+                    "device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY. Device recognition verdict: {device_recognition_verdict:?}. Legacy device integrity has the following verdicts: {legacy_device_integrity:?}."
+                ),
             }));
         }
         Ok(())
@@ -496,9 +497,11 @@ mod tests {
     fn test_validate_request_details() {
         let token = create_test_token();
 
-        assert!(token
-            .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "valid_nonce")
-            .is_ok());
+        assert!(
+            token
+                .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "valid_nonce")
+                .is_ok()
+        );
 
         // Test invalid package name
         let error = token
@@ -547,9 +550,11 @@ mod tests {
         let token = create_test_token();
 
         // Test valid app integrity
-        assert!(token
-            .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
-            .is_ok());
+        assert!(
+            token
+                .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+                .is_ok()
+        );
 
         // Test invalid package name (passing a different bundle identifier)
         let error = token
@@ -688,9 +693,11 @@ mod tests {
         let bundle_identifier = BundleIdentifier::AndroidProdWorldApp;
 
         // Test valid environment details
-        assert!(token
-            .validate_environment_details(&bundle_identifier)
-            .is_ok());
+        assert!(
+            token
+                .validate_environment_details(&bundle_identifier)
+                .is_ok()
+        );
 
         // Test high-risk environment
         let mut invalid_token = create_test_token();
@@ -714,9 +721,11 @@ mod tests {
         // Test with no environment details (this is still a valid token)
         let mut valid_token = create_test_token();
         valid_token.environment_details = None;
-        assert!(valid_token
-            .validate_environment_details(&bundle_identifier)
-            .is_ok());
+        assert!(
+            valid_token
+                .validate_environment_details(&bundle_identifier)
+                .is_ok()
+        );
 
         // Test with no apps detected in the environment details on a production app
         let mut invalid_token = create_test_token();
@@ -745,9 +754,11 @@ mod tests {
             },
             play_protect_verdict: Some(PlayProtectVerdict::NoIssues),
         });
-        assert!(valid_token
-            .validate_environment_details(&BundleIdentifier::AndroidStageWorldApp)
-            .is_ok());
+        assert!(
+            valid_token
+                .validate_environment_details(&BundleIdentifier::AndroidStageWorldApp)
+                .is_ok()
+        );
     }
 
     #[test]

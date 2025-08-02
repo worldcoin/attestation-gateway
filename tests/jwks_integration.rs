@@ -1,8 +1,8 @@
 use attestation_gateway::{keys::SigningKey, kms_jws::KMSKeyDefinition, utils::SIGNING_CONFIG};
 use axum::{
+    Extension,
     body::Body,
     http::{self, Request, StatusCode},
-    Extension,
 };
 use http_body_util::BodyExt;
 use josekit::jwk::Jwk;

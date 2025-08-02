@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use aide::axum::{
-    routing::{get, post},
     ApiRouter,
+    routing::{get, post},
 };
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;

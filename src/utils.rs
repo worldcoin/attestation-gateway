@@ -1,7 +1,7 @@
 use crate::android::PlayIntegrityToken;
 use aide::OperationIo;
 use axum::response::IntoResponse;
-use josekit::{jwt::JwtPayload, JoseError};
+use josekit::{JoseError, jwt::JwtPayload};
 use redis::RedisError;
 use schemars::JsonSchema;
 use std::{env, fmt::Display, time::SystemTime};
@@ -394,8 +394,12 @@ impl ErrorCode {
             Self::ExpiredToken => "The integrity token has expired. Please generate a new one.",
             Self::IntegrityFailed => "Integrity checks have not passed.",
             Self::InternalServerError => "Internal server error. Please try again.",
-            Self::InvalidAttestationForApp => "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object.",
-            Self::InvalidInitialAttestation => "This public key has already gone through initial attestation. Use assertion instead.",
+            Self::InvalidAttestationForApp => {
+                "The provided attestation is not valid for this app. Verify the provided bundle identifier is correct for this attestation object."
+            }
+            Self::InvalidInitialAttestation => {
+                "This public key has already gone through initial attestation. Use assertion instead."
+            }
             Self::InvalidPublicKey => "Public key has not been attested.",
             Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
         }
