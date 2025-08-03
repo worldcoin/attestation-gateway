@@ -7,7 +7,7 @@ description = "Protects app integrity."
 license = "MIT"
 keywords = ["integrity", "attestation", "PlayIntegrity", "DeviceCheck"]
 categories = ["web-programming"]
-rust-version = "1.85"
+rust-version = "1.85.1"
 
 [dependencies]
 aide = { version = "0.13.4", features = ["axum", "macros", "scalar"] }
@@ -39,7 +39,7 @@ schemars = "0.8.21"
 serde = { version = "1.0.210", features = ["derive"] }
 serde_bytes = "0.11.17"
 serde_json = "1.0.134"
-tokio = { version = "1.46.1", features = ["full"] }
+tokio = { version = "1.46.2", features = ["full"] }
 tower-http = { version = "0.6.6", features = ["compression-br", "trace", "timeout"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json"] }
