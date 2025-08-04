@@ -10,6 +10,7 @@ use base64::Engine;
 pub use integrity_token_data::{ToolsForHumanityInnerToken, ToolsForHumanityOuterToken};
 use jwtk::{HeaderAndClaims, jwk::RemoteJwksVerifier};
 use std::time::Duration;
+use tokio::sync::OnceCell;
 
 mod integrity_token_data;
 
@@ -18,20 +19,22 @@ pub struct User {
     pub principal: String,
 }
 
+static TOOLS_FOR_HUMANITY_VERIFIER: OnceCell<RemoteJwksVerifier> = OnceCell::const_new();
+
 /// Verifies a Tools for Humanity token and returns the user.
 ///
 /// # Errors
 /// Will return a `eyre::Error` if there is an error verifying the token.
 pub async fn verify(
     tools_for_humanity_outer_token: &str,
-    tools_for_humanity_inner_jwks_url: String,
+    tools_for_humanity_verifier: &RemoteJwksVerifier,
 ) -> eyre::Result<User> {
     // Parse outer JWT
     let outer_jwt_payload = parse_outer_jwt(tools_for_humanity_outer_token)?;
 
     // Verify and parse inner JWT
     let inner_jwt_payload =
-        verify_and_parse_inner_jwt(outer_jwt_payload, tools_for_humanity_inner_jwks_url).await?;
+        verify_and_parse_inner_jwt(outer_jwt_payload, tools_for_humanity_verifier).await?;
 
     let user = User {
         principal: inner_jwt_payload.principal.clone(),
@@ -64,16 +67,11 @@ fn parse_outer_jwt(tools_for_humanity_token: &str) -> eyre::Result<ToolsForHuman
 
 async fn verify_and_parse_inner_jwt(
     outer_token: ToolsForHumanityOuterToken,
-    tools_for_humanity_inner_jwks_url: String,
+    tools_for_humanity_verifier: &RemoteJwksVerifier,
 ) -> eyre::Result<ToolsForHumanityInnerToken> {
-    let verifier = RemoteJwksVerifier::new(
-        tools_for_humanity_inner_jwks_url,
-        None,
-        Duration::from_secs(3600),
-    );
-
-    let jwt: HeaderAndClaims<ToolsForHumanityInnerToken> =
-        verifier.verify(&outer_token.certificate).await?;
+    let jwt: HeaderAndClaims<ToolsForHumanityInnerToken> = tools_for_humanity_verifier
+        .verify(&outer_token.certificate)
+        .await?;
 
     let claims = jwt.claims();
 
@@ -111,23 +109,36 @@ pub async fn middleware(
     mut req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    let tools_for_humanity_verifier = if let Some(jwks_url) =
+        global_config.tools_for_humanity_inner_jwks_url
+    {
+        TOOLS_FOR_HUMANITY_VERIFIER
+            .get_or_init(|| async {
+                tracing::info!("✅ Initializing Tools for Humanity verifier...");
+                RemoteJwksVerifier::new(jwks_url, None, Duration::from_secs(3600))
+            })
+            .await
+    } else {
+        tracing::info!("✅ Skipping Tools for Humanity token verification (no JWKS URL provided)");
+        req.extensions_mut().insert(Option::<User>::None);
+        return Ok(next.run(req).await);
+    };
+
     let auth_header = req
         .headers()
         .get(http::header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok());
 
     match auth_header {
-        Some(auth_header) => {
-            match verify(auth_header, global_config.tools_for_humanity_inner_jwks_url).await {
-                Ok(user) => {
-                    req.extensions_mut().insert(Some(user));
-                }
-                Err(e) => {
-                    tracing::error!("Error verifying Tools for Humanity token: {:?}", e);
-                    req.extensions_mut().insert(Option::<User>::None);
-                }
+        Some(auth_header) => match verify(auth_header, tools_for_humanity_verifier).await {
+            Ok(user) => {
+                req.extensions_mut().insert(Some(user));
             }
-        }
+            Err(e) => {
+                tracing::error!("Error verifying Tools for Humanity token: {:?}", e);
+                req.extensions_mut().insert(Option::<User>::None);
+            }
+        },
         None => {
             req.extensions_mut().insert(Option::<User>::None);
         }
