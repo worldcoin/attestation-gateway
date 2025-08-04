@@ -61,7 +61,7 @@ jobs:
 
   test:
     name: Tests
-    runs-on: arc-large-amd64-runner
+    runs-on: arc-2xlarge-amd64-runner
 
     steps:
       - name: Checkout code
