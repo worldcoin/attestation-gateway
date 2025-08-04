@@ -1,14 +1,14 @@
 use crate::utils::GlobalConfig;
 use axum::{
+    Extension,
     extract::Request,
     http::{self, StatusCode},
     middleware::Next,
     response::Response,
-    Extension,
 };
 use base64::Engine;
 pub use integrity_token_data::{ToolsForHumanityInnerToken, ToolsForHumanityOuterToken};
-use jwtk::{jwk::RemoteJwksVerifier, HeaderAndClaims};
+use jwtk::{HeaderAndClaims, jwk::RemoteJwksVerifier};
 use std::time::Duration;
 
 mod integrity_token_data;
