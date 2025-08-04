@@ -84,9 +84,15 @@ fn verify_outer_jwt(
     tools_for_humanity_outer_token: &str,
     tools_for_humanity_inner_token: &ToolsForHumanityInnerToken,
 ) -> eyre::Result<ToolsForHumanityOuterToken> {
-    let parsed_key: jwtk::jwk::Jwk =
-        serde_json::from_str(&tools_for_humanity_inner_token.public_key)?;
-    let some_public_key = parsed_key.to_verification_key()?;
+    let some_public_key =
+        // Try to parse the public key as a PEM string
+        jwtk::SomePublicKey::from_pem(tools_for_humanity_inner_token.public_key.as_bytes())
+            .or_else(|_| {
+                // If that fails, parse the public key as a JWK
+                let parsed_key: jwtk::jwk::Jwk =
+                    serde_json::from_str(&tools_for_humanity_inner_token.public_key)?;
+                parsed_key.to_verification_key()
+            })?;
 
     let claims = jwtk::verify::<ToolsForHumanityOuterToken>(
         tools_for_humanity_outer_token,
