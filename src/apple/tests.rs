@@ -5,8 +5,8 @@ use openssl::{
     nid::Nid,
     pkey::{Private, Public},
     x509::{
-        extension::{BasicConstraints, KeyUsage, SubjectKeyIdentifier},
         X509Name,
+        extension::{BasicConstraints, KeyUsage, SubjectKeyIdentifier},
     },
 };
 

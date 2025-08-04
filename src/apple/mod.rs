@@ -1,7 +1,7 @@
 use std::{io::Cursor, str::FromStr};
 
 use crate::utils::{BundleIdentifier, ClientException, ErrorCode, VerificationOutput};
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use der_parser::parse_der;
 use dynamo::{fetch_apple_public_key, update_apple_public_key_counter_plus};
 use eyre::ContextCompat;
@@ -12,8 +12,8 @@ use openssl::{
     sign::Verifier,
     stack::Stack,
     x509::{
+        X509, X509StoreContext,
         store::{X509Store, X509StoreBuilder},
-        X509StoreContext, X509,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -235,7 +235,7 @@ fn decode_and_validate_initial_attestation(
 
     // Step 4: check nonce
     let (_, res) = X509Certificate::from_der(&attestation.att_stmt.x5c[0])?;
-    let oid = oid!(1.2.840 .113635 .100 .8 .2);
+    let oid = oid!(1.2.840.113635.100.8.2);
     let extension = res.get_extension_unique(&oid)?;
     let (_, content) = parse_der(extension.context("Cannot parse nonce.")?.value)?;
     let value = content.as_sequence()?;

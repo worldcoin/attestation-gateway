@@ -1,7 +1,7 @@
 use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
 use axum_jsonschema::Json;
-use redis::{aio::ConnectionManager, AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
+use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::ConnectionManager};
 use std::time::SystemTime;
 
 use crate::{
@@ -10,9 +10,9 @@ use crate::{
     kinesis::send_kinesis_stream_event,
     kms_jws,
     utils::{
-        handle_redis_error, BundleIdentifier, ClientException, DataReport, ErrorCode, GlobalConfig,
+        BundleIdentifier, ClientException, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
-        TokenGenerationRequest, TokenGenerationResponse,
+        TokenGenerationRequest, TokenGenerationResponse, handle_redis_error,
     },
 };
 

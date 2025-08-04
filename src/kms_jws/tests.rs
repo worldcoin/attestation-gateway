@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 use josekit::{
-    jws::{JwsSigner, ES256},
+    jws::{ES256, JwsSigner},
     jwt,
 };
 

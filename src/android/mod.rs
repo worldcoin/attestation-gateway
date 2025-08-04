@@ -91,8 +91,8 @@ mod tests {
 
     use super::{verify, verify_and_parse_inner_jws};
     use crate::utils::{BundleIdentifier, ClientException, ErrorCode};
-    use josekit::jwe::{self, JweHeader, A128KW, A256KW};
-    use josekit::jws::{JwsHeader, ES256};
+    use josekit::jwe::{self, A128KW, A256KW, JweHeader};
+    use josekit::jws::{ES256, JwsHeader};
     use josekit::jwt::{self, JwtPayload};
 
     fn helper_get_test_keys() -> (String, String) {

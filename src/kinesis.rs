@@ -1,5 +1,5 @@
 use crate::utils::DataReport;
-use aws_sdk_kinesis::{primitives::Blob, Client as KinesisClient};
+use aws_sdk_kinesis::{Client as KinesisClient, primitives::Blob};
 
 /// Reports a parsed event to a Kinesis stream for debugging and monitoring purposes
 ///

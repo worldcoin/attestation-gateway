@@ -1,13 +1,13 @@
 [package]
 name = "attestation-gateway"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/worldcoin/attestation-gateway"
 description = "Protects app integrity."
 license = "MIT"
 keywords = ["integrity", "attestation", "PlayIntegrity", "DeviceCheck"]
 categories = ["web-programming"]
-rust-version = "1.80"
+rust-version = "1.85.1"
 
 [dependencies]
 aide = { version = "0.13.4", features = ["axum", "macros", "scalar"] }

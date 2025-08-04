@@ -8,21 +8,21 @@ use attestation_gateway::{
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_kinesis::types::ShardIteratorType;
 use axum::{
+    Extension,
     body::Body,
     http::{self, Request, StatusCode},
-    Extension,
 };
 use base64::Engine;
 use http_body_util::BodyExt;
 use josekit::{
-    jwe::{JweContext, JweHeader, A256KW},
-    jws::{JwsHeader, ES256},
+    jwe::{A256KW, JweContext, JweHeader},
+    jws::{ES256, JwsHeader},
     jwt::{self, JwtPayload},
 };
 use openssl::{pkey::Private, sha::Sha256};
 use regex::Regex;
 use serde_bytes::ByteBuf;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use serial_test::serial;
 use tokio::task;
 use tower::ServiceExt; // for `response.collect`
@@ -647,7 +647,9 @@ async fn test_server_error_is_properly_logged() {
         })
     );
 
-    assert!(logs_contain("Error verifying Android or Apple integrity error=Invalid key format: The key size must be 32: 7"));
+    assert!(logs_contain(
+        "Error verifying Android or Apple integrity error=Invalid key format: The key size must be 32: 7"
+    ));
 }
 
 // SECTION --- apple initial attestation tests ---
