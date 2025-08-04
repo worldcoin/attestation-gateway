@@ -1,15 +1,15 @@
 use std::time::{Duration, Instant};
 
 use aws_sdk_kms::types::{KeySpec, Tag};
-use base64::{engine::general_purpose, Engine};
+use base64::{Engine, engine::general_purpose};
 use eyre::OptionExt;
 use openssl::{
     bn::{BigNum, BigNumContext},
     pkey::{PKey, Public},
 };
-use redis::{aio::ConnectionManager, AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
+use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::ConnectionManager};
 
-use josekit::{jwk::Jwk, Value};
+use josekit::{Value, jwk::Jwk};
 use serde::{Deserialize, Serialize};
 
 use crate::{kms_jws::KMSKeyDefinition, utils::SIGNING_CONFIG};

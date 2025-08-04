@@ -1,7 +1,7 @@
 use crate::tools_for_humanity;
 use aide::axum::{
-    routing::{get, post},
     ApiRouter,
+    routing::{get, post},
 };
 use std::time::Duration;
 use tower_http::timeout::TimeoutLayer;
