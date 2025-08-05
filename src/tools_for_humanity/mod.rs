@@ -119,6 +119,8 @@ pub async fn middleware(
     mut req: Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    req.extensions_mut().insert(Option::<User>::None);
+
     // Initialize the verifier if it's not already initialized
     let tools_for_humanity_verifier = if let Some(jwks_url) =
         global_config.tools_for_humanity_inner_jwks_url
@@ -131,7 +133,6 @@ pub async fn middleware(
             .await
     } else {
         tracing::info!("✅ Skipping Tools for Humanity token verification (no JWKS URL provided)");
-        req.extensions_mut().insert(Option::<User>::None);
         return Ok(next.run(req).await);
     };
 
@@ -148,8 +149,7 @@ pub async fn middleware(
         .map(|h| h.to_str().unwrap_or_default().to_string());
 
     let Some(auth_header) = auth_header else {
-        let mut req: http::Request<body::Body> = Request::from_parts(parts, body);
-        req.extensions_mut().insert(Option::<User>::None);
+        let req: http::Request<body::Body> = Request::from_parts(parts, body);
         return Ok(next.run(req).await);
     };
 
