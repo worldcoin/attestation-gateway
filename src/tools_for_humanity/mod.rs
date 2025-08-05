@@ -1,10 +1,11 @@
-use crate::utils::GlobalConfig;
+use crate::request_hasher;
+use crate::utils::{ErrorCode, GlobalConfig, RequestError};
 use axum::{
-    Extension,
+    Extension, body,
     extract::Request,
-    http::{self, StatusCode},
+    http::{self, Method, StatusCode, Uri},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use base64::Engine;
 pub use integrity_token_data::{ToolsForHumanityInnerToken, ToolsForHumanityOuterToken};
@@ -28,6 +29,7 @@ static TOOLS_FOR_HUMANITY_VERIFIER: OnceCell<RemoteJwksVerifier> = OnceCell::con
 pub async fn verify(
     tools_for_humanity_outer_token: &str,
     tools_for_humanity_verifier: &RemoteJwksVerifier,
+    request_hash: String,
 ) -> eyre::Result<User> {
     // Parse outer JWT
     let outer_jwt_payload = parse_outer_jwt(tools_for_humanity_outer_token)?;
@@ -41,7 +43,15 @@ pub async fn verify(
     };
 
     // Verify outer JWT against inner JWT public key
-    verify_outer_jwt(tools_for_humanity_outer_token, &inner_jwt_payload)?;
+    let outer_jwt_payload = verify_outer_jwt(tools_for_humanity_outer_token, &inner_jwt_payload)?;
+
+    // Validate request hash
+    if outer_jwt_payload.request_hash != request_hash {
+        return Err(eyre::eyre!(
+            "Request hash mismatch: {request_hash} != {}",
+            outer_jwt_payload.request_hash
+        ));
+    }
 
     // Return verification output
     Ok(user)
@@ -106,9 +116,10 @@ fn verify_outer_jwt(
 /// Will catch and log any errors verifying the token.
 pub async fn middleware(
     Extension(global_config): Extension<GlobalConfig>,
-    mut req: Request,
+    mut req: Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    // Initialize the verifier if it's not already initialized
     let tools_for_humanity_verifier = if let Some(jwks_url) =
         global_config.tools_for_humanity_inner_jwks_url
     {
@@ -124,23 +135,76 @@ pub async fn middleware(
         return Ok(next.run(req).await);
     };
 
-    let auth_header = req
-        .headers()
-        .get(http::header::AUTHORIZATION)
-        .and_then(|header| header.to_str().ok());
+    let (parts, body) = req.into_parts();
 
-    match auth_header {
-        Some(auth_header) => match verify(auth_header, tools_for_humanity_verifier).await {
-            Ok(user) => {
-                req.extensions_mut().insert(Some(user));
-            }
-            Err(e) => {
-                tracing::error!("Error verifying Tools for Humanity token: {:?}", e);
-                req.extensions_mut().insert(Option::<User>::None);
-            }
+    // Clone the parts to avoid moving them
+    let cloned_parts = parts.clone();
+    let uri: Uri = cloned_parts.uri;
+    let method = cloned_parts.method;
+    let headers = cloned_parts.headers;
+
+    let auth_header = headers
+        .get(http::header::AUTHORIZATION)
+        .map(|h| h.to_str().unwrap_or_default().to_string());
+
+    let Some(auth_header) = auth_header else {
+        let mut req: http::Request<body::Body> = Request::from_parts(parts, body);
+        req.extensions_mut().insert(Option::<User>::None);
+        return Ok(next.run(req).await);
+    };
+
+    // Convert the body to a string
+    let body_bytes = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .unwrap_or_default();
+    // body_bytes to Option<String>
+    let body_string = if body_bytes.is_empty() {
+        None
+    } else {
+        Some(String::from_utf8(body_bytes.to_vec()).unwrap_or_default())
+    };
+
+    // Reconstruct the request once we have the body as a string
+    let mut req: http::Request<body::Body> =
+        Request::from_parts(parts, axum::body::Body::from(body_bytes));
+
+    let hasher = request_hasher::RequestHasher::new();
+    let input = request_hasher::GenerateRequestHashInput {
+        path_uri: uri.path().to_string(),
+        method: match method {
+            Method::GET => request_hasher::AllowedHttpMethod::Get,
+            Method::POST => request_hasher::AllowedHttpMethod::Post,
+            _ => return Err(StatusCode::METHOD_NOT_ALLOWED),
         },
-        None => {
-            req.extensions_mut().insert(Option::<User>::None);
+        body: body_string,
+    };
+
+    let request_hash = match hasher.generate_json_request_hash(&input) {
+        Ok(request_hash) => request_hash,
+        Err(e) => {
+            tracing::error!("Error generating request hash: {:?}", e);
+            let error_code = ErrorCode::InternalServerError;
+            return Ok(RequestError {
+                code: error_code,
+                details: Some(e.to_string()),
+            }
+            .into_response());
+        }
+    };
+
+    match verify(&auth_header, tools_for_humanity_verifier, request_hash).await {
+        Ok(user) => {
+            req.extensions_mut().insert(Some(user));
+        }
+        // If token is provided but invalid, return a 400 error
+        Err(e) => {
+            tracing::error!("Error verifying Tools for Humanity token: {:?}", e);
+            let error_code = ErrorCode::InvalidToolsForHumanityToken;
+            return Ok(RequestError {
+                code: error_code,
+                details: Some(e.to_string()),
+            }
+            .into_response());
         }
     }
 

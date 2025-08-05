@@ -13,6 +13,7 @@ mod apple;
 mod keys;
 mod kinesis;
 mod kms_jws;
+mod request_hasher;
 mod routes;
 mod server;
 mod tools_for_humanity;

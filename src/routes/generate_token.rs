@@ -1,4 +1,3 @@
-use crate::tools_for_humanity;
 use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
 use axum_jsonschema::Json;
@@ -9,7 +8,7 @@ use crate::{
     android, apple,
     keys::fetch_active_key,
     kinesis::send_kinesis_stream_event,
-    kms_jws,
+    kms_jws, tools_for_humanity,
     utils::{
         BundleIdentifier, ClientException, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,

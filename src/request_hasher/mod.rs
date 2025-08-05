@@ -10,15 +10,6 @@ pub enum AllowedHttpMethod {
     Post,
 }
 
-impl AllowedHttpMethod {
-    #[must_use]
-    pub const fn as_bytes(&self) -> &[u8] {
-        match self {
-            Self::Get => b"GET",
-            Self::Post => b"POST",
-        }
-    }
-}
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ClientName {
@@ -28,9 +19,9 @@ pub enum ClientName {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GenerateRequestHashInput {
-    path_uri: String,
-    method: AllowedHttpMethod,
-    body: Option<String>,
+    pub(crate) path_uri: String,
+    pub(crate) method: AllowedHttpMethod,
+    pub(crate) body: Option<String>,
 }
 
 pub struct RequestHasher {}
@@ -49,6 +40,7 @@ impl RequestHasher {
     ///
     /// # Errors
     /// This function will return an error if the input JSON is invalid.
+    #[allow(clippy::unused_self)]
     pub fn generate_json_request_hash(
         &self,
         input: &GenerateRequestHashInput,

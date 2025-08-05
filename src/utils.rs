@@ -370,6 +370,7 @@ pub enum ErrorCode {
     InvalidInitialAttestation,
     InvalidPublicKey,
     InvalidToken,
+    InvalidToolsForHumanityToken,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -384,6 +385,7 @@ impl std::fmt::Display for ErrorCode {
             Self::InvalidInitialAttestation => write!(f, "invalid_initial_attestation"),
             Self::InvalidPublicKey => write!(f, "invalid_public_key"),
             Self::InvalidToken => write!(f, "invalid_token"),
+            Self::InvalidToolsForHumanityToken => write!(f, "invalid_tools_for_humanity_token"),
         }
     }
 }
@@ -399,7 +401,8 @@ impl ErrorCode {
             | Self::InvalidAttestationForApp
             | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
-            | Self::InvalidToken => axum::http::StatusCode::BAD_REQUEST,
+            | Self::InvalidToken
+            | Self::InvalidToolsForHumanityToken => axum::http::StatusCode::BAD_REQUEST,
         }
     }
 
@@ -418,6 +421,9 @@ impl ErrorCode {
             }
             Self::InvalidPublicKey => "Public key has not been attested.",
             Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
+            Self::InvalidToolsForHumanityToken => {
+                "The provided Tools for Humanity token is invalid or malformed."
+            }
         }
     }
 
@@ -432,6 +438,7 @@ impl ErrorCode {
             | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
             | Self::InvalidToken
+            | Self::InvalidToolsForHumanityToken
             | Self::DuplicateRequestHash => false,
         }
     }
