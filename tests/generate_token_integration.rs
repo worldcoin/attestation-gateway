@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use attestation_gateway::{
     apple,
     keys::fetch_active_key,
+    request_hasher,
     utils::{BundleIdentifier, DataReport, TokenGenerationRequest},
 };
 use aws_sdk_dynamodb::types::AttributeValue;
@@ -83,7 +84,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         enabled_bundle_identifiers: vec![BundleIdentifier::AndroidStageWorldApp, BundleIdentifier::AndroidDevWorldApp, BundleIdentifier::IOSStageWorldApp, BundleIdentifier::IOSProdWorldApp],
         log_client_errors: false,
         kinesis_stream_arn: Some("arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
-        tools_for_humanity_inner_jwks_url: None,
+        tools_for_humanity_inner_jwks_url: std::env::var("TOOLS_FOR_HUMANITY_INNER_JWKS_URL").ok(),
     };
     Extension(config)
 }
@@ -653,6 +654,7 @@ async fn test_server_error_is_properly_logged() {
         "Error verifying Android or Apple integrity error=Invalid key format: The key size must be 32: 7"
     ));
 }
+// !SECTION ------------------ android tests ------------------
 
 // SECTION --- apple initial attestation tests ---
 
@@ -826,6 +828,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
         })
     );
 }
+// !SECTION ------------------ apple initial attestation tests ------------------
 
 // SECTION --- apple assertions tests ---
 
@@ -1509,6 +1512,194 @@ async fn test_apple_counter_race_condition() {
     assert_eq!(count_expired, num_calls - 1);
 }
 
+// !SECTION ------------------ apple assertions tests ------------------
+
+// SECTION ------------------ tools for humanity tests ------------------
+use httpmock;
+
+fn get_jwk(key_id: &str) -> josekit::jwk::Jwk {
+    let mut jwk = josekit::jwk::Jwk::generate_ec_key(josekit::jwk::alg::ec::EcCurve::P256).unwrap();
+    jwk.set_key_id(key_id);
+    jwk
+}
+
+fn generate_tools_for_humanity_certificate(
+    client_public_key: &josekit::jwk::Jwk,
+    tools_for_humanity_jwk: &josekit::jwk::Jwk,
+    issuer: String,
+) -> String {
+    let mut header = josekit::jws::JwsHeader::new();
+    header.set_token_type("JWT");
+    header.set_key_id(tools_for_humanity_jwk.key_id().unwrap());
+
+    let mut payload = josekit::jwt::JwtPayload::new();
+    payload.set_issuer(issuer);
+    payload
+        .set_claim(
+            "principal",
+            Some(josekit::Value::String(
+                "foo.barr@toolsforhumanity.com".into(),
+            )),
+        )
+        .unwrap();
+    payload
+        .set_claim(
+            "publicKey",
+            Some(josekit::Value::String(client_public_key.to_string())),
+        )
+        .unwrap();
+
+    // Signing JWT
+    let signer = ES256.signer_from_jwk(&tools_for_humanity_jwk).unwrap();
+    let jwt = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
+
+    jwt.to_string()
+}
+
+fn generate_client_token(
+    client_jwk: &josekit::jwk::Jwk,
+    tools_for_humanity_certificate: String,
+    request_hash: String,
+) -> String {
+    let mut header = josekit::jws::JwsHeader::new();
+    header.set_token_type("JWT");
+    header.set_key_id(client_jwk.key_id().unwrap());
+
+    let mut payload = josekit::jwt::JwtPayload::new();
+    payload
+        .set_claim(
+            "certificate",
+            Some(josekit::Value::String(
+                tools_for_humanity_certificate.into(),
+            )),
+        )
+        .unwrap();
+    payload
+        .set_claim(
+            "requestHash",
+            Some(josekit::Value::String(request_hash.into())),
+        )
+        .unwrap();
+
+    // Signing JWT
+    let signer = ES256.signer_from_jwk(&client_jwk).unwrap();
+    let jwt = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
+
+    jwt.to_string()
+}
+
+// Start a lightweight mock server.
+async fn get_mock_server(jwk: &josekit::jwk::Jwk) -> httpmock::MockServer {
+    let mut public_key = jwk.to_public_key().unwrap();
+    // to_public_key() removes the key_id, so we need to set it again
+    public_key.set_key_id(jwk.key_id().unwrap());
+    let body = json!({
+        "keys": [public_key]
+    });
+
+    let server = httpmock::MockServer::start();
+
+    server.mock(|when, then| {
+        when.path("/.well-known/jwks.json")
+            .method(httpmock::Method::GET);
+        then.json_body(body).status(200);
+    });
+
+    server
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tools_for_humanity_token_generation_e2e_success() {
+    let client_jwk = get_jwk("client");
+    let tools_for_humanity_jwk = get_jwk("tools_for_humanity");
+    let server: httpmock::MockServer = get_mock_server(&tools_for_humanity_jwk).await;
+    let url = server.url("/.well-known/jwks.json");
+    unsafe { std::env::set_var("TOOLS_FOR_HUMANITY_INNER_JWKS_URL", url) };
+
+    let mut redis = get_redis_extension().await.0;
+    let aws_config = get_aws_config_extension().await.0;
+    let api_router = get_api_router().await;
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None, // note the missing token
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        request_hash: "i_am_a_sample_request_hash".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: None,
+        apple_assertion: None,
+    };
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let hasher = request_hasher::RequestHasher::new();
+    let input = request_hasher::GenerateRequestHashInput {
+        path_uri: "/g".to_string(),
+        method: request_hasher::AllowedHttpMethod::Post,
+        body: Some(body.clone()),
+    };
+    let request_hash = hasher.generate_json_request_hash(&input).unwrap();
+
+    let tools_for_humanity_certificate = generate_tools_for_humanity_certificate(
+        &client_jwk,
+        &tools_for_humanity_jwk,
+        server.base_url(),
+    );
+    let generated_client_token =
+        generate_client_token(&client_jwk, tools_for_humanity_certificate, request_hash);
+
+    let response = api_router
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .header("x-tfh-token", generated_client_token)
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+
+    let token: &str = body["attestation_gateway_token"].as_str().unwrap();
+
+    let headers = josekit::jwt::decode_header(token).unwrap();
+
+    assert_eq!(
+        headers.claim("typ"),
+        Some(&josekit::Value::String("JWT".to_string()))
+    );
+    assert_eq!(
+        headers.claim("alg"),
+        Some(&josekit::Value::String("ES256".to_string()))
+    );
+
+    let kid = headers.claim("kid").unwrap().as_str().unwrap();
+
+    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+
+    // active key should match the key used to sign the token
+    assert_eq!(key.key_definition.id, kid);
+
+    let verifier = josekit::jws::ES256.verifier_from_jwk(&key.jwk).unwrap();
+    let (payload, _header) = josekit::jwt::decode_with_verifier(token, &verifier).unwrap();
+
+    assert_eq!(payload.claim("pass"), Some(&josekit::Value::Bool(true)));
+    assert_eq!(
+        payload.claim("out"),
+        Some(&josekit::Value::String("pass".to_string()))
+    );
+
+    assert_eq!(payload.claim("app_version"), None);
+}
+// !SECTION ------------------ tools for humanity tests ------------------
+
 // SECTION --- general failure cases ---
 
 #[tokio::test]
@@ -1619,3 +1810,5 @@ async fn test_client_error_gets_logged_to_kinesis() {
         "i_am_a_sample_request_hash".to_string()
     );
 }
+
+// !SECTION ------------------ general failure cases ------------------

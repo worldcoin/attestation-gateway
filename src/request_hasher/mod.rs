@@ -19,9 +19,9 @@ pub enum ClientName {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GenerateRequestHashInput {
-    pub(crate) path_uri: String,
-    pub(crate) method: AllowedHttpMethod,
-    pub(crate) body: Option<String>,
+    pub path_uri: String,
+    pub method: AllowedHttpMethod,
+    pub body: Option<String>,
 }
 
 pub struct RequestHasher {}
