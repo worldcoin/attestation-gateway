@@ -21,6 +21,8 @@ pub struct User {
 }
 
 static TOOLS_FOR_HUMANITY_VERIFIER: OnceCell<RemoteJwksVerifier> = OnceCell::const_new();
+const TFH_TOKEN_HEADER_NAME: http::header::HeaderName =
+    http::header::HeaderName::from_static("x-tfh-token");
 
 /// Verifies a Tools for Humanity token and returns the user.
 ///
@@ -145,7 +147,7 @@ pub async fn middleware(
     let headers = cloned_parts.headers;
 
     let auth_header = headers
-        .get(http::header::AUTHORIZATION)
+        .get(TFH_TOKEN_HEADER_NAME)
         .map(|h| h.to_str().unwrap_or_default().to_string());
 
     let Some(auth_header) = auth_header else {
