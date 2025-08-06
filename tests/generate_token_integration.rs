@@ -1563,7 +1563,6 @@ fn generate_client_token(
 ) -> String {
     let mut header = josekit::jws::JwsHeader::new();
     header.set_token_type("JWT");
-    header.set_key_id(client_jwk.key_id().unwrap());
 
     let mut payload = josekit::jwt::JwtPayload::new();
     payload
@@ -1665,7 +1664,7 @@ async fn test_tools_for_humanity_token_generation_e2e_success() {
 
     // Generate Tools for Humanity certificate
     let tools_for_humanity_certificate = generate_tools_for_humanity_certificate(
-        &client_jwk,
+        &client_jwk.to_public_key().unwrap(),
         &tools_for_humanity_jwk,
         server.base_url(),
     );
@@ -1759,7 +1758,7 @@ async fn test_tools_for_humanity_token_generation_e2e_request_hash_mismatch() {
     let request_hash = "wrong_request_hash";
 
     let tools_for_humanity_certificate = generate_tools_for_humanity_certificate(
-        &client_jwk,
+        &client_jwk.to_public_key().unwrap(),
         &tools_for_humanity_jwk,
         server.base_url(),
     );
