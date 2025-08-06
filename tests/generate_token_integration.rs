@@ -1608,19 +1608,40 @@ async fn get_mock_server(jwk: &josekit::jwk::Jwk) -> httpmock::MockServer {
     server
 }
 
+struct TestEnvironment {
+    client_jwk: josekit::jwk::Jwk,
+    tools_for_humanity_jwk: josekit::jwk::Jwk,
+    server: httpmock::MockServer,
+}
+
+async fn initialize_test_environment() -> TestEnvironment {
+    let client_jwk = get_jwk("client");
+    let tools_for_humanity_jwk = get_jwk("tools_for_humanity");
+    let server = get_mock_server(&tools_for_humanity_jwk).await;
+    let url = server.url("/.well-known/jwks.json");
+    unsafe { std::env::set_var("TOOLS_FOR_HUMANITY_INNER_JWKS_URL", url) };
+
+    TestEnvironment {
+        client_jwk,
+        tools_for_humanity_jwk,
+        server,
+    }
+}
+
 #[tokio::test]
 #[serial]
 async fn test_tools_for_humanity_token_generation_e2e_success() {
-    let client_jwk = get_jwk("client");
-    let tools_for_humanity_jwk = get_jwk("tools_for_humanity");
-    let server: httpmock::MockServer = get_mock_server(&tools_for_humanity_jwk).await;
-    let url = server.url("/.well-known/jwks.json");
-    unsafe { std::env::set_var("TOOLS_FOR_HUMANITY_INNER_JWKS_URL", url) };
+    let TestEnvironment {
+        client_jwk,
+        tools_for_humanity_jwk,
+        server,
+    } = initialize_test_environment().await;
 
     let mut redis = get_redis_extension().await.0;
     let aws_config = get_aws_config_extension().await.0;
     let api_router = get_api_router().await;
 
+    // Generate token generation request
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "toolsforhumanity.com".to_string(),
@@ -1633,6 +1654,7 @@ async fn test_tools_for_humanity_token_generation_e2e_success() {
     };
     let body = serde_json::to_string(&token_generation_request).unwrap();
 
+    // Generate request hash
     let hasher = request_hasher::RequestHasher::new();
     let input = request_hasher::GenerateRequestHashInput {
         path_uri: "/g".to_string(),
@@ -1641,14 +1663,18 @@ async fn test_tools_for_humanity_token_generation_e2e_success() {
     };
     let request_hash = hasher.generate_json_request_hash(&input).unwrap();
 
+    // Generate Tools for Humanity certificate
     let tools_for_humanity_certificate = generate_tools_for_humanity_certificate(
         &client_jwk,
         &tools_for_humanity_jwk,
         server.base_url(),
     );
+
+    // Generate client token
     let generated_client_token =
         generate_client_token(&client_jwk, tools_for_humanity_certificate, request_hash);
 
+    // Make request
     let response = api_router
         .oneshot(
             Request::builder()
@@ -1697,6 +1723,134 @@ async fn test_tools_for_humanity_token_generation_e2e_success() {
     );
 
     assert_eq!(payload.claim("app_version"), None);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tools_for_humanity_token_generation_e2e_request_hash_mismatch() {
+    let TestEnvironment {
+        client_jwk,
+        tools_for_humanity_jwk,
+        server,
+    } = initialize_test_environment().await;
+
+    let api_router = get_api_router().await;
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None, // note the missing token
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        request_hash: "i_am_a_sample_request_hash".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: None,
+        apple_assertion: None,
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let hasher = request_hasher::RequestHasher::new();
+    let input = request_hasher::GenerateRequestHashInput {
+        path_uri: "/g".to_string(),
+        method: request_hasher::AllowedHttpMethod::Post,
+        body: Some(body.clone()),
+    };
+    let expected_request_hash = hasher.generate_json_request_hash(&input).unwrap();
+    let request_hash = "wrong_request_hash";
+
+    let tools_for_humanity_certificate = generate_tools_for_humanity_certificate(
+        &client_jwk,
+        &tools_for_humanity_jwk,
+        server.base_url(),
+    );
+    let generated_client_token = generate_client_token(
+        &client_jwk,
+        tools_for_humanity_certificate,
+        request_hash.to_string(),
+    );
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .header("x-tfh-token", generated_client_token)
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(
+        body,
+        json!({
+            "allowRetry": false,
+            "error": {
+                "code": "invalid_tools_for_humanity_token",
+                "message": format!("Request hash mismatch: {} != {}", expected_request_hash, request_hash)
+            }
+        })
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tools_for_humanity_token_generation_e2e_missing_tfh_token() {
+    let TestEnvironment {
+        client_jwk: _,
+        tools_for_humanity_jwk: _,
+        server: _,
+    } = initialize_test_environment().await;
+
+    let api_router = get_api_router().await;
+
+    let token_generation_request = TokenGenerationRequest {
+        integrity_token: None, // note the missing token
+        aud: "toolsforhumanity.com".to_string(),
+        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        request_hash: "i_am_a_sample_request_hash".to_string(),
+        client_error: None,
+        apple_initial_attestation: None,
+        apple_public_key: None,
+        apple_assertion: None,
+    };
+
+    let body = serde_json::to_string(&token_generation_request).unwrap();
+
+    let response = api_router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/g")
+                .method(http::Method::POST)
+                .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                // note the missing token x-tfh-token
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(
+        body,
+        json!({
+            "allowRetry": false,
+            "error": {
+                "code": "bad_request",
+                "message": "`integrity_token` is required for this bundle identifier."
+            }
+        })
+    );
 }
 // !SECTION ------------------ tools for humanity tests ------------------
 
