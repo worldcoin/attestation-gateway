@@ -25,7 +25,7 @@ use regex::Regex;
 use serde_bytes::ByteBuf;
 use serde_json::{Value, json};
 use serial_test::serial;
-use tokio::task;
+use tokio::{sync::OnceCell, task};
 use tower::ServiceExt; // for `response.collect`
 use tracing::Instrument;
 use tracing_test::traced_test;
@@ -1610,20 +1610,31 @@ async fn get_mock_server(jwk: &josekit::jwk::Jwk) -> httpmock::MockServer {
 struct TestEnvironment {
     client_jwk: josekit::jwk::Jwk,
     tools_for_humanity_jwk: josekit::jwk::Jwk,
-    server: httpmock::MockServer,
+    tools_for_humanity_server_base_url: String,
 }
 
-async fn initialize_test_environment() -> TestEnvironment {
+// Generate JWK only once because TOOLS_FOR_HUMANITY_VERIFIER in tools_for_humanity/mod.rs is a global once cell
+static TOOLS_FOR_HUMANITY_JWK: OnceCell<josekit::jwk::Jwk> = OnceCell::const_new();
+static JWK_SERVER: OnceCell<httpmock::MockServer> = OnceCell::const_new();
+
+async fn initialize_tfh_test_environment() -> TestEnvironment {
     let client_jwk = get_jwk("client");
-    let tools_for_humanity_jwk = get_jwk("tools_for_humanity");
-    let server = get_mock_server(&tools_for_humanity_jwk).await;
-    let url = server.url("/.well-known/jwks.json");
-    unsafe { std::env::set_var("TOOLS_FOR_HUMANITY_INNER_JWKS_URL", url) };
+    let tools_for_humanity_jwk = TOOLS_FOR_HUMANITY_JWK
+        .get_or_init(|| async { get_jwk("tools_for_humanity") })
+        .await;
+    let server = JWK_SERVER
+        .get_or_init(|| async {
+            let server = get_mock_server(&tools_for_humanity_jwk).await;
+            let url = server.url("/.well-known/jwks.json");
+            unsafe { std::env::set_var("TOOLS_FOR_HUMANITY_INNER_JWKS_URL", url) };
+            server
+        })
+        .await;
 
     TestEnvironment {
         client_jwk,
-        tools_for_humanity_jwk,
-        server,
+        tools_for_humanity_jwk: tools_for_humanity_jwk.clone(),
+        tools_for_humanity_server_base_url: server.base_url(),
     }
 }
 
@@ -1633,8 +1644,8 @@ async fn test_tools_for_humanity_token_generation_e2e_success() {
     let TestEnvironment {
         client_jwk,
         tools_for_humanity_jwk,
-        server,
-    } = initialize_test_environment().await;
+        tools_for_humanity_server_base_url,
+    } = initialize_tfh_test_environment().await;
 
     let mut redis = get_redis_extension().await.0;
     let aws_config = get_aws_config_extension().await.0;
@@ -1666,7 +1677,7 @@ async fn test_tools_for_humanity_token_generation_e2e_success() {
     let tools_for_humanity_certificate = generate_tools_for_humanity_certificate(
         &client_jwk.to_public_key().unwrap(),
         &tools_for_humanity_jwk,
-        server.base_url(),
+        tools_for_humanity_server_base_url,
     );
 
     // Generate client token
@@ -1730,8 +1741,8 @@ async fn test_tools_for_humanity_token_generation_e2e_request_hash_mismatch() {
     let TestEnvironment {
         client_jwk,
         tools_for_humanity_jwk,
-        server,
-    } = initialize_test_environment().await;
+        tools_for_humanity_server_base_url,
+    } = initialize_tfh_test_environment().await;
 
     let api_router = get_api_router().await;
 
@@ -1760,7 +1771,7 @@ async fn test_tools_for_humanity_token_generation_e2e_request_hash_mismatch() {
     let tools_for_humanity_certificate = generate_tools_for_humanity_certificate(
         &client_jwk.to_public_key().unwrap(),
         &tools_for_humanity_jwk,
-        server.base_url(),
+        tools_for_humanity_server_base_url,
     );
     let generated_client_token = generate_client_token(
         &client_jwk,
@@ -1804,8 +1815,8 @@ async fn test_tools_for_humanity_token_generation_e2e_missing_tfh_token() {
     let TestEnvironment {
         client_jwk: _,
         tools_for_humanity_jwk: _,
-        server: _,
-    } = initialize_test_environment().await;
+        tools_for_humanity_server_base_url: _,
+    } = initialize_tfh_test_environment().await;
 
     let api_router = get_api_router().await;
 
