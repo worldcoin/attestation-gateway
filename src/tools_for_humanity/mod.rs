@@ -85,8 +85,8 @@ async fn verify_and_parse_inner_jwt(
         .verify(&outer_token.certificate)
         .await
         .map_err(|e| {
-            let error_message = format!("Error verifying inner JWT: {}", e.to_string());
-            tracing::error!("{}", error_message);
+            let error_message = format!("Error verifying inner JWT: {e}");
+            tracing::error!(error_message);
             eyre::eyre!(error_message)
         })?;
 
@@ -114,8 +114,8 @@ fn verify_outer_jwt(
         &some_public_key,
     )
     .map_err(|e| {
-        let error_message = format!("Error verifying outer JWT: {}", e.to_string());
-        tracing::error!("{}", error_message);
+        let error_message = format!("Error verifying outer JWT: {e}");
+        tracing::error!(error_message);
         eyre::eyre!(error_message)
     })?;
 
@@ -325,31 +325,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_verify_token_hash_mismatch() {
-        let (tfh_kid, tfh_some_private_key, client_some_private_key, verifier) =
-            generate_keys_and_mock_jwks_server().await;
-
-        let inner_token = generate_inner_token(
-            &tfh_some_private_key,
-            &tfh_kid,
-            &client_some_private_key.public_key_to_pem().unwrap(),
-        );
-
-        // 🧪 Create outer JWT with wrong requestHash
-        let wrong_request_hash = "wrong-request-hash";
-        let correct_request_hash = "test-request-hash";
-        let outer_token =
-            generate_outer_token(&client_some_private_key, &inner_token, wrong_request_hash);
-
-        // 🧪 Call the function under test
-        let result = verify(&outer_token, &verifier, correct_request_hash.to_string()).await;
-
-        assert!(result.is_err());
-        let err = result.err().unwrap();
-        assert!(err.to_string().contains("Request hash mismatch"));
-    }
-
-    #[tokio::test]
     async fn test_verify_token_with_jwk_public_key_fallback() {
         let (tfh_kid, tfh_some_private_key, client_some_private_key, verifier) =
             generate_keys_and_mock_jwks_server().await;
@@ -453,5 +428,30 @@ mod tests {
             err.to_string()
                 .eq("Error verifying outer JWT: failed to verify signature")
         );
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_hash_mismatch() {
+        let (tfh_kid, tfh_some_private_key, client_some_private_key, verifier) =
+            generate_keys_and_mock_jwks_server().await;
+
+        let inner_token = generate_inner_token(
+            &tfh_some_private_key,
+            &tfh_kid,
+            &client_some_private_key.public_key_to_pem().unwrap(),
+        );
+
+        // 🧪 Create outer JWT with wrong requestHash
+        let wrong_request_hash = "wrong-request-hash";
+        let correct_request_hash = "test-request-hash";
+        let outer_token =
+            generate_outer_token(&client_some_private_key, &inner_token, wrong_request_hash);
+
+        // 🧪 Call the function under test
+        let result = verify(&outer_token, &verifier, correct_request_hash.to_string()).await;
+
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("Request hash mismatch"));
     }
 }
