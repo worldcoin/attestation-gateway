@@ -83,7 +83,11 @@ async fn verify_and_parse_inner_jwt(
 ) -> eyre::Result<ToolsForHumanityInnerToken> {
     let jwt: HeaderAndClaims<ToolsForHumanityInnerToken> = tools_for_humanity_verifier
         .verify(&outer_token.certificate)
-        .await?;
+        .await
+        .map_err(|e| {
+            tracing::error!("Error verifying inner JWT: {:?}", e);
+            eyre::eyre!("Error verifying inner JWT")
+        })?;
 
     let claims = jwt.claims();
 
@@ -107,7 +111,11 @@ fn verify_outer_jwt(
     let claims = jwtk::verify::<ToolsForHumanityOuterToken>(
         tools_for_humanity_outer_token,
         &some_public_key,
-    )?;
+    )
+    .map_err(|e| {
+        tracing::error!("Error verifying outer JWT: {:?}", e);
+        eyre::eyre!("Error verifying outer JWT")
+    })?;
 
     Ok(claims.claims().extra.clone())
 }
@@ -296,7 +304,7 @@ mod tests {
         let inner_token = generate_inner_token(
             &tfh_some_private_key,
             &tfh_kid,
-            &serde_json::to_string(&client_some_private_key.public_key_to_jwk().unwrap()).unwrap(),
+            &client_some_private_key.public_key_to_pem().unwrap(),
         );
         // 🧪 Create outer JWT with correct requestHash
         let calculated_request_hash = "test-request-hash";
@@ -322,7 +330,7 @@ mod tests {
         let inner_token = generate_inner_token(
             &tfh_some_private_key,
             &tfh_kid,
-            &serde_json::to_string(&client_some_private_key.public_key_to_jwk().unwrap()).unwrap(),
+            &client_some_private_key.public_key_to_pem().unwrap(),
         );
 
         // 🧪 Create outer JWT with wrong requestHash
@@ -365,5 +373,79 @@ mod tests {
             .expect("should succeed");
 
         assert_eq!(user.principal, "test@toolsforhumanity.com");
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_invalid_outer_token_format() {
+        let (tfh_kid, tfh_some_private_key, client_some_private_key, verifier) =
+            generate_keys_and_mock_jwks_server().await;
+
+        let inner_token = generate_inner_token(
+            &tfh_some_private_key,
+            &tfh_kid,
+            &client_some_private_key.public_key_to_pem().unwrap(),
+        );
+
+        let outer_token =
+            generate_outer_token(&client_some_private_key, &inner_token, "test-request-hash")
+                .split(".")
+                .collect::<Vec<&str>>()[0..2]
+                .join(".");
+
+        let result = verify(&outer_token, &verifier, "test-request-hash".to_string()).await;
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            err.to_string()
+                .contains("Invalid JWT format: expected 3 parts")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_invalid_inner_token_signature() {
+        let (tfh_kid, tfh_some_private_key, client_some_private_key, verifier) =
+            generate_keys_and_mock_jwks_server().await;
+
+        let mut inner_token = generate_inner_token(
+            &tfh_some_private_key,
+            &tfh_kid,
+            &client_some_private_key.public_key_to_pem().unwrap(),
+        )
+        .split(".")
+        .collect::<Vec<&str>>()[0..2]
+            .join(".");
+        inner_token.push_str(".invalid-signature");
+
+        let outer_token =
+            generate_outer_token(&client_some_private_key, &inner_token, "test-request-hash");
+
+        let result = verify(&outer_token, &verifier, "test-request-hash".to_string()).await;
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("Error verifying inner JWT"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_invalid_outer_token_signature() {
+        let (tfh_kid, tfh_some_private_key, client_some_private_key, verifier) =
+            generate_keys_and_mock_jwks_server().await;
+
+        let inner_token = generate_inner_token(
+            &tfh_some_private_key,
+            &tfh_kid,
+            &client_some_private_key.public_key_to_pem().unwrap(),
+        );
+
+        let mut outer_token =
+            generate_outer_token(&client_some_private_key, &inner_token, "test-request-hash");
+
+        // Change last char of outer_token
+        outer_token.pop();
+        outer_token.push('x');
+
+        let result = verify(&outer_token, &verifier, "test-request-hash".to_string()).await;
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("Error verifying outer JWT"));
     }
 }
