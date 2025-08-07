@@ -388,9 +388,12 @@ mod tests {
             &tfh_kid,
             &client_some_private_key.public_key_to_pem().unwrap(),
         );
-        // Change last char of inner_token
-        inner_token.pop();
-        inner_token.push('x');
+        // Replace signature with invalid signature
+        let invalid_signature = "invalid-signature";
+        inner_token.replace_range(
+            inner_token.len() - invalid_signature.len()..,
+            invalid_signature,
+        );
 
         let outer_token =
             generate_outer_token(&client_some_private_key, &inner_token, "test-request-hash");
@@ -417,9 +420,12 @@ mod tests {
 
         let mut outer_token =
             generate_outer_token(&client_some_private_key, &inner_token, "test-request-hash");
-        // Change last char of outer_token
-        outer_token.pop();
-        outer_token.push('x');
+        // Replace signature with invalid signature
+        let invalid_signature = "invalid-signature";
+        outer_token.replace_range(
+            outer_token.len() - invalid_signature.len()..,
+            invalid_signature,
+        );
 
         let result = verify(&outer_token, &verifier, "test-request-hash".to_string()).await;
         assert!(result.is_err());
