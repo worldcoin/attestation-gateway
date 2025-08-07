@@ -85,8 +85,9 @@ async fn verify_and_parse_inner_jwt(
         .verify(&outer_token.certificate)
         .await
         .map_err(|e| {
-            tracing::error!("Error verifying inner JWT: {:?}", e);
-            eyre::eyre!("Error verifying inner JWT")
+            let error_message = format!("Error verifying inner JWT: {}", e.to_string());
+            tracing::error!("{}", error_message);
+            eyre::eyre!(error_message)
         })?;
 
     let claims = jwt.claims();
@@ -113,8 +114,9 @@ fn verify_outer_jwt(
         &some_public_key,
     )
     .map_err(|e| {
-        tracing::error!("Error verifying outer JWT: {:?}", e);
-        eyre::eyre!("Error verifying outer JWT")
+        let error_message = format!("Error verifying outer JWT: {}", e.to_string());
+        tracing::error!("{}", error_message);
+        eyre::eyre!(error_message)
     })?;
 
     Ok(claims.claims().extra.clone())
@@ -410,11 +412,10 @@ mod tests {
             &tfh_some_private_key,
             &tfh_kid,
             &client_some_private_key.public_key_to_pem().unwrap(),
-        )
-        .split(".")
-        .collect::<Vec<&str>>()[0..2]
-            .join(".");
-        inner_token.push_str(".invalid-signature");
+        );
+        // Change last char of inner_token
+        inner_token.pop();
+        inner_token.push('x');
 
         let outer_token =
             generate_outer_token(&client_some_private_key, &inner_token, "test-request-hash");
@@ -422,7 +423,10 @@ mod tests {
         let result = verify(&outer_token, &verifier, "test-request-hash".to_string()).await;
         assert!(result.is_err());
         let err = result.err().unwrap();
-        assert!(err.to_string().contains("Error verifying inner JWT"));
+        assert!(
+            err.to_string()
+                .eq("Error verifying inner JWT: failed to verify signature")
+        );
     }
 
     #[tokio::test]
@@ -438,7 +442,6 @@ mod tests {
 
         let mut outer_token =
             generate_outer_token(&client_some_private_key, &inner_token, "test-request-hash");
-
         // Change last char of outer_token
         outer_token.pop();
         outer_token.push('x');
@@ -446,6 +449,9 @@ mod tests {
         let result = verify(&outer_token, &verifier, "test-request-hash".to_string()).await;
         assert!(result.is_err());
         let err = result.err().unwrap();
-        assert!(err.to_string().contains("Error verifying outer JWT"));
+        assert!(
+            err.to_string()
+                .eq("Error verifying outer JWT: failed to verify signature")
+        );
     }
 }
