@@ -212,3 +212,158 @@ pub async fn middleware(
 
     Ok(next.run(req).await)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httpmock::MockServer;
+    use jwtk::{PublicKeyToJwk, jwk::RemoteJwksVerifier};
+    use serde_json::json;
+
+    fn generate_inner_token(key: &jwtk::SomePrivateKey, kid: &str, client_pub_key: &str) -> String {
+        let mut claims = jwtk::HeaderAndClaims::new_dynamic();
+        claims
+            .insert("principal", "test@toolsforhumanity.com")
+            .insert("publicKey", client_pub_key)
+            .set_kid(kid);
+
+        jwtk::sign(&mut claims, key).unwrap()
+    }
+
+    fn generate_outer_token(
+        client_key: &jwtk::SomePrivateKey,
+        certificate: &str,
+        request_hash: &str,
+    ) -> String {
+        let mut claims = jwtk::HeaderAndClaims::new_dynamic();
+        claims
+            .insert("certificate", certificate)
+            .insert("requestHash", request_hash);
+
+        jwtk::sign(&mut claims, client_key).unwrap()
+    }
+
+    async fn generate_keys_and_mock_jwks_server() -> (
+        String,
+        jwtk::SomePrivateKey,
+        jwtk::SomePrivateKey,
+        RemoteJwksVerifier,
+    ) {
+        // Generate TFH key (used for inner JWT signing)
+        let tfh_kid = String::from("tfh-test-key");
+        let tfh_private_key =
+            jwtk::ecdsa::EcdsaPrivateKey::generate(jwtk::ecdsa::EcdsaAlgorithm::ES256).unwrap();
+        let tfh_some_private_key = jwtk::SomePrivateKey::Ecdsa(tfh_private_key);
+
+        // Generate client key (used for outer JWT)
+        let client_private_key =
+            jwtk::ecdsa::EcdsaPrivateKey::generate(jwtk::ecdsa::EcdsaAlgorithm::ES256).unwrap();
+        let client_some_private_key = jwtk::SomePrivateKey::Ecdsa(client_private_key);
+
+        // Prepare mock JWKS endpoint that returns TFH public key
+        let mut tfh_some_public_key = tfh_some_private_key.public_key_to_jwk().unwrap();
+        tfh_some_public_key.kid = Some(tfh_kid.to_string());
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.path("/.well-known/jwks.json").method("GET");
+                then.status(200)
+                    .json_body(json!({ "keys": [tfh_some_public_key] }));
+            })
+            .await;
+
+        // Generate a verifier for the mock JWKS server
+        let verifier = RemoteJwksVerifier::new(
+            server.url("/.well-known/jwks.json"),
+            None,
+            Duration::from_secs(3600),
+        );
+
+        (
+            tfh_kid,
+            tfh_some_private_key,
+            client_some_private_key,
+            verifier,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_success() {
+        let (tfh_kid, tfh_some_private_key, client_some_private_key, verifier) =
+            generate_keys_and_mock_jwks_server().await;
+
+        // 🧪 Create an inner JWT that uses a **PEM** public key string
+        let inner_token = generate_inner_token(
+            &tfh_some_private_key,
+            &tfh_kid,
+            &serde_json::to_string(&client_some_private_key.public_key_to_jwk().unwrap()).unwrap(),
+        );
+        // 🧪 Create outer JWT with correct requestHash
+        let calculated_request_hash = "test-request-hash";
+        let outer_token = generate_outer_token(
+            &client_some_private_key,
+            &inner_token,
+            calculated_request_hash,
+        );
+
+        // 🧪 Call the function under test
+        let user = verify(&outer_token, &verifier, calculated_request_hash.to_string())
+            .await
+            .expect("should succeed");
+
+        assert_eq!(user.principal, "test@toolsforhumanity.com");
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_hash_mismatch() {
+        let (tfh_kid, tfh_some_private_key, client_some_private_key, verifier) =
+            generate_keys_and_mock_jwks_server().await;
+
+        let inner_token = generate_inner_token(
+            &tfh_some_private_key,
+            &tfh_kid,
+            &serde_json::to_string(&client_some_private_key.public_key_to_jwk().unwrap()).unwrap(),
+        );
+
+        // 🧪 Create outer JWT with wrong requestHash
+        let wrong_request_hash = "wrong-request-hash";
+        let correct_request_hash = "test-request-hash";
+        let outer_token =
+            generate_outer_token(&client_some_private_key, &inner_token, wrong_request_hash);
+
+        // 🧪 Call the function under test
+        let result = verify(&outer_token, &verifier, correct_request_hash.to_string()).await;
+
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("Request hash mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_with_jwk_public_key_fallback() {
+        let (tfh_kid, tfh_some_private_key, client_some_private_key, verifier) =
+            generate_keys_and_mock_jwks_server().await;
+
+        // 🧪 Create an inner JWT that uses a **JWK** public key string (not PEM)
+        let inner_token = generate_inner_token(
+            &tfh_some_private_key,
+            &tfh_kid,
+            // Convert the public key to a JWK string instead of a PEM string
+            &serde_json::to_string(&client_some_private_key.public_key_to_jwk().unwrap()).unwrap(),
+        );
+        // 🧪 Create outer JWT with correct requestHash
+        let calculated_request_hash = "test-request-hash";
+        let outer_token = generate_outer_token(
+            &client_some_private_key,
+            &inner_token,
+            calculated_request_hash,
+        );
+
+        // 🧪 Call the function under test
+        let user = verify(&outer_token, &verifier, calculated_request_hash.to_string())
+            .await
+            .expect("should succeed");
+
+        assert_eq!(user.principal, "test@toolsforhumanity.com");
+    }
+}
