@@ -1,4 +1,3 @@
-use crate::tools_for_humanity;
 use aide::axum::{
     ApiRouter,
     routing::{get, post},
@@ -19,7 +18,6 @@ pub fn get_timeout_layer() -> TimeoutLayer {
 pub fn handler() -> ApiRouter {
     ApiRouter::new()
         .api_route("/g", post(generate_token::handler))
-        .route_layer(axum::middleware::from_fn(tools_for_humanity::middleware))
         .api_route("/.well-known/jwks.json", get(jwks::handler))
         .api_route("/health", get(health::handler))
         .layer(TraceLayer::new_for_http()) // adds HTTP tracing & context to all routes

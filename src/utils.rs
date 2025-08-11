@@ -1,4 +1,4 @@
-use crate::{android::PlayIntegrityToken, tools_for_humanity};
+use crate::android::PlayIntegrityToken;
 use aide::OperationIo;
 use axum::response::IntoResponse;
 use josekit::{JoseError, jwt::JwtPayload};
@@ -14,7 +14,7 @@ pub struct GlobalConfig {
     pub android_outer_jwe_private_key: String,
     pub android_inner_jws_public_key: String,
     pub apple_keys_dynamo_table_name: String,
-    pub tools_for_humanity_inner_jwks_url: Option<String>,
+    pub developer_inner_jwks_url: Option<String>,
     pub enabled_bundle_identifiers: Vec<BundleIdentifier>,
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
     pub log_client_errors: bool,
@@ -36,7 +36,7 @@ impl GlobalConfig {
         let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
             .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
 
-        let tools_for_humanity_inner_jwks_url = env::var("TOOLS_FOR_HUMANITY_INNER_JWKS_URL").ok();
+        let developer_inner_jwks_url = env::var("DEVELOPER_INNER_JWKS_URL").ok();
 
         let log_client_errors = env::var("LOG_CLIENT_ERRORS")
             .is_ok_and(|val| val.to_lowercase() == "true" || val == "1");
@@ -64,7 +64,7 @@ impl GlobalConfig {
             android_outer_jwe_private_key,
             android_inner_jws_public_key,
             apple_keys_dynamo_table_name,
-            tools_for_humanity_inner_jwks_url,
+            developer_inner_jwks_url,
             enabled_bundle_identifiers,
             log_client_errors,
             kinesis_stream_arn,
@@ -186,6 +186,7 @@ pub struct TokenGenerationRequest {
     pub apple_initial_attestation: Option<String>,
     pub apple_public_key: Option<String>,
     pub apple_assertion: Option<String>,
+    pub developer_token: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, JsonSchema)]
@@ -209,8 +210,8 @@ pub enum IntegrityVerificationInput {
     ClientError {
         client_error: String,
     },
-    ToolsForHumanity {
-        principal: String,
+    Developer {
+        developer_token: String,
     },
 }
 
@@ -222,18 +223,13 @@ impl IntegrityVerificationInput {
     ///
     /// # Panics
     /// No panics expected.
-    pub fn from_request(
-        request: &TokenGenerationRequest,
-        tfh_user: Option<tools_for_humanity::User>,
-    ) -> Result<Self, RequestError> {
+    pub fn from_request(request: &TokenGenerationRequest) -> Result<Self, RequestError> {
         if let Some(client_error) = request.client_error.clone() {
             return Ok(Self::ClientError { client_error });
         }
 
-        if let Some(user) = tfh_user {
-            return Ok(Self::ToolsForHumanity {
-                principal: user.principal,
-            });
+        if let Some(developer_token) = request.developer_token.clone() {
+            return Ok(Self::Developer { developer_token });
         }
 
         match request.bundle_identifier.platform() {
@@ -370,7 +366,7 @@ pub enum ErrorCode {
     InvalidInitialAttestation,
     InvalidPublicKey,
     InvalidToken,
-    InvalidToolsForHumanityToken,
+    InvalidDeveloperToken,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -385,7 +381,7 @@ impl std::fmt::Display for ErrorCode {
             Self::InvalidInitialAttestation => write!(f, "invalid_initial_attestation"),
             Self::InvalidPublicKey => write!(f, "invalid_public_key"),
             Self::InvalidToken => write!(f, "invalid_token"),
-            Self::InvalidToolsForHumanityToken => write!(f, "invalid_tools_for_humanity_token"),
+            Self::InvalidDeveloperToken => write!(f, "invalid_developer_token"),
         }
     }
 }
@@ -402,7 +398,7 @@ impl ErrorCode {
             | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
             | Self::InvalidToken
-            | Self::InvalidToolsForHumanityToken => axum::http::StatusCode::BAD_REQUEST,
+            | Self::InvalidDeveloperToken => axum::http::StatusCode::BAD_REQUEST,
         }
     }
 
@@ -421,9 +417,7 @@ impl ErrorCode {
             }
             Self::InvalidPublicKey => "Public key has not been attested.",
             Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
-            Self::InvalidToolsForHumanityToken => {
-                "The provided Tools for Humanity token is invalid or malformed."
-            }
+            Self::InvalidDeveloperToken => "The provided developer token is invalid or malformed.",
         }
     }
 
@@ -438,7 +432,7 @@ impl ErrorCode {
             | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
             | Self::InvalidToken
-            | Self::InvalidToolsForHumanityToken
+            | Self::InvalidDeveloperToken
             | Self::DuplicateRequestHash => false,
         }
     }
@@ -455,6 +449,22 @@ impl Display for OutEnum {
         match self {
             Self::Pass => write!(f, "pass"),
             Self::Fail => write!(f, "fail"),
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub enum CheckType {
+    Developer,
+    Android,
+    Apple,
+}
+
+impl Display for CheckType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Android | Self::Apple => write!(f, "osv"),
+            Self::Developer => write!(f, "dev"),
         }
     }
 }
@@ -539,6 +549,7 @@ pub struct OutputTokenPayload {
     pub out: OutEnum,
     pub error: Option<String>,
     pub app_version: Option<String>,
+    pub check_type: CheckType,
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -589,6 +600,12 @@ impl OutputTokenPayload {
         payload
             .set_claim("out", Some(josekit::Value::String(self.out.to_string())))
             .map_err(handle_jose_error)?;
+        payload
+            .set_claim(
+                "check_type",
+                Some(josekit::Value::String(self.check_type.to_string())),
+            )
+            .map_err(handle_jose_error)?;
         if let Some(error) = &self.error {
             payload
                 .set_claim("error", Some(josekit::Value::String(error.clone())))
@@ -638,6 +655,7 @@ mod tests {
             out: OutEnum::Pass,
             error: None,
             app_version: Some("1.25.0".to_string()),
+            check_type: CheckType::Developer,
         };
 
         let jwt_payload = payload.generate().unwrap();
@@ -677,6 +695,10 @@ mod tests {
         assert_eq!(
             jwt_payload.claim("app_version"),
             Some(&josekit::Value::String("1.25.0".to_string()))
+        );
+        assert_eq!(
+            jwt_payload.claim("check_type"),
+            Some(&josekit::Value::String("dev".to_string()))
         );
     }
 

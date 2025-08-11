@@ -5,12 +5,12 @@ use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::Connectio
 use std::time::SystemTime;
 
 use crate::{
-    android, apple,
+    android, apple, developer,
     keys::fetch_active_key,
     kinesis::send_kinesis_stream_event,
-    kms_jws, tools_for_humanity,
+    kms_jws,
     utils::{
-        BundleIdentifier, ClientException, DataReport, ErrorCode, GlobalConfig,
+        BundleIdentifier, CheckType, ClientException, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
         TokenGenerationRequest, TokenGenerationResponse, VerificationOutput, handle_redis_error,
     },
@@ -26,7 +26,6 @@ pub async fn handler(
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Extension(kinesis_client): Extension<KinesisClient>,
-    Extension(tfh_user): Extension<Option<tools_for_humanity::User>>,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
     let aud = request.aud.clone();
@@ -41,8 +40,7 @@ pub async fn handler(
 
     let _enter = my_span.enter();
 
-    let integrity_verification_input =
-        IntegrityVerificationInput::from_request(&request, tfh_user)?;
+    let integrity_verification_input = IntegrityVerificationInput::from_request(&request)?;
 
     handle_client_error_if_applicable(
         &integrity_verification_input,
@@ -222,18 +220,24 @@ async fn verify_android_or_apple_integrity(
             .await?
         }
 
-        IntegrityVerificationInput::ClientError { client_error: _ } => {
-            eyre::bail!("Unexpected variant reached in verify_android_or_apple_integrity.");
-        }
-
-        IntegrityVerificationInput::ToolsForHumanity { principal } => {
-            tracing::info!(principal = principal, "Tools for Humanity verification");
+        IntegrityVerificationInput::Developer { developer_token } => {
+            tracing::info!(developer_token = developer_token, "Developer verification");
+            developer::verify(
+                &developer_token,
+                config.developer_inner_jwks_url.as_ref(),
+                &request_hash,
+            )
+            .await?;
             VerificationOutput {
                 success: true,
                 app_version: None,
                 parsed_play_integrity_token: None,
                 client_exception: None,
             }
+        }
+
+        IntegrityVerificationInput::ClientError { client_error: _ } => {
+            eyre::bail!("Unexpected variant reached in verify_android_or_apple_integrity.");
         }
     };
 
@@ -294,6 +298,8 @@ async fn process_and_finalize_report(
         out: report.out,
         error: None, // TODO: Implement in the future (see L76)
         app_version: report.app_version.clone(),
+        // TODO: Add check type to the request
+        check_type: CheckType::Developer,
     }
     .generate()?;
 

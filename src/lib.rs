@@ -2,10 +2,9 @@
 
 pub mod android;
 pub mod apple;
+pub mod developer;
 pub mod keys;
 pub mod kinesis;
 pub mod kms_jws;
-pub mod request_hasher;
 pub mod routes;
-pub mod tools_for_humanity;
 pub mod utils;

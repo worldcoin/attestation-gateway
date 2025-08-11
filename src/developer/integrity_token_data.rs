@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolsForHumanityInnerToken {
-    pub principal: String,
     pub public_key: String,
 }
 

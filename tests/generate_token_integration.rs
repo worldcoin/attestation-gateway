@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use attestation_gateway::{
     apple,
     keys::fetch_active_key,
-    request_hasher,
     utils::{BundleIdentifier, DataReport, TokenGenerationRequest},
 };
 use aws_sdk_dynamodb::types::AttributeValue;
@@ -84,7 +83,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         enabled_bundle_identifiers: vec![BundleIdentifier::AndroidStageWorldApp, BundleIdentifier::AndroidDevWorldApp, BundleIdentifier::IOSStageWorldApp, BundleIdentifier::IOSProdWorldApp],
         log_client_errors: false,
         kinesis_stream_arn: Some("arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
-        tools_for_humanity_inner_jwks_url: std::env::var("TOOLS_FOR_HUMANITY_INNER_JWKS_URL").ok(),
+        developer_inner_jwks_url: std::env::var("DEVELOPER_INNER_JWKS_URL").ok(),
     };
     Extension(config)
 }
@@ -221,6 +220,7 @@ async fn test_android_e2e_success() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -365,6 +365,7 @@ async fn test_android_token_generation_with_invalid_attributes() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -412,6 +413,7 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -480,6 +482,7 @@ async fn test_request_hash_race_condition() {
             apple_initial_attestation: None,
             apple_public_key: None,
             apple_assertion: None,
+            developer_token: None,
         };
 
         let handle = task::spawn(
@@ -541,6 +544,7 @@ async fn test_request_hash_is_released_if_request_fails() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -595,7 +599,7 @@ async fn test_server_error_is_properly_logged() {
             enabled_bundle_identifiers: vec![BundleIdentifier::AndroidDevWorldApp],
             log_client_errors: false,
             kinesis_stream_arn: None,
-            tools_for_humanity_inner_jwks_url: None,
+            developer_inner_jwks_url: None,
         };
         Extension(config)
     }
@@ -619,6 +623,7 @@ async fn test_server_error_is_properly_logged() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -676,6 +681,7 @@ async fn test_apple_initial_attestation_e2e_success() {
         apple_initial_attestation: Some(TEST_VALID_ATTESTATION.to_string()),
         apple_public_key: None,
         apple_assertion: None,
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -797,6 +803,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
         apple_initial_attestation: Some("ou000000000000000000".to_string()),
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
         apple_assertion: None,
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -862,6 +869,7 @@ async fn test_apple_assertion_e2e_success() {
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -955,6 +963,7 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some("not_even_base64".to_string()),
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1019,6 +1028,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         // Valid base64 but invalid CBOR message
         apple_assertion: Some("aW52YWxpZA".to_string()),
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1067,6 +1077,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
         apple_initial_attestation: None,
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
         apple_assertion: None,
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1113,6 +1124,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
         apple_initial_attestation: None,
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
         apple_assertion: Some("0x00000000000000000000000000000000".to_string()),
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1176,6 +1188,7 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(invalid_assertion.to_string()),
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1239,6 +1252,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1317,6 +1331,7 @@ async fn test_apple_token_generation_with_invalid_counter() {
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1453,6 +1468,7 @@ async fn test_apple_counter_race_condition() {
             apple_initial_attestation: None,
             apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
             apple_assertion: Some(assertion.to_string()),
+            developer_token: None,
         };
 
         let handle = task::spawn(
@@ -1523,25 +1539,18 @@ fn get_jwk(key_id: &str) -> josekit::jwk::Jwk {
     jwk
 }
 
-fn generate_tools_for_humanity_certificate(
+fn generate_developer_certificate(
     client_public_key: &josekit::jwk::Jwk,
-    tools_for_humanity_jwk: &josekit::jwk::Jwk,
+    developer_jwk: &josekit::jwk::Jwk,
     issuer: String,
 ) -> String {
     let mut header = josekit::jws::JwsHeader::new();
     header.set_token_type("JWT");
-    header.set_key_id(tools_for_humanity_jwk.key_id().unwrap());
+    header.set_key_id(developer_jwk.key_id().unwrap());
 
     let mut payload = josekit::jwt::JwtPayload::new();
     payload.set_issuer(issuer);
-    payload
-        .set_claim(
-            "principal",
-            Some(josekit::Value::String(
-                "foo.barr@toolsforhumanity.com".into(),
-            )),
-        )
-        .unwrap();
+    payload.set_subject("foo.barr@toolsforhumanity.com");
     payload
         .set_claim(
             "publicKey",
@@ -1550,7 +1559,7 @@ fn generate_tools_for_humanity_certificate(
         .unwrap();
 
     // Signing JWT
-    let signer = ES256.signer_from_jwk(&tools_for_humanity_jwk).unwrap();
+    let signer = ES256.signer_from_jwk(&developer_jwk).unwrap();
     let jwt = jwt::encode_with_signer(&payload, &header, &signer).unwrap();
 
     jwt.to_string()
@@ -1558,8 +1567,8 @@ fn generate_tools_for_humanity_certificate(
 
 fn generate_client_token(
     client_jwk: &josekit::jwk::Jwk,
-    tools_for_humanity_certificate: String,
-    request_hash: String,
+    developer_certificate: String,
+    request_hash: &String,
 ) -> String {
     let mut header = josekit::jws::JwsHeader::new();
     header.set_token_type("JWT");
@@ -1568,9 +1577,7 @@ fn generate_client_token(
     payload
         .set_claim(
             "certificate",
-            Some(josekit::Value::String(
-                tools_for_humanity_certificate.into(),
-            )),
+            Some(josekit::Value::String(developer_certificate.into())),
         )
         .unwrap();
     payload
@@ -1609,80 +1616,74 @@ async fn get_mock_server(jwk: &josekit::jwk::Jwk) -> httpmock::MockServer {
 
 struct TestEnvironment {
     client_jwk: josekit::jwk::Jwk,
-    tools_for_humanity_jwk: josekit::jwk::Jwk,
-    tools_for_humanity_server_base_url: String,
+    developer_jwk: josekit::jwk::Jwk,
+    developer_server_base_url: String,
 }
 
-// Generate JWK only once because TOOLS_FOR_HUMANITY_VERIFIER in tools_for_humanity/mod.rs is a global once cell
-static TOOLS_FOR_HUMANITY_JWK: OnceCell<josekit::jwk::Jwk> = OnceCell::const_new();
+// Generate JWK only once because developer_VERIFIER in developer/mod.rs is a global once cell
+static DEVELOPER_JWK: OnceCell<josekit::jwk::Jwk> = OnceCell::const_new();
 static JWK_SERVER: OnceCell<httpmock::MockServer> = OnceCell::const_new();
 
 async fn initialize_tfh_test_environment() -> TestEnvironment {
     let client_jwk = get_jwk("client");
-    let tools_for_humanity_jwk = TOOLS_FOR_HUMANITY_JWK
-        .get_or_init(|| async { get_jwk("tools_for_humanity") })
+    let developer_jwk = DEVELOPER_JWK
+        .get_or_init(|| async { get_jwk("developer") })
         .await;
     let server = JWK_SERVER
         .get_or_init(|| async {
-            let server = get_mock_server(&tools_for_humanity_jwk).await;
+            let server = get_mock_server(&developer_jwk).await;
             let url = server.url("/.well-known/jwks.json");
-            unsafe { std::env::set_var("TOOLS_FOR_HUMANITY_INNER_JWKS_URL", url) };
+            unsafe { std::env::set_var("DEVELOPER_INNER_JWKS_URL", url) };
             server
         })
         .await;
 
     TestEnvironment {
         client_jwk,
-        tools_for_humanity_jwk: tools_for_humanity_jwk.clone(),
-        tools_for_humanity_server_base_url: server.base_url(),
+        developer_jwk: developer_jwk.clone(),
+        developer_server_base_url: server.base_url(),
     }
 }
 
 #[tokio::test]
 #[serial]
-async fn test_tools_for_humanity_token_generation_e2e_success() {
+async fn test_developer_token_generation_e2e_success() {
     let TestEnvironment {
         client_jwk,
-        tools_for_humanity_jwk,
-        tools_for_humanity_server_base_url,
+        developer_jwk,
+        developer_server_base_url,
     } = initialize_tfh_test_environment().await;
 
     let mut redis = get_redis_extension().await.0;
     let aws_config = get_aws_config_extension().await.0;
     let api_router = get_api_router().await;
 
+    let request_hash = String::from("i_am_a_sample_request_hash");
+
+    // Generate Tools for Humanity certificate
+    let developer_certificate = generate_developer_certificate(
+        &client_jwk.to_public_key().unwrap(),
+        &developer_jwk,
+        developer_server_base_url,
+    );
+
+    // Generate client token
+    let generated_client_token =
+        generate_client_token(&client_jwk, developer_certificate, &request_hash);
+
     // Generate token generation request
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
-        request_hash: "i_am_a_sample_request_hash".to_string(),
+        request_hash,
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
+        developer_token: Some(generated_client_token),
     };
     let body = serde_json::to_string(&token_generation_request).unwrap();
-
-    // Generate request hash
-    let hasher = request_hasher::RequestHasher::new();
-    let input = request_hasher::GenerateRequestHashInput {
-        path_uri: "/g".to_string(),
-        method: request_hasher::AllowedHttpMethod::Post,
-        body: Some(body.clone()),
-    };
-    let request_hash = hasher.generate_json_request_hash(&input).unwrap();
-
-    // Generate Tools for Humanity certificate
-    let tools_for_humanity_certificate = generate_tools_for_humanity_certificate(
-        &client_jwk.to_public_key().unwrap(),
-        &tools_for_humanity_jwk,
-        tools_for_humanity_server_base_url,
-    );
-
-    // Generate client token
-    let generated_client_token =
-        generate_client_token(&client_jwk, tools_for_humanity_certificate, request_hash);
 
     // Make request
     let response = api_router
@@ -1691,7 +1692,6 @@ async fn test_tools_for_humanity_token_generation_e2e_success() {
                 .uri("/g")
                 .method(http::Method::POST)
                 .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
-                .header("x-tfh-token", generated_client_token)
                 .body(Body::from(body.clone()))
                 .unwrap(),
         )
@@ -1737,47 +1737,39 @@ async fn test_tools_for_humanity_token_generation_e2e_success() {
 
 #[tokio::test]
 #[serial]
-async fn test_tools_for_humanity_token_generation_e2e_request_hash_mismatch() {
+async fn test_developer_token_generation_e2e_request_hash_mismatch() {
     let TestEnvironment {
         client_jwk,
-        tools_for_humanity_jwk,
-        tools_for_humanity_server_base_url,
+        developer_jwk,
+        developer_server_base_url,
     } = initialize_tfh_test_environment().await;
 
     let api_router = get_api_router().await;
+
+    let expected_request_hash = String::from("i_am_a_sample_request_hash");
+    let request_hash = String::from("wrong_request_hash");
+
+    let developer_certificate = generate_developer_certificate(
+        &client_jwk.to_public_key().unwrap(),
+        &developer_jwk,
+        developer_server_base_url,
+    );
+    let generated_client_token =
+        generate_client_token(&client_jwk, developer_certificate, &request_hash);
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "toolsforhumanity.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
-        request_hash: "i_am_a_sample_request_hash".to_string(),
+        request_hash: expected_request_hash.clone(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
+        developer_token: Some(generated_client_token),
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
-
-    let hasher = request_hasher::RequestHasher::new();
-    let input = request_hasher::GenerateRequestHashInput {
-        path_uri: "/g".to_string(),
-        method: request_hasher::AllowedHttpMethod::Post,
-        body: Some(body.clone()),
-    };
-    let expected_request_hash = hasher.generate_json_request_hash(&input).unwrap();
-    let request_hash = "wrong_request_hash";
-
-    let tools_for_humanity_certificate = generate_tools_for_humanity_certificate(
-        &client_jwk.to_public_key().unwrap(),
-        &tools_for_humanity_jwk,
-        tools_for_humanity_server_base_url,
-    );
-    let generated_client_token = generate_client_token(
-        &client_jwk,
-        tools_for_humanity_certificate,
-        request_hash.to_string(),
-    );
 
     let response = api_router
         .clone()
@@ -1786,7 +1778,6 @@ async fn test_tools_for_humanity_token_generation_e2e_request_hash_mismatch() {
                 .uri("/g")
                 .method(http::Method::POST)
                 .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
-                .header("x-tfh-token", generated_client_token)
                 .body(Body::from(body.clone()))
                 .unwrap(),
         )
@@ -1802,8 +1793,8 @@ async fn test_tools_for_humanity_token_generation_e2e_request_hash_mismatch() {
         json!({
             "allowRetry": false,
             "error": {
-                "code": "invalid_tools_for_humanity_token",
-                "message": format!("Request hash mismatch: {} != {}", expected_request_hash, request_hash)
+                "code": "invalid_developer_token",
+                "message": "The provided developer token is invalid or malformed."
             }
         })
     );
@@ -1811,11 +1802,11 @@ async fn test_tools_for_humanity_token_generation_e2e_request_hash_mismatch() {
 
 #[tokio::test]
 #[serial]
-async fn test_tools_for_humanity_token_generation_e2e_missing_tfh_token() {
+async fn test_developer_token_generation_e2e_missing_token() {
     let TestEnvironment {
         client_jwk: _,
-        tools_for_humanity_jwk: _,
-        tools_for_humanity_server_base_url: _,
+        developer_jwk: _,
+        developer_server_base_url: _,
     } = initialize_tfh_test_environment().await;
 
     let api_router = get_api_router().await;
@@ -1829,6 +1820,7 @@ async fn test_tools_for_humanity_token_generation_e2e_missing_tfh_token() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1907,6 +1899,7 @@ async fn test_client_error_gets_logged_to_kinesis() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
+        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
