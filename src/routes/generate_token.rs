@@ -12,7 +12,7 @@ use crate::{
     utils::{
         BundleIdentifier, CheckType, ClientException, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
-        TokenGenerationRequest, TokenGenerationResponse, VerificationOutput, handle_redis_error,
+        TokenGenerationRequest, TokenGenerationResponse, handle_redis_error,
     },
 };
 
@@ -182,19 +182,25 @@ async fn verify_android_or_apple_integrity(
         internal_debug_info: None,
         play_integrity: None,
         app_version: None,
+        check_type: None,
+        dev_check_sub: None,
     };
 
     let verify_result = match verification_input {
-        IntegrityVerificationInput::Android { integrity_token } => android::verify(
-            &integrity_token,
-            &bundle_identifier,
-            &request_hash,
-            config.android_outer_jwe_private_key,
-            config.android_inner_jws_public_key,
-        )?,
+        IntegrityVerificationInput::Android { integrity_token } => {
+            report.check_type = Some(CheckType::Android);
+            android::verify(
+                &integrity_token,
+                &bundle_identifier,
+                &request_hash,
+                config.android_outer_jwe_private_key,
+                config.android_inner_jws_public_key,
+            )?
+        }
         IntegrityVerificationInput::AppleInitialAttestation {
             apple_initial_attestation,
         } => {
+            report.check_type = Some(CheckType::Apple);
             apple::verify_initial_attestation(
                 apple_initial_attestation,
                 bundle_identifier,
@@ -209,6 +215,7 @@ async fn verify_android_or_apple_integrity(
             apple_assertion,
             apple_public_key,
         } => {
+            report.check_type = Some(CheckType::Apple);
             apple::verify(
                 apple_assertion,
                 apple_public_key,
@@ -222,18 +229,13 @@ async fn verify_android_or_apple_integrity(
 
         IntegrityVerificationInput::Developer { developer_token } => {
             tracing::info!(developer_token = developer_token, "Developer verification");
+            report.check_type = Some(CheckType::Developer);
             developer::verify(
                 &developer_token,
                 config.developer_inner_jwks_url.as_ref(),
                 &request_hash,
             )
-            .await?;
-            VerificationOutput {
-                success: true,
-                app_version: None,
-                parsed_play_integrity_token: None,
-                client_exception: None,
-            }
+            .await?
         }
 
         IntegrityVerificationInput::ClientError { client_error: _ } => {
@@ -252,6 +254,11 @@ async fn verify_android_or_apple_integrity(
     report.internal_debug_info = verify_result
         .client_exception
         .map(|err| err.internal_debug_info);
+    report.dev_check_sub = if let Some(developer_token) = verify_result.developer_token {
+        Some(developer_token.sub)
+    } else {
+        None
+    };
 
     Ok(report)
 }

@@ -1,7 +1,11 @@
-use crate::utils::{ClientException, ErrorCode, VerificationOutput};
-use base64::Engine;
-pub use integrity_token_data::{ToolsForHumanityInnerToken, ToolsForHumanityOuterToken};
-use jwtk::{HeaderAndClaims, jwk::RemoteJwksVerifier};
+use crate::{
+    developer::integrity_token_data::{
+        DeveloperInnerTokenExtraClaims, DeveloperOuterTokenExtraClaims,
+    },
+    utils::{ClientException, ErrorCode, VerificationOutput},
+};
+pub use integrity_token_data::{DeveloperInnerTokenClaims, DeveloperOuterTokenClaims};
+use jwtk::jwk::RemoteJwksVerifier;
 use std::time::Duration;
 use tokio::sync::OnceCell;
 
@@ -51,41 +55,20 @@ pub async fn verify(
         app_version: None,
         parsed_play_integrity_token: None,
         client_exception: None,
+        developer_token: Some(inner_jwt_payload),
     })
 }
 
-fn parse_outer_jwt(tools_for_humanity_token: &str) -> eyre::Result<ToolsForHumanityOuterToken> {
-    // Just parse the payload without verifying, we can manually split the JWT and base64-decode the payload.
-    let parts: Vec<&str> = tools_for_humanity_token.split('.').collect();
-    if parts.len() != 3 {
-        eyre::bail!(ClientException {
-            code: ErrorCode::InvalidDeveloperToken,
-            internal_debug_info: "Invalid JWT format: expected 3 parts".to_string(),
-        });
-    }
-    let payload_b64 = parts[1];
-
-    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload_b64))
-        .map_err(|e| {
-            eyre::eyre!(ClientException {
-                code: ErrorCode::InvalidDeveloperToken,
-                internal_debug_info: format!("Failed to decode JWT payload as base64url: {e}"),
-            })
-        })?;
-
-    let parsed_payload: ToolsForHumanityOuterToken = serde_json::from_slice(&payload_bytes)?;
-
-    Ok(parsed_payload)
+fn parse_outer_jwt(tools_for_humanity_token: &str) -> eyre::Result<DeveloperOuterTokenClaims> {
+    DeveloperOuterTokenClaims::from_json(tools_for_humanity_token)
 }
 
 async fn verify_and_parse_inner_jwt(
-    outer_token: &ToolsForHumanityOuterToken,
+    outer_token: &DeveloperOuterTokenClaims,
     tools_for_humanity_verifier: &RemoteJwksVerifier,
-) -> eyre::Result<ToolsForHumanityInnerToken> {
-    let jwt: HeaderAndClaims<ToolsForHumanityInnerToken> = tools_for_humanity_verifier
-        .verify(&outer_token.certificate)
+) -> eyre::Result<DeveloperInnerTokenClaims> {
+    let jwt = tools_for_humanity_verifier
+        .verify::<DeveloperInnerTokenExtraClaims>(&outer_token.certificate)
         .await
         .map_err(|e| {
             let error_message = format!("Error verifying inner JWT: {e}");
@@ -96,15 +79,15 @@ async fn verify_and_parse_inner_jwt(
             })
         })?;
 
-    let claims = jwt.claims();
+    let claims = serde_json::to_string(jwt.claims()).unwrap();
 
-    Ok(claims.extra.clone())
+    Ok(serde_json::from_str(&claims)?)
 }
 
 fn verify_outer_jwt(
     tools_for_humanity_outer_token: &str,
-    tools_for_humanity_inner_token: &ToolsForHumanityInnerToken,
-) -> eyre::Result<ToolsForHumanityOuterToken> {
+    tools_for_humanity_inner_token: &DeveloperInnerTokenClaims,
+) -> eyre::Result<()> {
     let some_public_key =
         // Try to parse the public key as a PEM string
         jwtk::SomePublicKey::from_pem(tools_for_humanity_inner_token.public_key.as_bytes())
@@ -115,7 +98,7 @@ fn verify_outer_jwt(
                 parsed_key.to_verification_key()
             })?;
 
-    let claims = jwtk::verify::<ToolsForHumanityOuterToken>(
+    jwtk::verify::<DeveloperOuterTokenExtraClaims>(
         tools_for_humanity_outer_token,
         &some_public_key,
     )
@@ -128,18 +111,17 @@ fn verify_outer_jwt(
         })
     })?;
 
-    Ok(claims.claims().extra.clone())
+    Ok(())
 }
 
 fn validate_developer_token_claims(
-    outer_token: &ToolsForHumanityOuterToken,
+    outer_token: &DeveloperOuterTokenClaims,
     request_hash: &str,
 ) -> eyre::Result<()> {
-    if outer_token.request_hash != request_hash {
+    if outer_token.jti != request_hash {
         return Err(eyre::eyre!(ClientException {
             code: ErrorCode::InvalidDeveloperToken,
-            internal_debug_info: "Provided `request_hash` does not match token's `request_hash`"
-                .to_string(),
+            internal_debug_info: "Provided `request_hash` does not match token's `jti`".to_string(),
         }));
     }
     Ok(())
@@ -155,7 +137,10 @@ mod tests {
     fn generate_inner_token(key: &jwtk::SomePrivateKey, kid: &str, client_pub_key: &str) -> String {
         let mut claims = jwtk::HeaderAndClaims::new_dynamic();
         claims
-            .set_sub("test@toolsforhumanity.com")
+            .set_exp_from_now(Duration::from_secs(60))
+            .set_iat_now()
+            .set_iss("https://developer.com")
+            .set_sub("test@developer.com")
             .insert("publicKey", client_pub_key)
             .set_kid(kid);
 
@@ -168,10 +153,11 @@ mod tests {
         request_hash: &str,
     ) -> String {
         let mut claims = jwtk::HeaderAndClaims::new_dynamic();
-        // TODO: Uncomment this when we have a proper JTI
-        // claims.set_jti(request_hash);
-        claims.insert("requestHash", request_hash);
-        claims.insert("certificate", certificate);
+        claims
+            .set_exp_from_now(Duration::from_secs(60))
+            .set_iat_now()
+            .set_jti(request_hash)
+            .insert("certificate", certificate);
 
         jwtk::sign(&mut claims, client_key).unwrap()
     }
@@ -181,7 +167,7 @@ mod tests {
 
     async fn generate_keys_and_mock_jwks_server()
     -> (String, jwtk::SomePrivateKey, jwtk::SomePrivateKey, String) {
-        // Generate TFH key (used for inner JWT signing)
+        // Generate Developer key (used for inner JWT signing)
         let developer_kid = String::from("developer-test-key");
         let developer_private_key = DEVELOPER_PRIVATE_KEY
             .get_or_init(|| async {
@@ -191,7 +177,7 @@ mod tests {
 
         let developer_some_private_key = jwtk::SomePrivateKey::Ecdsa(developer_private_key.clone());
 
-        // Prepare mock JWKS endpoint that returns TFH public key
+        // Prepare mock JWKS endpoint that returns Developer public key
         let server = JWK_SERVER
             .get_or_init(|| async {
                 let server = MockServer::start_async().await;

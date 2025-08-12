@@ -1,4 +1,4 @@
-use crate::android::PlayIntegrityToken;
+use crate::{android::PlayIntegrityToken, developer::DeveloperInnerTokenClaims};
 use aide::OperationIo;
 use axum::response::IntoResponse;
 use josekit::{JoseError, jwt::JwtPayload};
@@ -475,6 +475,7 @@ pub struct VerificationOutput {
     pub parsed_play_integrity_token: Option<PlayIntegrityToken>,
     pub client_exception: Option<ClientException>,
     pub app_version: Option<String>,
+    pub developer_token: Option<DeveloperInnerTokenClaims>,
 }
 
 /// `DataReport` is used to serialize the output logged to Kinesis for analytics and debugging purposes.
@@ -493,6 +494,8 @@ pub struct DataReport {
     pub play_integrity: Option<PlayIntegrityToken>,
     pub app_version: Option<String>,
     // apple_device_check: None,
+    pub check_type: Option<CheckType>,
+    pub dev_check_sub: Option<String>,
 }
 
 impl DataReport {
@@ -515,6 +518,8 @@ impl DataReport {
             internal_debug_info,
             play_integrity: None,
             app_version: None,
+            check_type: None,
+            dev_check_sub: None,
         }
     }
 
@@ -751,6 +756,8 @@ mod tests {
             internal_debug_info: None,
             play_integrity: Some(token),
             app_version: Some("1.25.0".to_string()),
+            check_type: Some(CheckType::Android),
+            dev_check_sub: None,
         };
         let serialized =
             serde_json::to_string(&data_report).expect("failed to serialize `DataReport` as json");
