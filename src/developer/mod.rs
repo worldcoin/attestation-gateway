@@ -1,10 +1,8 @@
 use crate::{
-    developer::integrity_token_data::{
-        DeveloperInnerTokenExtraClaims, DeveloperOuterTokenExtraClaims,
-    },
+    developer::integrity_token_data::{ActorTokenExtraClaims, DeveloperTokenExtraClaims},
     utils::{ClientException, ErrorCode, VerificationOutput},
 };
-pub use integrity_token_data::{DeveloperInnerTokenClaims, DeveloperOuterTokenClaims};
+pub use integrity_token_data::{ActorTokenClaims, DeveloperTokenClaims};
 use jwtk::jwk::RemoteJwksVerifier;
 use std::time::Duration;
 use tokio::sync::OnceCell;
@@ -59,16 +57,16 @@ pub async fn verify(
     })
 }
 
-fn parse_outer_jwt(tools_for_humanity_token: &str) -> eyre::Result<DeveloperOuterTokenClaims> {
-    DeveloperOuterTokenClaims::from_json(tools_for_humanity_token)
+fn parse_outer_jwt(tools_for_humanity_token: &str) -> eyre::Result<ActorTokenClaims> {
+    ActorTokenClaims::from_json(tools_for_humanity_token)
 }
 
 async fn verify_and_parse_inner_jwt(
-    outer_token: &DeveloperOuterTokenClaims,
+    outer_token: &ActorTokenClaims,
     tools_for_humanity_verifier: &RemoteJwksVerifier,
-) -> eyre::Result<DeveloperInnerTokenClaims> {
+) -> eyre::Result<DeveloperTokenClaims> {
     let jwt = tools_for_humanity_verifier
-        .verify::<DeveloperInnerTokenExtraClaims>(&outer_token.certificate)
+        .verify::<DeveloperTokenExtraClaims>(&outer_token.certificate)
         .await
         .map_err(|e| {
             let error_message = format!("Error verifying inner JWT: {e}");
@@ -86,7 +84,7 @@ async fn verify_and_parse_inner_jwt(
 
 fn verify_outer_jwt(
     tools_for_humanity_outer_token: &str,
-    tools_for_humanity_inner_token: &DeveloperInnerTokenClaims,
+    tools_for_humanity_inner_token: &DeveloperTokenClaims,
 ) -> eyre::Result<()> {
     let some_public_key =
         // Try to parse the public key as a PEM string
@@ -98,24 +96,21 @@ fn verify_outer_jwt(
                 parsed_key.to_verification_key()
             })?;
 
-    jwtk::verify::<DeveloperOuterTokenExtraClaims>(
-        tools_for_humanity_outer_token,
-        &some_public_key,
-    )
-    .map_err(|e| {
-        let error_message = format!("Error verifying outer JWT: {e}");
-        tracing::error!(error_message);
-        eyre::eyre!(ClientException {
-            code: ErrorCode::InvalidDeveloperToken,
-            internal_debug_info: error_message,
-        })
-    })?;
+    jwtk::verify::<ActorTokenExtraClaims>(tools_for_humanity_outer_token, &some_public_key)
+        .map_err(|e| {
+            let error_message = format!("Error verifying outer JWT: {e}");
+            tracing::error!(error_message);
+            eyre::eyre!(ClientException {
+                code: ErrorCode::InvalidDeveloperToken,
+                internal_debug_info: error_message,
+            })
+        })?;
 
     Ok(())
 }
 
 fn validate_developer_token_claims(
-    outer_token: &DeveloperOuterTokenClaims,
+    outer_token: &ActorTokenClaims,
     request_hash: &str,
 ) -> eyre::Result<()> {
     if outer_token.jti != request_hash {

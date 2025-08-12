@@ -3,36 +3,54 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DeveloperInnerTokenExtraClaims {
+pub struct DeveloperTokenExtraClaims {
     pub public_key: String,
 }
 
+/// Claims contained within a developer token's inner JWT.
+///
+/// This represents the payload of the inner JWT that is embedded within the outer actor token's
+/// certificate field. The inner JWT contains the developer's public key and standard JWT claims.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DeveloperInnerTokenClaims {
+pub struct DeveloperTokenClaims {
+    /// Token expiration time (Unix timestamp)
     pub exp: f64,
+    /// Token issued at time (Unix timestamp)
     pub iat: f64,
+    /// Issuer of the token
     pub iss: String,
+    /// Subject (typically the developer/user identifier)
     pub sub: String,
+    /// The developer's public key (can be in PEM or JWK format)
     pub public_key: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DeveloperOuterTokenExtraClaims {
+pub struct ActorTokenExtraClaims {
     pub certificate: String,
 }
 
+/// Claims contained within the outer actor token.
+///
+/// This represents the payload of the outer JWT that wraps the developer token.
+/// The outer token contains standard JWT claims along with a certificate field
+/// that holds the inner developer token as a JWT string.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DeveloperOuterTokenClaims {
+pub struct ActorTokenClaims {
+    /// Token expiration time (Unix timestamp)
     pub exp: f64,
+    /// Token issued at time (Unix timestamp)
     pub iat: f64,
+    /// JWT ID - unique identifier for this token that contains the request hash
     pub jti: String,
+    /// The inner developer token as a JWT string
     pub certificate: String,
 }
 
-impl DeveloperOuterTokenClaims {
+impl ActorTokenClaims {
     /// Parses a Tools for Humanity outer JWT token from a JSON string
     ///
     /// # Errors

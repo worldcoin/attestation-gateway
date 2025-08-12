@@ -1,4 +1,4 @@
-use crate::{android::PlayIntegrityToken, developer::DeveloperInnerTokenClaims};
+use crate::{android::PlayIntegrityToken, developer::DeveloperTokenClaims};
 use aide::OperationIo;
 use axum::response::IntoResponse;
 use josekit::{JoseError, jwt::JwtPayload};
@@ -475,7 +475,7 @@ pub struct VerificationOutput {
     pub parsed_play_integrity_token: Option<PlayIntegrityToken>,
     pub client_exception: Option<ClientException>,
     pub app_version: Option<String>,
-    pub developer_token: Option<DeveloperInnerTokenClaims>,
+    pub developer_token: Option<DeveloperTokenClaims>,
 }
 
 /// `DataReport` is used to serialize the output logged to Kinesis for analytics and debugging purposes.
