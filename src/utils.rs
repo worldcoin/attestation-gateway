@@ -663,7 +663,7 @@ mod tests {
             out: OutEnum::Pass,
             error: None,
             app_version: Some("1.25.0".to_string()),
-            check_type: CheckType::Developer,
+            check_type: Some(CheckType::Developer),
         };
 
         let jwt_payload = payload.generate().unwrap();
