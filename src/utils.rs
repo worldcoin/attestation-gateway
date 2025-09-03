@@ -453,7 +453,7 @@ impl Display for OutEnum {
     }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum CheckType {
     Developer,
     Android,
@@ -554,7 +554,7 @@ pub struct OutputTokenPayload {
     pub out: OutEnum,
     pub error: Option<String>,
     pub app_version: Option<String>,
-    pub check_type: CheckType,
+    pub check_type: Option<CheckType>,
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -605,12 +605,6 @@ impl OutputTokenPayload {
         payload
             .set_claim("out", Some(josekit::Value::String(self.out.to_string())))
             .map_err(handle_jose_error)?;
-        payload
-            .set_claim(
-                "check_type",
-                Some(josekit::Value::String(self.check_type.to_string())),
-            )
-            .map_err(handle_jose_error)?;
         if let Some(error) = &self.error {
             payload
                 .set_claim("error", Some(josekit::Value::String(error.clone())))
@@ -622,6 +616,15 @@ impl OutputTokenPayload {
                 .set_claim(
                     "app_version",
                     Some(josekit::Value::String(app_version.clone())),
+                )
+                .map_err(handle_jose_error)?;
+        }
+
+        if let Some(check_type) = &self.check_type {
+            payload
+                .set_claim(
+                    "check_type",
+                    Some(josekit::Value::String(check_type.to_string())),
                 )
                 .map_err(handle_jose_error)?;
         }

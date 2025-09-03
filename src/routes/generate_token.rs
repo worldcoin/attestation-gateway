@@ -305,8 +305,7 @@ async fn process_and_finalize_report(
         out: report.out,
         error: None, // TODO: Implement in the future (see L76)
         app_version: report.app_version.clone(),
-        // TODO: Add check type to the request
-        check_type: CheckType::Developer,
+        check_type: report.check_type.clone(),
     }
     .generate()?;
 
