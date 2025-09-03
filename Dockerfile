@@ -1,7 +1,7 @@
 ####################################################################################################
 ## Base image
 ####################################################################################################
-FROM --platform=linux/amd64 public.ecr.aws/docker/library/rust:1-bookworm AS chef
+FROM public.ecr.aws/docker/library/rust:1-bookworm AS chef
 USER root
 WORKDIR /app
 RUN cargo install cargo-chef
@@ -14,14 +14,15 @@ FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release
+RUN cargo build --release --locked
 
 ####################################################################################################
 ## Final image
 ####################################################################################################
-FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12:nonroot
+FROM scratch
 WORKDIR /app
 
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /app/target/release/attestation-gateway /app/attestation-gateway
 
 USER 100
