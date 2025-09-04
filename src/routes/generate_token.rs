@@ -228,7 +228,6 @@ async fn verify_android_or_apple_integrity(
         }
 
         IntegrityVerificationInput::Developer { developer_token } => {
-            tracing::info!(developer_token = developer_token, "Developer verification");
             report.check_type = Some(CheckType::Developer);
             developer::verify(
                 &developer_token,
