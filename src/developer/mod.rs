@@ -133,8 +133,8 @@ fn validate_developer_token_claims(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use httpmock::MockServer;
     use jwtk::PublicKeyToJwk;
+    use mockito::Server;
     use serde_json::json;
 
     fn generate_inner_token(key: &jwtk::SomePrivateKey, kid: &str, client_pub_key: &str) -> String {
@@ -166,7 +166,7 @@ mod tests {
     }
 
     static DEVELOPER_PRIVATE_KEY: OnceCell<jwtk::ecdsa::EcdsaPrivateKey> = OnceCell::const_new();
-    static JWK_SERVER: OnceCell<httpmock::MockServer> = OnceCell::const_new();
+    static JWK_SERVER: OnceCell<mockito::ServerGuard> = OnceCell::const_new();
 
     async fn generate_keys_and_mock_jwks_server()
     -> (String, jwtk::SomePrivateKey, jwtk::SomePrivateKey, String) {
@@ -183,17 +183,18 @@ mod tests {
         // Prepare mock JWKS endpoint that returns Developer public key
         let server = JWK_SERVER
             .get_or_init(|| async {
-                let server = MockServer::start_async().await;
+                let mut server = Server::new_async().await;
+
                 let mut developer_some_public_key =
                     developer_some_private_key.public_key_to_jwk().unwrap();
                 developer_some_public_key.kid = Some(developer_kid.to_string());
                 let body = json!({ "keys": [developer_some_public_key] });
 
-                server.mock(|when, then| {
-                    when.path("/.well-known/jwks.json")
-                        .method(httpmock::Method::GET);
-                    then.status(200).json_body(body);
-                });
+                server
+                    .mock("GET", "/.well-known/jwks.json")
+                    .with_status(200)
+                    .with_body(body.to_string())
+                    .create();
 
                 server
             })
@@ -208,7 +209,7 @@ mod tests {
             developer_kid,
             developer_some_private_key,
             client_some_private_key,
-            server.url("/.well-known/jwks.json"),
+            server.url() + "/.well-known/jwks.json",
         )
     }
 

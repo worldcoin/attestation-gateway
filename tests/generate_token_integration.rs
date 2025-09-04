@@ -1534,7 +1534,7 @@ async fn test_apple_counter_race_condition() {
 // !SECTION ------------------ apple assertions tests ------------------
 
 // SECTION ------------------ tools for humanity tests ------------------
-use httpmock;
+use mockito;
 
 fn get_jwk(key_id: &str) -> josekit::jwk::Jwk {
     let mut jwk = josekit::jwk::Jwk::generate_ec_key(josekit::jwk::alg::ec::EcCurve::P256).unwrap();
@@ -1597,7 +1597,7 @@ fn generate_client_token(
 }
 
 // Start a lightweight mock server.
-async fn get_mock_server(jwk: &josekit::jwk::Jwk) -> httpmock::MockServer {
+async fn get_mock_server(jwk: &josekit::jwk::Jwk) -> mockito::ServerGuard {
     let mut public_key = jwk.to_public_key().unwrap();
     // to_public_key() removes the key_id, so we need to set it again
     public_key.set_key_id(jwk.key_id().unwrap());
@@ -1605,13 +1605,13 @@ async fn get_mock_server(jwk: &josekit::jwk::Jwk) -> httpmock::MockServer {
         "keys": [public_key]
     });
 
-    let server = httpmock::MockServer::start();
+    let mut server = mockito::Server::new_async().await;
 
-    server.mock(|when, then| {
-        when.path("/.well-known/jwks.json")
-            .method(httpmock::Method::GET);
-        then.json_body(body).status(200);
-    });
+    server
+        .mock("GET", "/.well-known/jwks.json")
+        .with_status(200)
+        .with_body(body.to_string())
+        .create();
 
     server
 }
@@ -1624,7 +1624,7 @@ struct TestEnvironment {
 
 // Generate JWK only once because developer_VERIFIER in developer/mod.rs is a global once cell
 static DEVELOPER_JWK: OnceCell<josekit::jwk::Jwk> = OnceCell::const_new();
-static JWK_SERVER: OnceCell<httpmock::MockServer> = OnceCell::const_new();
+static JWK_SERVER: OnceCell<mockito::ServerGuard> = OnceCell::const_new();
 
 async fn initialize_developer_test_environment() -> TestEnvironment {
     let client_jwk = get_jwk("client");
@@ -1634,7 +1634,7 @@ async fn initialize_developer_test_environment() -> TestEnvironment {
     let server = JWK_SERVER
         .get_or_init(|| async {
             let server = get_mock_server(&developer_jwk).await;
-            let url = server.url("/.well-known/jwks.json");
+            let url = server.url() + "/.well-known/jwks.json";
             unsafe { std::env::set_var("DEVELOPER_INNER_JWKS_URL", url) };
             server
         })
@@ -1643,7 +1643,7 @@ async fn initialize_developer_test_environment() -> TestEnvironment {
     TestEnvironment {
         client_jwk,
         developer_jwk: developer_jwk.clone(),
-        developer_server_base_url: server.base_url(),
+        developer_server_base_url: server.url(),
     }
 }
 
