@@ -216,7 +216,7 @@ async fn test_android_e2e_success() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
@@ -287,7 +287,7 @@ async fn test_token_generation_fails_on_invalid_bundle_identifier() {
 
     let token_generation_request = json!( {
         "integrity_token": "my_integrity_token".to_string(),
-        "aud": "developer.com".to_string(),
+        "aud": "relying-party.example.com".to_string(),
         "bundle_identifier": "com.worldcoin.invalid".to_string(),
         "request_hash": "my_request_hash".to_string(),
     });
@@ -324,7 +324,7 @@ async fn test_token_generation_fails_on_disabled_bundle_identifier() {
 
     let token_generation_request = json!( {
         "integrity_token": "my_integrity_token".to_string(),
-        "aud": "developer.com".to_string(),
+        "aud": "relying-party.example.com".to_string(),
         "bundle_identifier": "com.worldcoin".to_string(), // see get_global_config_extension where this identifier is currently disabled
         "request_hash": "my_request_hash".to_string(),
     });
@@ -361,7 +361,7 @@ async fn test_android_token_generation_with_invalid_attributes() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
@@ -409,7 +409,7 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
@@ -478,7 +478,7 @@ async fn test_request_hash_race_condition() {
 
         let token_generation_request = TokenGenerationRequest {
             integrity_token: Some(helper_generate_valid_token()),
-            aud: "developer.com".to_string(),
+            aud: "relying-party.example.com".to_string(),
             bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
             request_hash: "i_am_a_sample_request_hash".to_string(), // note we use the same request hash for all requests
             client_error: None,
@@ -540,7 +540,7 @@ async fn test_request_hash_is_released_if_request_fails() {
 
     let mut token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
@@ -619,7 +619,7 @@ async fn test_server_error_is_properly_logged() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
         request_hash: "test_server_error_is_properly_logged_hash".to_string(),
         client_error: None,
@@ -676,7 +676,7 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
         request_hash: "02072cdf5e347d876a89949e6c11febb55716e3e7026e76b7d90d0bed6cf28e9"
             .to_string(),
@@ -799,7 +799,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
@@ -865,7 +865,7 @@ async fn test_apple_assertion_e2e_success() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
         request_hash: TEST_REQUEST_HASH.to_string(),
         client_error: None,
@@ -959,7 +959,7 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
@@ -1023,7 +1023,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
@@ -1073,7 +1073,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
@@ -1120,7 +1120,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
@@ -1184,7 +1184,7 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
         request_hash: "testhash".to_string(),
         client_error: None,
@@ -1247,7 +1247,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         // Notice the bundle identifier is different
         bundle_identifier: BundleIdentifier::IOSProdWorldApp,
         request_hash: TEST_REQUEST_HASH.to_string(),
@@ -1327,7 +1327,7 @@ async fn test_apple_token_generation_with_invalid_counter() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
         request_hash: TEST_REQUEST_HASH.to_string(),
         client_error: None,
@@ -1464,7 +1464,7 @@ async fn test_apple_counter_race_condition() {
 
         let token_generation_request = TokenGenerationRequest {
             integrity_token: None,
-            aud: "developer.com".to_string(),
+            aud: "relying-party.example.com".to_string(),
             bundle_identifier: BundleIdentifier::IOSStageWorldApp,
             request_hash: format!("testhash-{i}"),
             client_error: None,
@@ -1555,7 +1555,7 @@ fn generate_developer_certificate(
     payload.set_expires_at(&(SystemTime::now() + Duration::from_secs(60)));
     payload.set_issued_at(&SystemTime::now());
     payload.set_issuer(issuer);
-    payload.set_subject("foo.bar@developer.com");
+    payload.set_subject("foo.bar@relying-party.example.com");
     payload
         .set_claim(
             "publicKey",
@@ -1676,7 +1676,7 @@ async fn test_developer_token_generation_e2e_success() {
     // Generate token generation request
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
         request_hash,
         client_error: None,
@@ -1761,7 +1761,7 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
         request_hash: expected_request_hash.clone(),
         client_error: None,
@@ -1815,7 +1815,7 @@ async fn test_developer_token_generation_e2e_missing_token() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
@@ -1894,7 +1894,7 @@ async fn test_client_error_gets_logged_to_kinesis() {
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
-        aud: "developer.com".to_string(),
+        aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: Some("play_integrity_api_is_down".to_string()),

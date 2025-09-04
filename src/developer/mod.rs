@@ -134,8 +134,8 @@ mod tests {
         claims
             .set_exp_from_now(Duration::from_secs(60))
             .set_iat_now()
-            .set_iss("https://developer.com")
-            .set_sub("test@developer.com")
+            .set_iss("https://relying-party.example.com")
+            .set_sub("test@relying-party.example.com")
             .insert("publicKey", client_pub_key)
             .set_kid(kid);
 
