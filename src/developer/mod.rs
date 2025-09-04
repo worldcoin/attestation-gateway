@@ -11,7 +11,10 @@ mod integrity_token_data;
 
 static TOOLS_FOR_HUMANITY_VERIFIER: OnceCell<RemoteJwksVerifier> = OnceCell::const_new();
 
-/// Verifies a Tools for Humanity token and returns the user.
+/// Verifies a developer token and returns the sub.
+///
+/// Currently supported developers:
+/// - Tools for Humanity (TFH)
 ///
 /// # Errors
 /// Will return a `eyre::Error` if there is an error verifying the token.
