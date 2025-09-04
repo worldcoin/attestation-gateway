@@ -455,6 +455,7 @@ impl Display for OutEnum {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum CheckType {
+    /// Represents a developer verification check, typically used for development/testing purposes
     Developer,
     Android,
     Apple,
