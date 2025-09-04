@@ -1,3 +1,8 @@
+//! Developer token verification module.
+//!
+//! This module provides functionality for verifying developer tokens issued by relying parties.
+//! It includes JWKS fetching, JWT parsing, and validation logic for developer-issued tokens used in attestation flows.
+
 use crate::{
     developer::integrity_token_data::{ActorTokenExtraClaims, DeveloperTokenExtraClaims},
     utils::{ClientException, ErrorCode, VerificationOutput},
