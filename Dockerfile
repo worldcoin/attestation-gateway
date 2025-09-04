@@ -1,9 +1,20 @@
 ####################################################################################################
 ## Base image
 ####################################################################################################
-FROM clux/muslrust:stable AS chef
+FROM rust:1.85.1-slim AS chef
 USER root
 WORKDIR /app
+
+# Install dependencies for cross-compilation (perl & make are required for openssl-sys)
+RUN apt-get update && apt-get install -y \
+    musl-tools \
+    ca-certificates \
+    perl \
+    make \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add x86_64-unknown-linux-musl
+
 RUN cargo install cargo-chef
 
 FROM chef AS planner
