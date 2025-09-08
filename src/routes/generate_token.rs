@@ -231,7 +231,7 @@ async fn verify_android_or_apple_integrity(
             report.check_type = Some(CheckType::Developer);
             developer::verify(
                 &developer_token,
-                config.developer_inner_jwks_url.as_ref(),
+                config.developer_inner_jwks_url.as_deref(),
                 &request_hash,
             )
             .await?
