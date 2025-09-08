@@ -25,7 +25,7 @@ static TOOLS_FOR_HUMANITY_VERIFIER: OnceCell<RemoteJwksVerifier> = OnceCell::con
 /// Will return a `eyre::Error` if there is an error verifying the token.
 pub async fn verify(
     developer_token: &str,
-    jwks_url: Option<&String>,
+    jwks_url: Option<&str>,
     request_hash: &str,
 ) -> eyre::Result<VerificationOutput> {
     // Initialize the verifier if it's not already initialized
@@ -33,7 +33,7 @@ pub async fn verify(
         TOOLS_FOR_HUMANITY_VERIFIER
             .get_or_init(|| async {
                 tracing::info!("✅ Initializing Tools for Humanity verifier...");
-                RemoteJwksVerifier::new(jwks_url.clone(), None, Duration::from_secs(3600))
+                RemoteJwksVerifier::new(jwks_url.to_string(), None, Duration::from_secs(3600))
             })
             .await
     } else {
@@ -94,7 +94,7 @@ fn verify_outer_jwt(
     tools_for_humanity_outer_token: &str,
     tools_for_humanity_inner_token: &DeveloperTokenClaims,
 ) -> eyre::Result<()> {
-    let some_public_key =
+    let verification_key =
         // Try to parse the public key as a PEM string
         jwtk::SomePublicKey::from_pem(tools_for_humanity_inner_token.public_key.as_bytes())
             .or_else(|_| {
@@ -104,10 +104,10 @@ fn verify_outer_jwt(
                 parsed_key.to_verification_key()
             })?;
 
-    jwtk::verify::<ActorTokenExtraClaims>(tools_for_humanity_outer_token, &some_public_key)
+    jwtk::verify::<ActorTokenExtraClaims>(tools_for_humanity_outer_token, &verification_key)
         .map_err(|e| {
             let error_message = format!("Error verifying outer JWT: {e}");
-            tracing::error!(error_message);
+            tracing::error!(%e, "Error verifying outer JWT");
             eyre::eyre!(ClientException {
                 code: ErrorCode::InvalidDeveloperToken,
                 internal_debug_info: error_message,
