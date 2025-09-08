@@ -25,7 +25,7 @@ der-parser = "10.0.0"
 dotenvy = "0.15.7"
 eyre = "0.6.12"
 hex = "0.4.3"
-josekit = "0.10.0"
+josekit = "0.10.3"
 metrics = "0.24.2"
 metrics-exporter-statsd = "0.9.0"
 openssl = { version = "0.10.73", features = ["vendored"] }
@@ -39,7 +39,7 @@ schemars = "0.8.21"
 serde = { version = "1.0.210", features = ["derive"] }
 serde_bytes = "0.11.17"
 serde_json = "1.0.134"
-tokio = { version = "1.46.1", features = ["full"] }
+tokio = { version = "1.47.1", features = ["full"] }
 tower-http = { version = "0.6.6", features = ["compression-br", "trace", "timeout"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json"] }
