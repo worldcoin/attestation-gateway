@@ -5,7 +5,7 @@ use josekit::{
     jwt,
 };
 
-use crate::utils::{OutEnum, OutputTokenPayload};
+use crate::utils::{CheckType, OutEnum, OutputTokenPayload};
 
 use super::*;
 
@@ -93,6 +93,7 @@ async fn test_generate_output_token() {
         out: OutEnum::Pass,
         error: None,
         app_version: Some("1.25.0".to_string()),
+        check_type: Some(CheckType::Developer),
     }
     .generate()
     .unwrap();
@@ -155,5 +156,9 @@ async fn test_generate_output_token() {
     assert_eq!(
         payload.claim("app_version"),
         Some(&josekit::Value::String("1.25.0".to_string()))
+    );
+    assert_eq!(
+        payload.claim("check_type"),
+        Some(&josekit::Value::String("dev".to_string()))
     );
 }

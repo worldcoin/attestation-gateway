@@ -5,12 +5,12 @@ use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::Connectio
 use std::time::SystemTime;
 
 use crate::{
-    android, apple,
+    android, apple, developer,
     keys::fetch_active_key,
     kinesis::send_kinesis_stream_event,
     kms_jws,
     utils::{
-        BundleIdentifier, ClientException, DataReport, ErrorCode, GlobalConfig,
+        BundleIdentifier, CheckType, ClientException, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
         TokenGenerationRequest, TokenGenerationResponse, handle_redis_error,
     },
@@ -182,19 +182,25 @@ async fn verify_android_or_apple_integrity(
         internal_debug_info: None,
         play_integrity: None,
         app_version: None,
+        check_type: None,
+        dev_check_sub: None,
     };
 
     let verify_result = match verification_input {
-        IntegrityVerificationInput::Android { integrity_token } => android::verify(
-            &integrity_token,
-            &bundle_identifier,
-            &request_hash,
-            config.android_outer_jwe_private_key,
-            config.android_inner_jws_public_key,
-        )?,
+        IntegrityVerificationInput::Android { integrity_token } => {
+            report.check_type = Some(CheckType::Android);
+            android::verify(
+                &integrity_token,
+                &bundle_identifier,
+                &request_hash,
+                config.android_outer_jwe_private_key,
+                config.android_inner_jws_public_key,
+            )?
+        }
         IntegrityVerificationInput::AppleInitialAttestation {
             apple_initial_attestation,
         } => {
+            report.check_type = Some(CheckType::Apple);
             apple::verify_initial_attestation(
                 apple_initial_attestation,
                 bundle_identifier,
@@ -209,6 +215,7 @@ async fn verify_android_or_apple_integrity(
             apple_assertion,
             apple_public_key,
         } => {
+            report.check_type = Some(CheckType::Apple);
             apple::verify(
                 apple_assertion,
                 apple_public_key,
@@ -216,6 +223,16 @@ async fn verify_android_or_apple_integrity(
                 &request_hash,
                 aws_config,
                 &config.apple_keys_dynamo_table_name,
+            )
+            .await?
+        }
+
+        IntegrityVerificationInput::Developer { developer_token } => {
+            report.check_type = Some(CheckType::Developer);
+            developer::verify(
+                &developer_token,
+                config.developer_inner_jwks_url.as_deref(),
+                &request_hash,
             )
             .await?
         }
@@ -236,6 +253,11 @@ async fn verify_android_or_apple_integrity(
     report.internal_debug_info = verify_result
         .client_exception
         .map(|err| err.internal_debug_info);
+    report.dev_check_sub = if let Some(developer_token) = verify_result.developer_token {
+        Some(developer_token.sub)
+    } else {
+        None
+    };
 
     Ok(report)
 }
@@ -282,6 +304,7 @@ async fn process_and_finalize_report(
         out: report.out,
         error: None, // TODO: Implement in the future (see L76)
         app_version: report.app_version.clone(),
+        check_type: report.check_type.clone(),
     }
     .generate()?;
 

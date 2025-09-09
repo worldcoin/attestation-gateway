@@ -1,4 +1,4 @@
-use crate::android::PlayIntegrityToken;
+use crate::{android::PlayIntegrityToken, developer::DeveloperTokenClaims};
 use aide::OperationIo;
 use axum::response::IntoResponse;
 use josekit::{JoseError, jwt::JwtPayload};
@@ -14,6 +14,7 @@ pub struct GlobalConfig {
     pub android_outer_jwe_private_key: String,
     pub android_inner_jws_public_key: String,
     pub apple_keys_dynamo_table_name: String,
+    pub developer_inner_jwks_url: Option<String>,
     pub enabled_bundle_identifiers: Vec<BundleIdentifier>,
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
     pub log_client_errors: bool,
@@ -34,6 +35,8 @@ impl GlobalConfig {
 
         let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
             .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
+
+        let developer_inner_jwks_url = env::var("DEVELOPER_INNER_JWKS_URL").ok();
 
         let log_client_errors = env::var("LOG_CLIENT_ERRORS")
             .is_ok_and(|val| val.to_lowercase() == "true" || val == "1");
@@ -61,6 +64,7 @@ impl GlobalConfig {
             android_outer_jwe_private_key,
             android_inner_jws_public_key,
             apple_keys_dynamo_table_name,
+            developer_inner_jwks_url,
             enabled_bundle_identifiers,
             log_client_errors,
             kinesis_stream_arn,
@@ -182,6 +186,7 @@ pub struct TokenGenerationRequest {
     pub apple_initial_attestation: Option<String>,
     pub apple_public_key: Option<String>,
     pub apple_assertion: Option<String>,
+    pub developer_token: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, JsonSchema)]
@@ -205,6 +210,9 @@ pub enum IntegrityVerificationInput {
     ClientError {
         client_error: String,
     },
+    Developer {
+        developer_token: String,
+    },
 }
 
 impl IntegrityVerificationInput {
@@ -218,6 +226,10 @@ impl IntegrityVerificationInput {
     pub fn from_request(request: &TokenGenerationRequest) -> Result<Self, RequestError> {
         if let Some(client_error) = request.client_error.clone() {
             return Ok(Self::ClientError { client_error });
+        }
+
+        if let Some(developer_token) = request.developer_token.clone() {
+            return Ok(Self::Developer { developer_token });
         }
 
         match request.bundle_identifier.platform() {
@@ -354,6 +366,7 @@ pub enum ErrorCode {
     InvalidInitialAttestation,
     InvalidPublicKey,
     InvalidToken,
+    InvalidDeveloperToken,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -368,6 +381,7 @@ impl std::fmt::Display for ErrorCode {
             Self::InvalidInitialAttestation => write!(f, "invalid_initial_attestation"),
             Self::InvalidPublicKey => write!(f, "invalid_public_key"),
             Self::InvalidToken => write!(f, "invalid_token"),
+            Self::InvalidDeveloperToken => write!(f, "invalid_developer_token"),
         }
     }
 }
@@ -383,7 +397,8 @@ impl ErrorCode {
             | Self::InvalidAttestationForApp
             | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
-            | Self::InvalidToken => axum::http::StatusCode::BAD_REQUEST,
+            | Self::InvalidToken
+            | Self::InvalidDeveloperToken => axum::http::StatusCode::BAD_REQUEST,
         }
     }
 
@@ -402,6 +417,7 @@ impl ErrorCode {
             }
             Self::InvalidPublicKey => "Public key has not been attested.",
             Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
+            Self::InvalidDeveloperToken => "The provided developer token is invalid or malformed.",
         }
     }
 
@@ -416,6 +432,7 @@ impl ErrorCode {
             | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
             | Self::InvalidToken
+            | Self::InvalidDeveloperToken
             | Self::DuplicateRequestHash => false,
         }
     }
@@ -436,12 +453,30 @@ impl Display for OutEnum {
     }
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum CheckType {
+    /// Represents a developer verification check, typically used for development/testing purposes
+    Developer,
+    Android,
+    Apple,
+}
+
+impl Display for CheckType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Android | Self::Apple => write!(f, "osv"),
+            Self::Developer => write!(f, "dev"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct VerificationOutput {
     pub success: bool,
     pub parsed_play_integrity_token: Option<PlayIntegrityToken>,
     pub client_exception: Option<ClientException>,
     pub app_version: Option<String>,
+    pub developer_token: Option<DeveloperTokenClaims>,
 }
 
 /// `DataReport` is used to serialize the output logged to Kinesis for analytics and debugging purposes.
@@ -460,6 +495,8 @@ pub struct DataReport {
     pub play_integrity: Option<PlayIntegrityToken>,
     pub app_version: Option<String>,
     // apple_device_check: None,
+    pub check_type: Option<CheckType>,
+    pub dev_check_sub: Option<String>,
 }
 
 impl DataReport {
@@ -482,6 +519,8 @@ impl DataReport {
             internal_debug_info,
             play_integrity: None,
             app_version: None,
+            check_type: None,
+            dev_check_sub: None,
         }
     }
 
@@ -516,6 +555,7 @@ pub struct OutputTokenPayload {
     pub out: OutEnum,
     pub error: Option<String>,
     pub app_version: Option<String>,
+    pub check_type: Option<CheckType>,
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -581,6 +621,15 @@ impl OutputTokenPayload {
                 .map_err(handle_jose_error)?;
         }
 
+        if let Some(check_type) = &self.check_type {
+            payload
+                .set_claim(
+                    "check_type",
+                    Some(josekit::Value::String(check_type.to_string())),
+                )
+                .map_err(handle_jose_error)?;
+        }
+
         Ok(payload)
     }
 }
@@ -615,6 +664,7 @@ mod tests {
             out: OutEnum::Pass,
             error: None,
             app_version: Some("1.25.0".to_string()),
+            check_type: Some(CheckType::Developer),
         };
 
         let jwt_payload = payload.generate().unwrap();
@@ -654,6 +704,10 @@ mod tests {
         assert_eq!(
             jwt_payload.claim("app_version"),
             Some(&josekit::Value::String("1.25.0".to_string()))
+        );
+        assert_eq!(
+            jwt_payload.claim("check_type"),
+            Some(&josekit::Value::String("dev".to_string()))
         );
     }
 
@@ -706,6 +760,8 @@ mod tests {
             internal_debug_info: None,
             play_integrity: Some(token),
             app_version: Some("1.25.0".to_string()),
+            check_type: Some(CheckType::Android),
+            dev_check_sub: None,
         };
         let serialized =
             serde_json::to_string(&data_report).expect("failed to serialize `DataReport` as json");
