@@ -60,7 +60,7 @@ tower = { version = "0.5.2", features = ["util"] }
 tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
 
 [profile.release]
-opt-level = "z"
+opt-level = "s"
 lto = true
 codegen-units = 1
 panic = "abort"
