@@ -2,6 +2,8 @@
 //!
 //! This module provides functionality for verifying tokens issued by developers of Authenticators.
 //! It includes JWKS fetching, JWT parsing, and validation logic for developer-issued tokens used in attestation flows.
+///
+/// These tokens are generally used for test builds, staging builds or other types of builds not distributed through stores but whose integrity is protected by the developer.
 
 use crate::{
     developer::integrity_token_data::{ActorTokenExtraClaims, DeveloperTokenExtraClaims},
