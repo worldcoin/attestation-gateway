@@ -1533,7 +1533,7 @@ async fn test_apple_counter_race_condition() {
 
 // !SECTION ------------------ apple assertions tests ------------------
 
-// SECTION ------------------ tools for humanity tests ------------------
+// SECTION ------------------ developer assertion tests ------------------
 use mockito;
 
 fn get_jwk(key_id: &str) -> josekit::jwk::Jwk {
@@ -1662,7 +1662,7 @@ async fn test_developer_token_generation_e2e_success() {
 
     let request_hash = String::from("i_am_a_sample_request_hash");
 
-    // Generate Tools for Humanity certificate
+    // Generate developer certificate
     let developer_certificate = generate_developer_certificate(
         &client_jwk.to_public_key().unwrap(),
         &developer_jwk,
@@ -1856,7 +1856,7 @@ async fn test_developer_token_generation_e2e_missing_token() {
         })
     );
 }
-// !SECTION ------------------ tools for humanity tests ------------------
+// !SECTION ------------------ developer assertions tests ------------------
 
 // SECTION --- general failure cases ---
 

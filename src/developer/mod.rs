@@ -15,7 +15,7 @@ use tokio::sync::OnceCell;
 
 mod integrity_token_data;
 
-static TOOLS_FOR_HUMANITY_VERIFIER: OnceCell<RemoteJwksVerifier> = OnceCell::const_new();
+static DEVELOPER_VERIFIER: OnceCell<RemoteJwksVerifier> = OnceCell::const_new();
 
 /// Verifies a developer token and returns the sub.
 ///
@@ -31,17 +31,15 @@ pub async fn verify(
 ) -> eyre::Result<VerificationOutput> {
     // Initialize the verifier if it's not already initialized
     let developer_token_verifier = if let Some(jwks_url) = jwks_url {
-        TOOLS_FOR_HUMANITY_VERIFIER
+        DEVELOPER_VERIFIER
             .get_or_init(|| async {
-                tracing::info!("✅ Initializing Tools for Humanity verifier...");
+                tracing::info!("✅ Initializing developer verifier...");
                 RemoteJwksVerifier::new(jwks_url.to_string(), None, Duration::from_secs(3600))
             })
             .await
     } else {
-        tracing::error!("No JWKS URL provided for developer token verification");
-        return Err(eyre::eyre!(
-            "No JWKS URL provided for developer token verification"
-        ));
+        tracing::error!("No JWKS URL provided for developer verifier");
+        return Err(eyre::eyre!("No JWKS URL provided for developer verifier"));
     };
 
     // Parse outer JWT
@@ -66,15 +64,22 @@ pub async fn verify(
     })
 }
 
-fn parse_outer_jwt(tools_for_humanity_token: &str) -> eyre::Result<ActorTokenClaims> {
-    ActorTokenClaims::from_json(tools_for_humanity_token)
+fn parse_outer_jwt(developer_token: &str) -> eyre::Result<ActorTokenClaims> {
+    ActorTokenClaims::from_json(developer_token).map_err(|e| {
+        let error_message = format!("Failed to parse outer JWT: {e}");
+        tracing::error!(error_message);
+        eyre::eyre!(ClientException {
+            code: ErrorCode::InvalidDeveloperToken,
+            internal_debug_info: error_message,
+        })
+    })
 }
 
 async fn verify_and_parse_inner_jwt(
     outer_token: &ActorTokenClaims,
-    tools_for_humanity_verifier: &RemoteJwksVerifier,
+    developer_verifier: &RemoteJwksVerifier,
 ) -> eyre::Result<DeveloperTokenClaims> {
-    let jwt = tools_for_humanity_verifier
+    let jwt = developer_verifier
         .verify::<DeveloperTokenExtraClaims>(&outer_token.certificate)
         .await
         .map_err(|e| {
@@ -88,32 +93,42 @@ async fn verify_and_parse_inner_jwt(
 
     let claims = serde_json::to_string(jwt.claims()).unwrap();
 
-    Ok(serde_json::from_str(&claims)?)
+    let parsed_claims: DeveloperTokenClaims = serde_json::from_str(&claims).map_err(|e| {
+        let error_message = format!("Failed to parse inner JWT claims: {e}");
+        tracing::error!(error_message);
+        eyre::eyre!(ClientException {
+            code: ErrorCode::InvalidDeveloperToken,
+            internal_debug_info: error_message,
+        })
+    })?;
+
+    Ok(parsed_claims)
 }
 
 fn verify_outer_jwt(
-    tools_for_humanity_outer_token: &str,
-    tools_for_humanity_inner_token: &DeveloperTokenClaims,
+    developer_outer_token: &str,
+    developer_inner_token: &DeveloperTokenClaims,
 ) -> eyre::Result<()> {
     let verification_key =
         // Try to parse the public key as a PEM string
-        jwtk::SomePublicKey::from_pem(tools_for_humanity_inner_token.public_key.as_bytes())
+        jwtk::SomePublicKey::from_pem(developer_inner_token.public_key.as_bytes())
             .or_else(|_| {
                 // If that fails, parse the public key as a JWK
                 let parsed_key: jwtk::jwk::Jwk =
-                    serde_json::from_str(&tools_for_humanity_inner_token.public_key)?;
+                    serde_json::from_str(&developer_inner_token.public_key)?;
                 parsed_key.to_verification_key()
             })?;
 
-    jwtk::verify::<ActorTokenExtraClaims>(tools_for_humanity_outer_token, &verification_key)
-        .map_err(|e| {
+    jwtk::verify::<ActorTokenExtraClaims>(developer_outer_token, &verification_key).map_err(
+        |e| {
             let error_message = format!("Error verifying outer JWT: {e}");
             tracing::error!(%e, "Error verifying outer JWT");
             eyre::eyre!(ClientException {
                 code: ErrorCode::InvalidDeveloperToken,
                 internal_debug_info: error_message,
             })
-        })?;
+        },
+    )?;
 
     Ok(())
 }

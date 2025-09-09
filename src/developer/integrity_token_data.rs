@@ -51,7 +51,7 @@ pub struct ActorTokenClaims {
 }
 
 impl ActorTokenClaims {
-    /// Parses a Tools for Humanity outer JWT token from a JSON string
+    /// Parses a Developer outer JWT token from a JSON string
     ///
     /// # Errors
     ///
@@ -69,7 +69,8 @@ impl ActorTokenClaims {
             .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload_b64))
             .map_err(|e| eyre::eyre!("Failed to decode JWT payload as base64url: {e}"))?;
 
-        let parsed_payload: Self = serde_json::from_slice(&payload_bytes)?;
+        let parsed_payload: Self = serde_json::from_slice(&payload_bytes)
+            .map_err(|e| eyre::eyre!("Failed to parse JWT payload: {e}"))?;
 
         Ok(parsed_payload)
     }
