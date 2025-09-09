@@ -67,7 +67,7 @@ pub async fn verify(
 fn parse_outer_jwt(developer_token: &str) -> eyre::Result<ActorTokenClaims> {
     ActorTokenClaims::from_json(developer_token).map_err(|e| {
         let error_message = format!("Failed to parse outer JWT: {e}");
-        tracing::error!(error_message);
+        tracing::warn!(error_message);
         eyre::eyre!(ClientException {
             code: ErrorCode::InvalidDeveloperToken,
             internal_debug_info: error_message,
@@ -84,7 +84,7 @@ async fn verify_and_parse_inner_jwt(
         .await
         .map_err(|e| {
             let error_message = format!("Error verifying inner JWT: {e}");
-            tracing::error!(error_message);
+            tracing::warn!(error_message);
             eyre::eyre!(ClientException {
                 code: ErrorCode::InvalidDeveloperToken,
                 internal_debug_info: error_message,
@@ -95,7 +95,7 @@ async fn verify_and_parse_inner_jwt(
 
     let parsed_claims: DeveloperTokenClaims = serde_json::from_str(&claims).map_err(|e| {
         let error_message = format!("Failed to parse inner JWT claims: {e}");
-        tracing::error!(error_message);
+        tracing::warn!(error_message);
         eyre::eyre!(ClientException {
             code: ErrorCode::InvalidDeveloperToken,
             internal_debug_info: error_message,
@@ -122,7 +122,7 @@ fn verify_outer_jwt(
     jwtk::verify::<ActorTokenExtraClaims>(developer_outer_token, &verification_key).map_err(
         |e| {
             let error_message = format!("Error verifying outer JWT: {e}");
-            tracing::error!(%e, "Error verifying outer JWT");
+            tracing::warn!(error_message);
             eyre::eyre!(ClientException {
                 code: ErrorCode::InvalidDeveloperToken,
                 internal_debug_info: error_message,
@@ -138,10 +138,16 @@ fn validate_developer_token_claims(
     request_hash: &str,
 ) -> eyre::Result<()> {
     if outer_token.jti != request_hash {
-        return Err(eyre::eyre!(ClientException {
+        let error_message = format!(
+            "Outer token and request hash do not match: {left} != {right}",
+            left = outer_token.jti,
+            right = request_hash
+        );
+        tracing::warn!(error_message);
+        eyre::bail!(ClientException {
             code: ErrorCode::InvalidDeveloperToken,
-            internal_debug_info: "Provided `request_hash` does not match token's `jti`".to_string(),
-        }));
+            internal_debug_info: error_message,
+        });
     }
     Ok(())
 }
