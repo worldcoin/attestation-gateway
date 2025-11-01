@@ -13,7 +13,7 @@ rust-version = "1.85.1"
 aide = { version = "0.13.4", features = ["axum", "macros", "scalar"] }
 anyhow = "1.0.100"
 aws-config = "1.6.3"
-aws-sdk-dynamodb = "1.72.1"
+aws-sdk-dynamodb = "1.79.0"
 aws-sdk-kinesis = "1.75.0"
 aws-sdk-kms = "1.66.0"
 axum = "0.7.5"
