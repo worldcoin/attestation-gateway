@@ -11,7 +11,8 @@ env:
 jobs:
   lint:
     name: Format, Clippy & Build
-    runs-on: arc-large-amd64-runner
+    runs-on:
+      group: arc-public-large-arm64-runner
 
     steps:
       - name: Checkout code
