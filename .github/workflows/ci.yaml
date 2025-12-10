@@ -62,8 +62,7 @@ jobs:
 
   test:
     name: Tests
-    runs-on:
-      group: arc-public-2xlarge-amd64-runner
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -161,8 +160,7 @@ jobs:
           docker rm attestation-gateway-ci-container
   deny:
     name: Cargo deny
-    runs-on:
-      group: arc-public-large-amd64-runner
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
