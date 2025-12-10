@@ -12,7 +12,8 @@ on:
 
 jobs:
   security_audit:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: arc-public-large-arm64-runner
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
