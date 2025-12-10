@@ -63,7 +63,7 @@ jobs:
   test:
     name: Tests
     runs-on:
-      group: arc-public-2large-amd64-runner
+      group: arc-public-2xlarge-amd64-runner
 
     steps:
       - name: Checkout code
