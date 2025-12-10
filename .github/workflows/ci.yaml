@@ -161,7 +161,9 @@ jobs:
           docker rm attestation-gateway-ci-container
   deny:
     name: Cargo deny
-    runs-on: arc-large-amd64-runner
+    runs-on:
+      group: arc-public-large-amd64-runner
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
