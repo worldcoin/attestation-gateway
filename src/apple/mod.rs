@@ -145,7 +145,7 @@ pub struct Assertion {
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum AAGUID {
+pub enum AAGUID {
     AppAttest,
     AppAttestDevelop,
 }
@@ -165,7 +165,7 @@ impl FromStr for AAGUID {
 
 impl AAGUID {
     /// Returns the list of allowed `AAGUID`s for a given bundle identifier.
-    fn allowed_for_bundle_identifier(
+    pub fn allowed_for_bundle_identifier(
         bundle_identifier: &BundleIdentifier,
     ) -> eyre::Result<Vec<Self>> {
         match bundle_identifier {
@@ -184,18 +184,19 @@ impl AAGUID {
 }
 
 #[derive(Debug)]
-struct InitialAttestationOutput {
+pub struct InitialAttestationOutput {
     pub public_key: String,
     pub receipt: String,
     pub key_id: String,
+    pub key_public_key: String,
 }
 
 /// Implements the verification of `DeviceCheck` *attestations* for iOS.
 /// Attestations are sent the first time to attest to the validity of a specific public key.
 /// <https://developer.apple.com/documentation/devicecheck/validating_apps_that_connect_to_your_server#3576643>
-fn decode_and_validate_initial_attestation(
+pub fn decode_and_validate_initial_attestation(
     apple_initial_attestation: String,
-    request_hash: &str,
+    challenge: &str,
     expected_app_id: &str,
     allowed_aaguid: &[AAGUID],
 ) -> eyre::Result<InitialAttestationOutput> {
@@ -224,9 +225,9 @@ fn decode_and_validate_initial_attestation(
     // Step 1: verify certificate
     verify_cert_chain(&attestation)?;
 
-    // Step 2 and 3: create clientDataHash from the "challenge" (internally called `request_hash`)
+    // Step 2 and 3: create clientDataHash from the `challenge` (internally called "request_hash")
     let mut hasher = Sha256::new();
-    hasher.update(request_hash.as_bytes());
+    hasher.update(challenge.as_bytes());
     let client_data_hash = hasher.finish();
 
     // Step 3: create nonce as composite item
@@ -309,6 +310,7 @@ fn decode_and_validate_initial_attestation(
         public_key: general_purpose::STANDARD.encode(public_key_der),
         receipt: general_purpose::STANDARD.encode(attestation.att_stmt.receipt.as_ref()),
         key_id: general_purpose::STANDARD.encode(credential_id),
+        key_public_key: general_purpose::STANDARD.encode(public_key),
     })
 }
 

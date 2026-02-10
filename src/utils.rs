@@ -14,6 +14,7 @@ pub struct GlobalConfig {
     pub android_outer_jwe_private_key: String,
     pub android_inner_jws_public_key: String,
     pub apple_keys_dynamo_table_name: String,
+    pub gateway_signature_key: String,
     pub developer_inner_jwks_url: Option<String>,
     pub enabled_bundle_identifiers: Vec<BundleIdentifier>,
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
@@ -35,6 +36,9 @@ impl GlobalConfig {
 
         let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
             .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
+
+        let gateway_signature_key =
+            env::var("GATEWAY_SIGNATURE_KEY").expect("env var `GATEWAY_SIGNATURE_KEY` is required");
 
         let developer_inner_jwks_url = env::var("DEVELOPER_INNER_JWKS_URL").ok();
 
@@ -64,6 +68,7 @@ impl GlobalConfig {
             android_outer_jwe_private_key,
             android_inner_jws_public_key,
             apple_keys_dynamo_table_name,
+            gateway_signature_key,
             developer_inner_jwks_url,
             enabled_bundle_identifiers,
             log_client_errors,
@@ -192,6 +197,21 @@ pub struct TokenGenerationRequest {
 #[derive(Debug, serde::Serialize, JsonSchema)]
 pub struct TokenGenerationResponse {
     pub attestation_gateway_token: String,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
+pub struct SignatureGenerationRequest {
+    pub bundle_identifier: BundleIdentifier,
+    pub attested_certificate: String,
+    pub timestamp: String,
+    pub device_signature: String,
+    pub enrollment_commitment: String,
+}
+
+#[derive(Debug, serde::Serialize, JsonSchema)]
+pub struct SignatureGenerationResponse {
+    pub attestation_gateway_signature: String,
+    pub device_public_key: String,
 }
 
 pub enum IntegrityVerificationInput {
