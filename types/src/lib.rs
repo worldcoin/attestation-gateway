@@ -185,3 +185,203 @@ pub enum IntegrityError {
     #[error("unexpected error: {0}")]
     UnexpectedError(&'static str),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use p256::ecdsa::{SigningKey, signature::Signer};
+
+    fn test_signature() -> Signature {
+        let key = SigningKey::from_slice(&[0x42; 32]).expect("valid key");
+        key.sign(b"test payload")
+    }
+
+    fn test_meta() -> IntegrityMeta {
+        IntegrityMeta::new(
+            "eyJhbGciOiJFUzI1NiJ9.test".into(),
+            test_signature(),
+            1_700_000_000,
+        )
+    }
+
+    fn valid_headers() -> HeaderMap {
+        test_meta().to_header_map().expect("valid headers")
+    }
+
+    #[test]
+    fn roundtrip_to_from_headers() {
+        let original = test_meta();
+        let headers = original.to_header_map().expect("serialize");
+        let parsed = IntegrityMeta::from_headers(&headers).expect("parse");
+
+        assert_eq!(parsed.version, original.version);
+        assert_eq!(parsed.token, original.token);
+        assert_eq!(parsed.signature, original.signature);
+        assert_eq!(parsed.timestamp, original.timestamp);
+    }
+
+    #[test]
+    fn unknown_fields_are_ignored() {
+        let meta = test_meta();
+        let sig_value = format!(
+            "v={},t={},s={},x=unknown",
+            meta.timestamp,
+            meta.version,
+            hex::encode(meta.signature.to_der())
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "integrity-token",
+            HeaderValue::from_str(&meta.token).expect("valid"),
+        );
+        headers.insert(
+            "integrity-signature",
+            HeaderValue::from_str(&sig_value).expect("valid"),
+        );
+
+        let parsed = IntegrityMeta::from_headers(&headers).expect("parse");
+        assert_eq!(parsed.signature, meta.signature);
+    }
+
+    #[test]
+    fn version_v1_display() {
+        assert_eq!(IntegrityVersion::V1.to_string(), "1");
+    }
+
+    #[test]
+    fn missing_token_header() {
+        let mut headers = valid_headers();
+        headers.remove("integrity-token");
+
+        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
+        let IntegrityError::MissingHeader(name) = err else {
+            panic!("expected MissingHeader, got {err:?}");
+        };
+        assert_eq!(name, "integrity-token");
+    }
+
+    #[test]
+    fn missing_signature_header() {
+        let mut headers = valid_headers();
+        headers.remove("integrity-signature");
+
+        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
+        let IntegrityError::MissingHeader(name) = err else {
+            panic!("expected MissingHeader, got {err:?}");
+        };
+        assert_eq!(name, "integrity-signature");
+    }
+
+    #[test]
+    fn empty_headers() {
+        let err = IntegrityMeta::from_headers(&HeaderMap::new()).unwrap_err();
+        let IntegrityError::MissingHeader(_) = err else {
+            panic!("expected MissingHeader, got {err:?}");
+        };
+    }
+
+    #[test]
+    fn signature_header_no_equals() {
+        let mut headers = valid_headers();
+        headers.insert("integrity-signature", HeaderValue::from_static("garbage"));
+
+        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
+        let IntegrityError::MalformedSignatureHeader = err else {
+            panic!("expected MalformedSignatureHeader, got {err:?}");
+        };
+    }
+
+    #[test]
+    fn signature_header_missing_v_field() {
+        let mut headers = valid_headers();
+        headers.insert("integrity-signature", HeaderValue::from_static("t=1,s=00"));
+
+        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
+        let IntegrityError::MalformedSignatureHeader = err else {
+            panic!("expected MalformedSignatureHeader, got {err:?}");
+        };
+    }
+
+    #[test]
+    fn signature_header_missing_t_field() {
+        let mut headers = valid_headers();
+        headers.insert(
+            "integrity-signature",
+            HeaderValue::from_static("v=100,s=00"),
+        );
+
+        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
+        let IntegrityError::MalformedSignatureHeader = err else {
+            panic!("expected MalformedSignatureHeader, got {err:?}");
+        };
+    }
+
+    #[test]
+    fn signature_header_missing_s_field() {
+        let mut headers = valid_headers();
+        headers.insert("integrity-signature", HeaderValue::from_static("v=100,t=1"));
+
+        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
+        let IntegrityError::MalformedSignatureHeader = err else {
+            panic!("expected MalformedSignatureHeader, got {err:?}");
+        };
+    }
+
+    #[test]
+    fn invalid_timestamp_not_numeric() {
+        let mut headers = valid_headers();
+        headers.insert(
+            "integrity-signature",
+            HeaderValue::from_static("v=abc,t=1,s=00"),
+        );
+
+        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
+        let IntegrityError::InvalidTimestamp = err else {
+            panic!("expected InvalidTimestamp, got {err:?}");
+        };
+    }
+
+    #[test]
+    fn invalid_version() {
+        let mut headers = valid_headers();
+        headers.insert(
+            "integrity-signature",
+            HeaderValue::from_static("v=100,t=99,s=00"),
+        );
+
+        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
+        let IntegrityError::InvalidVersion(v) = err else {
+            panic!("expected InvalidVersion, got {err:?}");
+        };
+        assert_eq!(v, "99");
+    }
+
+    #[test]
+    fn invalid_signature_bad_hex() {
+        let mut headers = valid_headers();
+        headers.insert(
+            "integrity-signature",
+            HeaderValue::from_static("v=100,t=1,s=zzzz"),
+        );
+
+        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
+        let IntegrityError::InvalidSignature = err else {
+            panic!("expected InvalidSignature, got {err:?}");
+        };
+    }
+
+    #[test]
+    fn invalid_signature_bad_der() {
+        let mut headers = valid_headers();
+        // Valid hex, but not a valid DER-encoded ECDSA signature
+        headers.insert(
+            "integrity-signature",
+            HeaderValue::from_static("v=100,t=1,s=deadbeef"),
+        );
+
+        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
+        let IntegrityError::InvalidSignature = err else {
+            panic!("expected InvalidSignature, got {err:?}");
+        };
+    }
+}
