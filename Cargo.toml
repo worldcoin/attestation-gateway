@@ -10,10 +10,10 @@ rust-version = "1.86.0"
 
 [workspace.dependencies]
 hex = "0.4.3"
-p256 = "0.13.2"
-reqwest = "0.12.15"
-serde = { version = "1.0.210", features = ["derive"] }
-thiserror = "2.0.18"
+p256 = "0.13"
+http = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
 
 [profile.release]
 opt-level = 3

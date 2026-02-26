@@ -272,8 +272,8 @@ name = "attestation-gateway-types"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "http 1.1.0",
  "p256",
- "reqwest",
  "serde",
  "thiserror 2.0.18",
 ]
