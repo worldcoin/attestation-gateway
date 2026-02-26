@@ -54,7 +54,7 @@ jobs:
         run: cargo clippy
 
       - name: Check cargo-sort
-        run: cargo sort --check
+        run: cargo sort --check --workspace
 
       - name: Build the project
         run: cargo build --release
@@ -104,7 +104,7 @@ jobs:
           # Wait for the application to start
           sleep 10
 
-          docker logs localstack
+          docker logs attestation-gateway-localstack
 
       - name: Run tests
         run: |
