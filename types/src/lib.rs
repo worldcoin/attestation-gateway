@@ -2,6 +2,7 @@
 
 use http::{HeaderMap, HeaderValue};
 use p256::ecdsa::Signature;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// Version identifier for the integrity metadata
@@ -41,6 +42,19 @@ pub struct IntegrityMeta {
 }
 
 impl IntegrityMeta {
+    /// Computes the digest that should be signed by the mobile device's secure element, and subsequently verified.
+    #[must_use]
+    pub fn compute_signature_digest(timestamp: i64, request_payload: &[u8]) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&timestamp.to_be_bytes());
+        data.extend_from_slice(&[0x1F]); // Delimiter byte to separate fields (unit separator)
+        data.extend_from_slice(request_payload);
+
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        hasher.finalize().to_vec()
+    }
+
     #[must_use]
     pub const fn new(token: String, signature: Signature, timestamp: i64) -> Self {
         Self {

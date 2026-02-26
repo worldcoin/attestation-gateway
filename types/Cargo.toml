@@ -13,3 +13,4 @@ p256.workspace = true
 http.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+sha2 = { version = "0.10" }
