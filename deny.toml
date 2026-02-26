@@ -36,3 +36,9 @@ allow = [
 name          = "ring"
 expression    = "LicenseRef-ring"
 license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile is unmaintained. it's feature complete at the moment, and it requires upstream updates." },
+]
