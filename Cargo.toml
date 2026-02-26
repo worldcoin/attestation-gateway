@@ -10,8 +10,8 @@ rust-version = "1.86.0"
 
 [workspace.dependencies]
 hex = "0.4.3"
-p256 = "0.13"
 http = "1"
+p256 = "0.13"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 

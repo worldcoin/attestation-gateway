@@ -9,8 +9,8 @@ description = "Shared types for the attestation gateway."
 
 [dependencies]
 hex.workspace = true
-p256.workspace = true
 http.workspace = true
+p256.workspace = true
 serde.workspace = true
-thiserror.workspace = true
 sha2 = { version = "0.10" }
+thiserror.workspace = true
