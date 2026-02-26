@@ -7,8 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 description = "Shared types for the attestation gateway."
 
-[lints]
-workspace = true
-
 [dependencies]
-serde = { version = "1.0.210", features = ["derive"] }
+hex.workspace = true
+p256.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+thiserror.workspace = true
