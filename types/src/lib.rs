@@ -131,9 +131,9 @@ impl IntegrityMeta {
                 .ok_or(IntegrityError::MalformedSignatureHeader)?;
 
             match key {
-                "v" => timestamp_raw = Some(value),
-                "t" => version_raw = Some(value),
-                "s" => signature_raw = Some(value),
+                "v" => timestamp_raw = Some(value.trim()),
+                "t" => version_raw = Some(value.trim()),
+                "s" => signature_raw = Some(value.trim()),
                 _ => {}
             }
         }
