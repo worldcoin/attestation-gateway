@@ -45,13 +45,9 @@ impl IntegrityMeta {
     /// Computes the digest that should be signed by the mobile device's secure element, and subsequently verified.
     #[must_use]
     pub fn compute_signature_digest(timestamp: i64, request_payload: &[u8]) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&timestamp.to_be_bytes());
-        data.extend_from_slice(&[0x1F]); // Delimiter byte to separate fields (unit separator)
-        data.extend_from_slice(request_payload);
-
         let mut hasher = Sha256::new();
-        hasher.update(data);
+        hasher.update(timestamp.to_be_bytes());
+        hasher.update(request_payload);
         hasher.finalize().to_vec()
     }
 
