@@ -22,7 +22,6 @@ allow = [
   "BSL-1.0",
   "CC0-1.0",
   "ISC",
-  "LicenseRef-ring",                # See https://github.com/briansmith/ring/blob/95948b3977013aed16db92ae32e6b8384496a740/deny.toml#L12
   "MIT",
   "MPL-2.0",                        # Although this is copyleft, it is scoped to modifying the original files
   "Unicode-3.0",
@@ -30,13 +29,6 @@ allow = [
   "Unlicense",
   "Zlib",
 ]
-
-# See https://github.com/briansmith/ring/blob/95948b3977013aed16db92ae32e6b8384496a740/deny.toml#L12
-[[licenses.clarify]]
-name          = "ring"
-expression    = "LicenseRef-ring"
-license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
-
 
 [advisories]
 ignore = [
