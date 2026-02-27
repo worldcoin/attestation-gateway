@@ -1,7 +1,7 @@
 name: attestation-gateway-tests
 services:
   localstack:
-    container_name: localstack
+    container_name: attestation-gateway-localstack
     image: localstack/localstack
     ports:
       - "127.0.0.1:4566:4566" # LocalStack Gateway

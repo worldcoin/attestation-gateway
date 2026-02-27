@@ -1,7 +1,7 @@
 ####################################################################################################
 ## Base image
 ####################################################################################################
-FROM rust:1.86.0-slim AS chef
+FROM rust:1.88.0-slim AS chef
 USER root
 WORKDIR /app
 
@@ -25,7 +25,7 @@ FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --locked --target x86_64-unknown-linux-musl
+RUN cargo build --release --locked --target x86_64-unknown-linux-musl --package attestation-gateway
 
 ####################################################################################################
 ## Final image

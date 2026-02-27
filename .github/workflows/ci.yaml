@@ -11,7 +11,7 @@ env:
 jobs:
   lint:
     name: Format, Clippy & Build
-    runs-on: arc-large-amd64-runner
+    runs-on: arc-public-large-amd64-runner
 
     steps:
       - name: Checkout code
@@ -54,14 +54,14 @@ jobs:
         run: cargo clippy
 
       - name: Check cargo-sort
-        run: cargo sort --check
+        run: cargo sort --check --workspace
 
       - name: Build the project
         run: cargo build --release
 
   test:
     name: Tests
-    runs-on: arc-2xlarge-amd64-runner
+    runs-on: arc-public-2xlarge-amd64-runner
 
     steps:
       - name: Checkout code
@@ -99,12 +99,12 @@ jobs:
 
       - name: Run local service dependencies
         run: |
-          docker compose -f tests/docker-compose.test.yml up -d
+          docker compose -f attestation-gateway/tests/docker-compose.test.yml up -d
 
           # Wait for the application to start
           sleep 10
 
-          docker logs localstack
+          docker logs attestation-gateway-localstack
 
       - name: Run tests
         run: |
@@ -112,7 +112,7 @@ jobs:
 
   docker-build:
     name: Test docker build
-    runs-on: arc-large-amd64-runner
+    runs-on: arc-public-4xlarge-amd64-runner
     services:
       redis:
         image: redis
@@ -158,7 +158,7 @@ jobs:
           docker rm attestation-gateway-ci-container
   deny:
     name: Cargo deny
-    runs-on: arc-large-amd64-runner
+    runs-on: arc-public-medium-amd64-runner
 
     steps:
       - name: Checkout code
