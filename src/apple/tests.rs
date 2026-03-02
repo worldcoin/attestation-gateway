@@ -43,9 +43,7 @@ fn helper_create_fake_root_ca() -> (X509, PKey<Private>) {
         .unwrap();
 
     let basic_constraints = BasicConstraints::new().critical().ca().build().unwrap();
-    ca_cert_builder
-        .append_extension(basic_constraints)
-        .unwrap();
+    ca_cert_builder.append_extension(basic_constraints).unwrap();
 
     let key_usage = KeyUsage::new()
         .critical()
@@ -334,8 +332,7 @@ fn helper_build_mock_assertion(
     ciborium::into_writer(&assertion, &mut cbor_bytes).unwrap();
     let assertion_b64 = general_purpose::STANDARD.encode(&cbor_bytes);
 
-    let public_key_b64 =
-        general_purpose::STANDARD.encode(private_key.public_key_to_der().unwrap());
+    let public_key_b64 = general_purpose::STANDARD.encode(private_key.public_key_to_der().unwrap());
 
     MockAssertionOutput {
         assertion_b64,
@@ -751,9 +748,14 @@ fn verify_assertion_success() {
     let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
     let request_hash = "assertion_success_hash";
 
-    let mock = helper_build_mock_attestation(app_id, "initial_attestation_hash", &AAGUID::AppAttestDevelop);
+    let mock = helper_build_mock_attestation(
+        app_id,
+        "initial_attestation_hash",
+        &AAGUID::AppAttestDevelop,
+    );
 
-    let assertion = helper_build_mock_assertion(&mock.attested_private_key, app_id, request_hash, 1);
+    let assertion =
+        helper_build_mock_assertion(&mock.attested_private_key, app_id, request_hash, 1);
 
     let result = decode_and_validate_assertion(
         assertion.assertion_b64,
@@ -774,7 +776,8 @@ fn verify_assertion_success_with_higher_counter() {
 
     let mock = helper_build_mock_attestation(app_id, "initial", &AAGUID::AppAttestDevelop);
 
-    let assertion = helper_build_mock_assertion(&mock.attested_private_key, app_id, request_hash, 5);
+    let assertion =
+        helper_build_mock_assertion(&mock.attested_private_key, app_id, request_hash, 5);
 
     let result = decode_and_validate_assertion(
         assertion.assertion_b64,
@@ -795,7 +798,8 @@ fn verify_assertion_failure_with_invalid_counter() {
 
     let mock = helper_build_mock_attestation(app_id, "initial", &AAGUID::AppAttestDevelop);
 
-    let assertion = helper_build_mock_assertion(&mock.attested_private_key, app_id, request_hash, 1);
+    let assertion =
+        helper_build_mock_assertion(&mock.attested_private_key, app_id, request_hash, 1);
 
     let result = decode_and_validate_assertion(
         assertion.assertion_b64,
@@ -953,8 +957,12 @@ fn test_full_attestation_then_assertion_flow() {
 
     // Step 2: verify assertion using the attested key
     let assertion_request_hash = "full_flow_assertion";
-    let assertion =
-        helper_build_mock_assertion(&mock.attested_private_key, app_id, assertion_request_hash, 1);
+    let assertion = helper_build_mock_assertion(
+        &mock.attested_private_key,
+        app_id,
+        assertion_request_hash,
+        1,
+    );
 
     let counter = decode_and_validate_assertion(
         assertion.assertion_b64,
