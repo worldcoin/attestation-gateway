@@ -12,10 +12,7 @@ mod jwks;
 
 #[must_use]
 pub fn get_timeout_layer() -> TimeoutLayer {
-    TimeoutLayer::with_status_code(
-        axum::http::StatusCode::REQUEST_TIMEOUT,
-        Duration::from_secs(5),
-    )
+    TimeoutLayer::new(Duration::from_secs(5))
 }
 
 pub fn handler() -> ApiRouter {

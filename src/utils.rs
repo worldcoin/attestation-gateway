@@ -559,7 +559,7 @@ pub struct OutputTokenPayload {
     pub error: Option<String>,
     pub app_version: Option<String>,
     pub check_type: Option<CheckType>,
-    pub extra: Option<HashMap<String, String>>,
+    pub extras: Option<HashMap<String, String>>,
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -634,12 +634,12 @@ impl OutputTokenPayload {
                 .map_err(handle_jose_error)?;
         }
 
-        if let Some(extra) = &self.extra {
+        if let Some(extras) = &self.extras {
             payload
                 .set_claim(
-                    "extra",
+                    "extras",
                     Some(josekit::Value::Object(
-                        extra
+                        extras
                             .iter()
                             .map(|(k, v)| (k.clone(), josekit::Value::String(v.clone())))
                             .collect(),
@@ -683,7 +683,7 @@ mod tests {
             error: None,
             app_version: Some("1.25.0".to_string()),
             check_type: Some(CheckType::Developer),
-            extra: None,
+            extras: None,
         };
 
         let jwt_payload = payload.generate().unwrap();

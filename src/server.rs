@@ -16,7 +16,7 @@ use crate::{routes, utils::GlobalConfig};
 #[must_use]
 pub fn get_timeout_layer(timeout: Option<u64>) -> TimeoutLayer {
     let timeout = timeout.map_or(Duration::from_secs(5), Duration::from_secs);
-    TimeoutLayer::with_status_code(axum::http::StatusCode::REQUEST_TIMEOUT, timeout)
+    TimeoutLayer::new(timeout)
 }
 
 pub async fn start(
