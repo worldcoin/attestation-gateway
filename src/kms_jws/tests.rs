@@ -164,9 +164,10 @@ async fn test_generate_output_token() {
     );
     assert_eq!(
         payload.claim("extra"),
-        Some(&josekit::Value::Object(HashMap::from([(
-            "foo".to_string(),
-            "bar".to_string()
-        )])))
+        Some(&josekit::Value::Object(
+            [("foo".to_string(), josekit::Value::String("bar".to_string()))]
+                .into_iter()
+                .collect::<josekit::Map<String, josekit::Value>>()
+        ))
     );
 }
