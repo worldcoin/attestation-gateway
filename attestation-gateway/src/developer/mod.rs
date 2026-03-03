@@ -167,6 +167,7 @@ mod tests {
             .set_iss("https://relying-party.example.com")
             .set_sub("test@relying-party.example.com")
             .insert("publicKey", client_pub_key)
+            .insert("aud", "relying-party.certificate")
             .set_kid(kid);
 
         jwtk::sign(&mut claims, key).unwrap()

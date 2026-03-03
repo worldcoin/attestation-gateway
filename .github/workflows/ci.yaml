@@ -112,10 +112,10 @@ jobs:
 
   docker-build:
     name: Test docker build
-    runs-on: arc-public-4xlarge-amd64-runner
+    runs-on: arc-public-large-amd64-runner
     services:
       redis:
-        image: redis
+        image: public.ecr.aws/docker/library/redis:alpine
         ports:
           - 6379:6379
         # Set health checks to wait until postgres has started
@@ -158,7 +158,7 @@ jobs:
           docker rm attestation-gateway-ci-container
   deny:
     name: Cargo deny
-    runs-on: arc-public-medium-amd64-runner
+    runs-on: arc-public-large-amd64-runner
 
     steps:
       - name: Checkout code
