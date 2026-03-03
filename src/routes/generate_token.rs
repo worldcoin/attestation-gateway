@@ -184,7 +184,7 @@ async fn verify_android_or_apple_integrity(
         app_version: None,
         check_type: None,
         dev_check_sub: None,
-        extra: None,
+        extras: None,
     };
 
     let verify_result = match verification_input {
@@ -256,7 +256,7 @@ async fn verify_android_or_apple_integrity(
         .map(|err| err.internal_debug_info);
     if let Some(developer_token) = verify_result.developer_token {
         report.dev_check_sub = Some(developer_token.sub);
-        report.extra = developer_token.extras;
+        report.extras = developer_token.extras;
     }
 
     Ok(report)
@@ -305,9 +305,11 @@ async fn process_and_finalize_report(
         error: None, // TODO: Implement in the future (see L76)
         app_version: report.app_version.clone(),
         check_type: report.check_type.clone(),
-        extras: report.extra.clone(),
+        extras: report.extras.clone(),
     }
     .generate()?;
+
+    tracing::info!(output_token_payload = ?output_token_payload, "Output token payload");
 
     let key = fetch_active_key(redis, &aws_config).await.map_err(|e| {
         tracing::error!(error = ?e, "Error fetching active key");
