@@ -6,6 +6,7 @@ use std::collections::HashMap;
 #[serde(rename_all = "camelCase")]
 pub struct DeveloperTokenExtraClaims {
     pub public_key: String,
+    pub extras: Option<HashMap<String, String>>,
 }
 
 /// Claims contained within a developer token's inner JWT.
@@ -27,8 +28,8 @@ pub struct DeveloperTokenClaims {
     pub public_key: String,
     /// Audience of the token - relying-party.certificate
     pub aud: String,
-    /// Extensions of the token
-    pub extensions: Option<HashMap<String, String>>,
+    /// Passthrough claims
+    pub extras: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

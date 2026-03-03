@@ -498,7 +498,7 @@ pub struct DataReport {
     // apple_device_check: None,
     pub check_type: Option<CheckType>,
     pub dev_check_sub: Option<String>,
-    pub extra_claims: Option<HashMap<String, String>>,
+    pub extra: Option<HashMap<String, String>>,
 }
 
 impl DataReport {
@@ -523,7 +523,7 @@ impl DataReport {
             app_version: None,
             check_type: None,
             dev_check_sub: None,
-            extra_claims: None,
+            extra: None,
         }
     }
 
@@ -559,6 +559,7 @@ pub struct OutputTokenPayload {
     pub error: Option<String>,
     pub app_version: Option<String>,
     pub check_type: Option<CheckType>,
+    pub extra: Option<HashMap<String, String>>,
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -633,6 +634,20 @@ impl OutputTokenPayload {
                 .map_err(handle_jose_error)?;
         }
 
+        if let Some(extra) = &self.extra {
+            payload
+                .set_claim(
+                    "extra",
+                    Some(josekit::Value::Object(
+                        extra
+                            .iter()
+                            .map(|(k, v)| (k.clone(), josekit::Value::String(v.clone())))
+                            .collect(),
+                    )),
+                )
+                .map_err(handle_jose_error)?;
+        }
+
         Ok(payload)
     }
 }
@@ -668,6 +683,7 @@ mod tests {
             error: None,
             app_version: Some("1.25.0".to_string()),
             check_type: Some(CheckType::Developer),
+            extra: None,
         };
 
         let jwt_payload = payload.generate().unwrap();
@@ -765,7 +781,7 @@ mod tests {
             app_version: Some("1.25.0".to_string()),
             check_type: Some(CheckType::Android),
             dev_check_sub: None,
-            extra_claims: None,
+            extra: None,
         };
         let serialized =
             serde_json::to_string(&data_report).expect("failed to serialize `DataReport` as json");

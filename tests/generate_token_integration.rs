@@ -1562,6 +1562,12 @@ fn generate_developer_certificate(
             Some(josekit::Value::String(client_public_key.to_string())),
         )
         .unwrap();
+    payload
+        .set_claim(
+            "aud",
+            Some(josekit::Value::String("relying-party.certificate".into())),
+        )
+        .unwrap();
 
     // Signing JWT
     let signer = ES256.signer_from_jwk(&developer_jwk).unwrap();
