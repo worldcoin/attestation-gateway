@@ -112,7 +112,7 @@ jobs:
 
   docker-build:
     name: Test docker build
-    runs-on: arc-public-2xlarge-amd64-runner
+    runs-on: arc-public-large-amd64-runner
     services:
       redis:
         image: redis
