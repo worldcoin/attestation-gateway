@@ -1547,7 +1547,7 @@ fn generate_developer_certificate(
     client_public_key: &josekit::jwk::Jwk,
     developer_jwk: &josekit::jwk::Jwk,
     issuer: String,
-    extras: Option<HashMap<String, String>>,
+    extra: Option<HashMap<String, String>>,
 ) -> String {
     let mut header = josekit::jws::JwsHeader::new();
     header.set_token_type("JWT");
@@ -1571,13 +1571,13 @@ fn generate_developer_certificate(
         )
         .unwrap();
 
-    if let Some(extras) = extras {
-        let obj: josekit::Map<String, josekit::Value> = extras
+    if let Some(extra) = extra {
+        let obj: josekit::Map<String, josekit::Value> = extra
             .iter()
             .map(|(k, v)| (k.clone(), josekit::Value::String(v.clone())))
             .collect();
         payload
-            .set_claim("extras", Some(josekit::Value::Object(obj)))
+            .set_claim("extra", Some(josekit::Value::Object(obj)))
             .unwrap();
     }
 
@@ -1679,14 +1679,14 @@ async fn test_developer_token_generation_e2e_success() {
     let api_router = get_api_router().await;
 
     let request_hash = String::from("i_am_a_sample_request_hash");
-    let extras = HashMap::from([("foo".to_string(), "bar".to_string())]);
+    let extra = HashMap::from([("foo".to_string(), "bar".to_string())]);
 
     // Generate developer certificate
     let developer_certificate = generate_developer_certificate(
         &client_jwk.to_public_key().unwrap(),
         &developer_jwk,
         developer_server_base_url,
-        Some(extras),
+        Some(extra),
     );
 
     // Generate client token
@@ -1754,7 +1754,7 @@ async fn test_developer_token_generation_e2e_success() {
         Some(&josekit::Value::String("pass".to_string()))
     );
     assert_eq!(
-        payload.claim("extras"),
+        payload.claim("extra"),
         Some(&josekit::Value::Object(
             [("foo".to_string(), josekit::Value::String("bar".to_string()))]
                 .into_iter()

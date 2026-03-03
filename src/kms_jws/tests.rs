@@ -94,7 +94,7 @@ async fn test_generate_output_token() {
         error: None,
         app_version: Some("1.25.0".to_string()),
         check_type: Some(CheckType::Developer),
-        extras: Some(HashMap::from([("foo".to_string(), "bar".to_string())])),
+        extra: Some(HashMap::from([("foo".to_string(), "bar".to_string())])),
     }
     .generate()
     .unwrap();
@@ -163,7 +163,7 @@ async fn test_generate_output_token() {
         Some(&josekit::Value::String("dev".to_string()))
     );
     assert_eq!(
-        payload.claim("extras"),
+        payload.claim("extra"),
         Some(&josekit::Value::Object(
             [("foo".to_string(), josekit::Value::String("bar".to_string()))]
                 .into_iter()
