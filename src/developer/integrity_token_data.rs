@@ -1,5 +1,6 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +25,10 @@ pub struct DeveloperTokenClaims {
     pub sub: String,
     /// The developer's public key (can be in PEM or JWK format)
     pub public_key: String,
+    /// Audience of the token - relying-party.certificate
+    pub aud: String,
+    /// Extensions of the token
+    pub extensions: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

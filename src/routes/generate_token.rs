@@ -184,6 +184,7 @@ async fn verify_android_or_apple_integrity(
         app_version: None,
         check_type: None,
         dev_check_sub: None,
+        extra_claims: None,
     };
 
     let verify_result = match verification_input {
@@ -253,11 +254,10 @@ async fn verify_android_or_apple_integrity(
     report.internal_debug_info = verify_result
         .client_exception
         .map(|err| err.internal_debug_info);
-    report.dev_check_sub = if let Some(developer_token) = verify_result.developer_token {
-        Some(developer_token.sub)
-    } else {
-        None
-    };
+    if let Some(developer_token) = verify_result.developer_token {
+        report.dev_check_sub = Some(developer_token.sub);
+        report.extra_claims = developer_token.extensions;
+    }
 
     Ok(report)
 }

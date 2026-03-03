@@ -4,6 +4,7 @@ use axum::response::IntoResponse;
 use josekit::{JoseError, jwt::JwtPayload};
 use redis::RedisError;
 use schemars::JsonSchema;
+use std::collections::HashMap;
 use std::{env, fmt::Display, time::SystemTime};
 use uuid::Uuid;
 
@@ -497,6 +498,7 @@ pub struct DataReport {
     // apple_device_check: None,
     pub check_type: Option<CheckType>,
     pub dev_check_sub: Option<String>,
+    pub extra_claims: Option<HashMap<String, String>>,
 }
 
 impl DataReport {
@@ -521,6 +523,7 @@ impl DataReport {
             app_version: None,
             check_type: None,
             dev_check_sub: None,
+            extra_claims: None,
         }
     }
 
@@ -762,6 +765,7 @@ mod tests {
             app_version: Some("1.25.0".to_string()),
             check_type: Some(CheckType::Android),
             dev_check_sub: None,
+            extra_claims: None,
         };
         let serialized =
             serde_json::to_string(&data_report).expect("failed to serialize `DataReport` as json");
