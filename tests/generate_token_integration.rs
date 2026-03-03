@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
@@ -1546,6 +1547,7 @@ fn generate_developer_certificate(
     client_public_key: &josekit::jwk::Jwk,
     developer_jwk: &josekit::jwk::Jwk,
     issuer: String,
+    extras: Option<HashMap<String, String>>,
 ) -> String {
     let mut header = josekit::jws::JwsHeader::new();
     header.set_token_type("JWT");
@@ -1568,6 +1570,16 @@ fn generate_developer_certificate(
             Some(josekit::Value::String("relying-party.certificate".into())),
         )
         .unwrap();
+
+    if let Some(extras) = extras {
+        let obj: josekit::Map<String, josekit::Value> = extras
+            .iter()
+            .map(|(k, v)| (k.clone(), josekit::Value::String(v.clone())))
+            .collect();
+        payload
+            .set_claim("extras", Some(josekit::Value::Object(obj)))
+            .unwrap();
+    }
 
     // Signing JWT
     let signer = ES256.signer_from_jwk(&developer_jwk).unwrap();
@@ -1667,12 +1679,14 @@ async fn test_developer_token_generation_e2e_success() {
     let api_router = get_api_router().await;
 
     let request_hash = String::from("i_am_a_sample_request_hash");
+    let extras = HashMap::from([("foo".to_string(), "bar".to_string())]);
 
     // Generate developer certificate
     let developer_certificate = generate_developer_certificate(
         &client_jwk.to_public_key().unwrap(),
         &developer_jwk,
         developer_server_base_url,
+        Some(extras),
     );
 
     // Generate client token
@@ -1739,7 +1753,14 @@ async fn test_developer_token_generation_e2e_success() {
         payload.claim("out"),
         Some(&josekit::Value::String("pass".to_string()))
     );
-
+    assert_eq!(
+        payload.claim("extras"),
+        Some(&josekit::Value::Object(
+            [("foo".to_string(), josekit::Value::String("bar".to_string()))]
+                .into_iter()
+                .collect::<josekit::Map<String, josekit::Value>>()
+        ))
+    );
     assert_eq!(payload.claim("app_version"), None);
 }
 
@@ -1761,6 +1782,7 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
         &client_jwk.to_public_key().unwrap(),
         &developer_jwk,
         developer_server_base_url,
+        None,
     );
     let generated_client_token =
         generate_client_token(&client_jwk, developer_certificate, &request_hash);

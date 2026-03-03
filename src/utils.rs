@@ -635,16 +635,12 @@ impl OutputTokenPayload {
         }
 
         if let Some(extras) = &self.extras {
+            let obj: josekit::Map<String, josekit::Value> = extras
+                .iter()
+                .map(|(k, v)| (k.clone(), josekit::Value::String(v.clone())))
+                .collect();
             payload
-                .set_claim(
-                    "extras",
-                    Some(josekit::Value::Object(
-                        extras
-                            .iter()
-                            .map(|(k, v)| (k.clone(), josekit::Value::String(v.clone())))
-                            .collect(),
-                    )),
-                )
+                .set_claim("extras", Some(josekit::Value::Object(obj)))
                 .map_err(handle_jose_error)?;
         }
 
