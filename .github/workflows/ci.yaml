@@ -11,7 +11,7 @@ env:
 jobs:
   lint:
     name: Format, Clippy & Build
-    runs-on: arc-public-2xlarge-amd64-runner
+    runs-on: arc-public-large-amd64-runner
 
     steps:
       - name: Checkout code
@@ -61,7 +61,7 @@ jobs:
 
   test:
     name: Tests
-    runs-on: arc-public-2xlarge-amd64-runner
+    runs-on: arc-public-large-amd64-runner
 
     steps:
       - name: Checkout code
@@ -158,7 +158,7 @@ jobs:
           docker rm attestation-gateway-ci-container
   deny:
     name: Cargo deny
-    runs-on: arc-public-2xlarge-amd64-runner
+    runs-on: arc-public-large-amd64-runner
 
     steps:
       - name: Checkout code

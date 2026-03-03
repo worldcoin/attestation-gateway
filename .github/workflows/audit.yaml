@@ -12,7 +12,7 @@ on:
 
 jobs:
   security_audit:
-    runs-on: arc-public-2xlarge-amd64-runner
+    runs-on: arc-public-large-amd64-runner
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
