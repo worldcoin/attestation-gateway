@@ -163,7 +163,7 @@ async fn test_generate_output_token() {
         Some(&josekit::Value::String("dev".to_string()))
     );
     assert_eq!(
-        payload.claim("extra"),
+        payload.claim("extras"),
         Some(&josekit::Value::Object(
             [("foo".to_string(), josekit::Value::String("bar".to_string()))]
                 .into_iter()
