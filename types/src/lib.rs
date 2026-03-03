@@ -44,15 +44,19 @@ pub struct IntegrityMeta {
 impl IntegrityMeta {
     /// Computes the digest that should be signed by the mobile device's secure element, and subsequently verified.
     #[must_use]
-    pub fn compute_signature_digest(timestamp: i64, request_payload: &[u8]) -> Vec<u8> {
+    pub fn compute_signature_digest(timestamp: i64, request_payload: &[u8]) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(timestamp.to_be_bytes());
         hasher.update(request_payload);
-        hasher.finalize().to_vec()
+        hasher.finalize().into()
     }
 
     #[must_use]
-    pub const fn new(token: String, signature: Signature, timestamp: i64) -> Self {
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "Signature and String are not const"
+    )]
+    pub fn new(token: String, signature: Signature, timestamp: i64) -> Self {
         Self {
             version: IntegrityVersion::V1,
             token,
@@ -66,7 +70,7 @@ impl IntegrityMeta {
     /// Expects:
     /// - `integrity-token` — the JWT token string
     /// - `integrity-signature` —
-    ///   `v=<timestamp>,t=<version>,s=<hex_der_sig>`
+    ///   `v=<version>,t=<timestamp>,s=<hex_der_sig>`
     ///
     /// # Warning
     /// This function does not perform any cryptographic verification of the signature, it
@@ -112,8 +116,8 @@ impl IntegrityMeta {
         );
         let signature_value = format!(
             "v={},t={},s={}",
-            self.timestamp,
             self.version,
+            self.timestamp,
             hex::encode(self.signature.to_der())
         );
         headers.insert(
@@ -127,7 +131,7 @@ impl IntegrityMeta {
 
     /// Parses the `integrity-signature` header value.
     ///
-    /// Format: `v=<timestamp>,t=<version>,s=<hex_der_signature>`
+    /// Format: `v=<version>,t=<timestamp>,s=<hex_der_signature>`
     fn parse_signature_header(
         header: &str,
     ) -> Result<(IntegrityVersion, i64, Signature), IntegrityError> {
@@ -141,8 +145,8 @@ impl IntegrityMeta {
                 .ok_or(IntegrityError::MalformedSignatureHeader)?;
 
             match key {
-                "v" => timestamp_raw = Some(value.trim()),
-                "t" => version_raw = Some(value.trim()),
+                "v" => version_raw = Some(value.trim()),
+                "t" => timestamp_raw = Some(value.trim()),
                 "s" => signature_raw = Some(value.trim()),
                 _ => {}
             }
@@ -235,8 +239,8 @@ mod tests {
         let meta = test_meta();
         let sig_value = format!(
             "v={},t={},s={},x=unknown",
-            meta.timestamp,
             meta.version,
+            meta.timestamp,
             hex::encode(meta.signature.to_der())
         );
         let mut headers = HeaderMap::new();
@@ -329,7 +333,10 @@ mod tests {
     #[test]
     fn signature_header_missing_s_field() {
         let mut headers = valid_headers();
-        headers.insert("integrity-signature", HeaderValue::from_static("v=100,t=1"));
+        headers.insert(
+            "integrity-signature",
+            HeaderValue::from_static("v=1,t=10000"),
+        );
 
         let err = IntegrityMeta::from_headers(&headers).unwrap_err();
         let IntegrityError::MalformedSignatureHeader = err else {
@@ -342,7 +349,7 @@ mod tests {
         let mut headers = valid_headers();
         headers.insert(
             "integrity-signature",
-            HeaderValue::from_static("v=abc,t=1,s=00"),
+            HeaderValue::from_static("v=1,t=abc,s=00"),
         );
 
         let err = IntegrityMeta::from_headers(&headers).unwrap_err();
@@ -356,7 +363,7 @@ mod tests {
         let mut headers = valid_headers();
         headers.insert(
             "integrity-signature",
-            HeaderValue::from_static("v=100,t=99,s=00"),
+            HeaderValue::from_static("v=99,t=100,s=00"),
         );
 
         let err = IntegrityMeta::from_headers(&headers).unwrap_err();
@@ -371,7 +378,7 @@ mod tests {
         let mut headers = valid_headers();
         headers.insert(
             "integrity-signature",
-            HeaderValue::from_static("v=100,t=1,s=zzzz"),
+            HeaderValue::from_static("v=1,t=1,s=zzzz"),
         );
 
         let err = IntegrityMeta::from_headers(&headers).unwrap_err();
@@ -386,7 +393,7 @@ mod tests {
         // Valid hex, but not a valid DER-encoded ECDSA signature
         headers.insert(
             "integrity-signature",
-            HeaderValue::from_static("v=100,t=1,s=deadbeef"),
+            HeaderValue::from_static("v=1,t=1,s=deadbeef"),
         );
 
         let err = IntegrityMeta::from_headers(&headers).unwrap_err();
