@@ -115,7 +115,7 @@ jobs:
     runs-on: arc-public-large-amd64-runner
     services:
       redis:
-        image: redis
+        image: public.ecr.aws/docker/library/redis:alpine
         ports:
           - 6379:6379
         # Set health checks to wait until postgres has started
