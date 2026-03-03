@@ -274,11 +274,10 @@ async fn process_and_finalize_report(
     kinesis_stream_arn: &str,
 ) -> Result<TokenGenerationResponse, RequestError> {
     // Report result to Kinesis
-    if !kinesis_stream_arn.is_empty() {
-        if let Err(e) = send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report).await
-        {
-            tracing::error!("Failed to send Kinesis event: {:?}", e);
-        }
+    if !kinesis_stream_arn.is_empty()
+        && let Err(e) = send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report).await
+    {
+        tracing::error!("Failed to send Kinesis event: {:?}", e);
     }
 
     // TODO: Initial roll out does not include generating failure tokens

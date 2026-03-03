@@ -224,16 +224,15 @@ async fn acquire_lock_with_backoff(redis: &mut ConnectionManager) -> eyre::Resul
 
     let key_count = redis.llen::<_, usize>(SIGNING_KEYS_REDIS_KEY).await?;
 
-    let opts = SetOptions::default()
-        .conditional_set(ExistenceCheck::NX)
-        .with_expiration(SetExpiry::EX(max_retry_timeout));
-
     tracing::info!(
         "Attempting to acquire lock for key generation. Current key count: {}",
         key_count
     );
 
     while start_time.elapsed().as_secs() < max_retry_timeout {
+        let opts = SetOptions::default()
+            .conditional_set(ExistenceCheck::NX)
+            .with_expiration(SetExpiry::EX(max_retry_timeout));
         let acquired_lock = redis
             .set_options::<_, _, String>(CREATING_KEY_LOCK_KEY, "1", opts)
             .await;
