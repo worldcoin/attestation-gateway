@@ -21,8 +21,8 @@ fn test_verify_initial_attestation_success_with_test_attestation() {
     .unwrap();
 
     assert!(!result.receipt.is_empty());
-    assert!(!result.public_key.is_empty());
-    assert!(!result.key_id.is_empty());
+    assert_eq!(result.public_key, test_data.public_key);
+    assert_eq!(result.key_id, test_data.key_id);
 }
 
 /// This is a test case of the test mechanism to use a fake root CA to sign the attestation.
