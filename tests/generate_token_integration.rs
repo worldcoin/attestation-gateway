@@ -34,8 +34,6 @@ use tracing_test::traced_test;
 
 static APPLE_KEYS_DYNAMO_TABLE_NAME: &str = "attestation-gateway-apple-keys";
 
-// These keys need to be replaced if the test attestation is updated
-static TEST_VALID_ATTESTATION: &str = "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";
 static TEST_ATTESTATION_KEY_ID: &str = "us1sMB71A6ffTbD5UdkeevxwPIFyFEuI3vNc8R/jiBw=";
 static TEST_ATTESTATION_RAW_PUBLIC_KEY: &str = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEu5PyE6mg2JOA19zIosBmv/18/3B5ySWGLET7mQhWijPWWtKPEjdfDME7djEYaT81tvWoXXm95qfBYZw3Q2YDmQ==";
 static TEST_VALID_ASSERTION: &str = "omlzaWduYXR1cmVYSDBGAiEA0Qs8Xf23WStR6ZhWteHd6sS6YQ14VgDrC4+8vrakNFMCIQCl8CZ2iqpujjgbWxO7vadwCy3WSSB09Mi9X3tp+97ZrHFhdXRoZW50aWNhdG9yRGF0YVgl0lgIg/cWKQldEqyGUrhbrxBv4j/WaJlzkB6N9Dmg63VAAAAAAQ==";
@@ -77,6 +75,14 @@ async fn reset_apple_keys_table(aws_config: &aws_config::SdkConfig) {
 }
 
 fn get_global_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
+    get_global_config_extension_with_pem(
+        include_bytes!("../src/apple/apple_app_attestation_root_ca.pem").to_vec(),
+    )
+}
+
+fn get_global_config_extension_with_pem(
+    apple_root_ca_pem: Vec<u8>,
+) -> Extension<attestation_gateway::utils::GlobalConfig> {
     // Required to load default env vars
     dotenvy::from_filename(".env.example").unwrap();
     let config = attestation_gateway::utils::GlobalConfig {
@@ -87,6 +93,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         log_client_errors: false,
         kinesis_stream_arn: Some("arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
         developer_inner_jwks_url: std::env::var("DEVELOPER_INNER_JWKS_URL").ok(),
+        apple_root_ca_pem,
     };
     Extension(config)
 }
@@ -603,6 +610,8 @@ async fn test_server_error_is_properly_logged() {
             log_client_errors: false,
             kinesis_stream_arn: None,
             developer_inner_jwks_url: None,
+            apple_root_ca_pem: include_bytes!("../src/apple/apple_app_attestation_root_ca.pem")
+                .to_vec(),
         };
         Extension(config)
     }
@@ -669,7 +678,16 @@ async fn test_server_error_is_properly_logged() {
 #[tokio::test]
 #[serial]
 async fn test_apple_initial_attestation_e2e_success() {
-    let api_router = get_api_router().await;
+    let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
+    let request_hash = "mock_e2e_test_request_hash";
+    let mock =
+        apple::test_helpers::build_mock_attestation(app_id, request_hash, "appattestdevelop");
+
+    let api_router = attestation_gateway::routes::handler()
+        .layer(get_aws_config_extension().await)
+        .layer(get_global_config_extension_with_pem(mock.root_ca_pem))
+        .layer(get_redis_extension().await)
+        .layer(get_kinesis_extension().await);
 
     let aws_config = get_aws_config_extension().await;
     let mut redis = get_redis_extension().await.0;
@@ -678,10 +696,9 @@ async fn test_apple_initial_attestation_e2e_success() {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
-        request_hash: "02072cdf5e347d876a89949e6c11febb55716e3e7026e76b7d90d0bed6cf28e9"
-            .to_string(),
+        request_hash: request_hash.to_string(),
         client_error: None,
-        apple_initial_attestation: Some(TEST_VALID_ATTESTATION.to_string()),
+        apple_initial_attestation: Some(mock.attestation_base64.clone()),
         apple_public_key: None,
         apple_assertion: None,
         developer_token: None,
@@ -708,25 +725,25 @@ async fn test_apple_initial_attestation_e2e_success() {
     let response: Value = serde_json::from_slice(&response).unwrap();
     let token = response["attestation_gateway_token"].as_str().unwrap();
 
-    // Verify the key was saved to Dynamo
+    // Verify the key was saved to Dynamo (scan for the key by bundle_identifier)
     let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
-    let get_item_result = client
-        .get_item()
+    let scan_result = client
+        .scan()
         .table_name(APPLE_KEYS_DYNAMO_TABLE_NAME.to_string())
-        .key(
-            "key_id",
-            aws_sdk_dynamodb::types::AttributeValue::S(format!("key#{TEST_ATTESTATION_KEY_ID}")),
+        .filter_expression("bundle_identifier = :bi")
+        .expression_attribute_values(
+            ":bi",
+            AttributeValue::S("org.worldcoin.insight.staging".to_string()),
         )
         .send()
         .await
         .unwrap();
 
-    let item = get_item_result.item.unwrap();
+    let items = scan_result.items.unwrap();
+    assert!(!items.is_empty(), "Expected at least one key in Dynamo");
+    let item = &items[0];
 
-    assert_eq!(
-        item.get("public_key").unwrap().as_s().unwrap(),
-        TEST_ATTESTATION_RAW_PUBLIC_KEY
-    );
+    assert!(!item.get("public_key").unwrap().as_s().unwrap().is_empty());
     assert_eq!(item.get("key_counter").unwrap().as_n().unwrap(), "0");
     assert_eq!(
         item.get("bundle_identifier").unwrap().as_s().unwrap(),
