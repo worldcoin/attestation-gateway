@@ -126,17 +126,17 @@ pub async fn verify(
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct AttestationStatement {
-    pub(crate) x5c: Vec<ByteBuf>,
-    pub(crate) receipt: ByteBuf,
+struct AttestationStatement {
+    x5c: Vec<ByteBuf>,
+    receipt: ByteBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Attestation {
-    pub(crate) fmt: String,
-    pub(crate) att_stmt: AttestationStatement,
-    pub(crate) auth_data: ByteBuf,
+struct Attestation {
+    fmt: String,
+    att_stmt: AttestationStatement,
+    auth_data: ByteBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
