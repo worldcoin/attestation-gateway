@@ -9,6 +9,9 @@ description = "Protects app integrity."
 keywords = ["integrity", "attestation", "PlayIntegrity", "DeviceCheck"]
 categories = ["web-programming"]
 
+[features]
+test-helpers = []
+
 [dependencies]
 aide = { version = "0.13.5", features = ["axum", "macros", "scalar"] }
 anyhow = "1.0.102"
@@ -46,9 +49,6 @@ tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "json"] }
 uuid = { version = "1.21.0", default-features = false, features = ["v4"] }
 x509-parser = "0.18.1"
-
-[features]
-test-helpers = []
 
 [build-dependencies]
 chrono = "0.4.41"
