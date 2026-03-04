@@ -10,12 +10,20 @@ use openssl::{
     x509::{
         X509, X509Name,
         extension::{BasicConstraints, KeyUsage, SubjectKeyIdentifier},
+        store::{X509Store, X509StoreBuilder},
     },
 };
 use serde_bytes::ByteBuf;
 use x509_parser::prelude::FromDer;
 
 use super::{Attestation, AttestationStatement};
+
+pub fn apple_root_ca_store() -> X509Store {
+    let root_cert = X509::from_pem(include_bytes!("./apple_app_attestation_root_ca.pem")).unwrap();
+    let mut store_builder = X509StoreBuilder::new().unwrap();
+    store_builder.add_cert(root_cert).unwrap();
+    store_builder.build()
+}
 
 pub struct TestAttestation {
     pub attestation_base64: String,

@@ -1,4 +1,6 @@
-use super::test_helpers::{build_test_attestation, create_fake_cert, create_fake_root_ca};
+use super::test_helpers::{
+    apple_root_ca_store, build_test_attestation, create_fake_cert, create_fake_root_ca,
+};
 use super::*;
 
 // SECTION --- initial attestation ---
@@ -86,11 +88,7 @@ fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expect
     };
 
     // Use the real Apple root CA store; this chain is not signed by Apple so it should fail
-    let apple_root_cert =
-        X509::from_pem(include_bytes!("./apple_app_attestation_root_ca.pem")).unwrap();
-    let mut store_builder = X509StoreBuilder::new().unwrap();
-    store_builder.add_cert(apple_root_cert).unwrap();
-    let store = store_builder.build();
+    let store = apple_root_ca_store();
 
     let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
 
@@ -134,11 +132,7 @@ fn test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca() {
         auth_data: ByteBuf::new(),
     };
 
-    let apple_root_cert =
-        X509::from_pem(include_bytes!("./apple_app_attestation_root_ca.pem")).unwrap();
-    let mut store_builder = X509StoreBuilder::new().unwrap();
-    store_builder.add_cert(apple_root_cert).unwrap();
-    let store = store_builder.build();
+    let store = apple_root_ca_store();
 
     let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
 
@@ -182,11 +176,7 @@ fn test_verify_cert_chain_failure_with_invalid_root_ca() {
         auth_data: ByteBuf::new(),
     };
 
-    let apple_root_cert =
-        X509::from_pem(include_bytes!("./apple_app_attestation_root_ca.pem")).unwrap();
-    let mut store_builder = X509StoreBuilder::new().unwrap();
-    store_builder.add_cert(apple_root_cert).unwrap();
-    let store = store_builder.build();
+    let store = apple_root_ca_store();
 
     let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
 
@@ -212,11 +202,7 @@ fn test_verify_initial_attestation_failure_on_self_signed_certificate() {
         auth_data: ByteBuf::new(),
     };
 
-    let apple_root_cert =
-        X509::from_pem(include_bytes!("./apple_app_attestation_root_ca.pem")).unwrap();
-    let mut store_builder = X509StoreBuilder::new().unwrap();
-    store_builder.add_cert(apple_root_cert).unwrap();
-    let store = store_builder.build();
+    let store = apple_root_ca_store();
 
     let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
 
