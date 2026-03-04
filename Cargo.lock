@@ -194,7 +194,6 @@ version = "0.1.0"
 dependencies = [
  "aide",
  "anyhow",
- "attestation-gateway",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-kinesis",
