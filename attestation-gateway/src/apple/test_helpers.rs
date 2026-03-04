@@ -17,7 +17,7 @@ use x509_parser::prelude::FromDer;
 
 use super::{Attestation, AttestationStatement};
 
-pub struct MockAttestation {
+pub struct TestAttestation {
     pub attestation_base64: String,
     pub root_ca_pem: Vec<u8>,
 }
@@ -176,7 +176,7 @@ fn create_leaf_cert_with_nonce(
 
 /// Builds a complete mock attestation that passes all verification steps.
 /// Returns the base64-encoded attestation and the root CA PEM bytes.
-pub fn build_mock_attestation(app_id: &str, request_hash: &str, aaguid: &str) -> MockAttestation {
+pub fn build_test_attestation(app_id: &str, request_hash: &str, aaguid: &str) -> TestAttestation {
     let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
     let ec_key = EcKey::generate(&group).unwrap();
     let private_key = PKey::from_ec_key(ec_key).unwrap();
@@ -241,7 +241,7 @@ pub fn build_mock_attestation(app_id: &str, request_hash: &str, aaguid: &str) ->
     ciborium::into_writer(&attestation, &mut cbor_bytes).unwrap();
     let attestation_base64 = general_purpose::STANDARD.encode(&cbor_bytes);
 
-    MockAttestation {
+    TestAttestation {
         attestation_base64,
         root_ca_pem: root_cert.to_pem().unwrap(),
     }

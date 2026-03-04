@@ -1,20 +1,20 @@
-use super::test_helpers::{build_mock_attestation, create_fake_cert, create_fake_root_ca};
+use super::test_helpers::{build_test_attestation, create_fake_cert, create_fake_root_ca};
 use super::*;
 
 // SECTION --- initial attestation ---
 
 #[test]
-fn test_verify_initial_attestation_success_mock_attestation() {
+fn test_verify_initial_attestation_success_with_test_attestation() {
     let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
-    let request_hash = "mock_test_request_hash";
-    let mock = build_mock_attestation(app_id, request_hash, "appattestdevelop");
+    let request_hash = "test_request_hash";
+    let test_data = build_test_attestation(app_id, request_hash, "appattestdevelop");
 
     let result = decode_and_validate_initial_attestation(
-        mock.attestation_base64,
+        test_data.attestation_base64,
         request_hash,
         app_id,
         &[AAGUID::AppAttestDevelop],
-        &mock.root_ca_pem,
+        &test_data.root_ca_pem,
     )
     .unwrap();
 
@@ -309,14 +309,14 @@ fn test_verify_initial_attestation_failure_on_invalid_cbor_message() {
 #[test]
 fn test_verify_initial_attestation_failure_nonce_mismatch() {
     let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
-    let mock = build_mock_attestation(app_id, "hash_a", "appattestdevelop");
+    let test_data = build_test_attestation(app_id, "hash_a", "appattestdevelop");
 
     let result = decode_and_validate_initial_attestation(
-        mock.attestation_base64,
+        test_data.attestation_base64,
         "hash_b",
         app_id,
         &[AAGUID::AppAttestDevelop],
-        &mock.root_ca_pem,
+        &test_data.root_ca_pem,
     )
     .unwrap_err();
 
@@ -332,17 +332,17 @@ fn test_verify_initial_attestation_failure_nonce_mismatch() {
 fn test_verify_initial_attestation_failure_app_id_mismatch() {
     let staging_app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
     let prod_app_id = BundleIdentifier::IOSProdWorldApp.apple_app_id().unwrap();
-    let request_hash = "mock_test_request_hash";
-    // Build mock with staging app_id
-    let mock = build_mock_attestation(staging_app_id, request_hash, "appattestdevelop");
+    let request_hash = "test_request_hash";
+    // Build test attestation with staging app_id
+    let test_data = build_test_attestation(staging_app_id, request_hash, "appattestdevelop");
 
     // Verify with prod app_id — should fail
     let result = decode_and_validate_initial_attestation(
-        mock.attestation_base64,
+        test_data.attestation_base64,
         request_hash,
         prod_app_id,
         &[AAGUID::AppAttestDevelop],
-        &mock.root_ca_pem,
+        &test_data.root_ca_pem,
     )
     .unwrap_err();
 
@@ -358,17 +358,17 @@ fn test_verify_initial_attestation_failure_app_id_mismatch() {
 #[test]
 fn test_verify_initial_attestation_failure_aaguid_mismatch() {
     let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
-    let request_hash = "mock_test_request_hash";
-    // Build mock with develop AAGUID
-    let mock = build_mock_attestation(app_id, request_hash, "appattestdevelop");
+    let request_hash = "test_request_hash";
+    // Build test attestation with develop AAGUID
+    let test_data = build_test_attestation(app_id, request_hash, "appattestdevelop");
 
     // Only allow production AAGUID — should fail
     let result = decode_and_validate_initial_attestation(
-        mock.attestation_base64,
+        test_data.attestation_base64,
         request_hash,
         app_id,
         &[AAGUID::AppAttest],
-        &mock.root_ca_pem,
+        &test_data.root_ca_pem,
     )
     .unwrap_err();
 
@@ -388,16 +388,16 @@ fn test_verify_initial_attestation_bypassing_aaguid_check_for_staging_apps() {
     assert_eq!(expected_aaguids.len(), 2);
 
     let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
-    let request_hash = "mock_test_request_hash";
-    // Build mock with develop AAGUID, but allow both
-    let mock = build_mock_attestation(app_id, request_hash, "appattestdevelop");
+    let request_hash = "test_request_hash";
+    // Build test attestation with develop AAGUID, but allow both
+    let test_data = build_test_attestation(app_id, request_hash, "appattestdevelop");
 
     decode_and_validate_initial_attestation(
-        mock.attestation_base64,
+        test_data.attestation_base64,
         request_hash,
         app_id,
         &expected_aaguids,
-        &mock.root_ca_pem,
+        &test_data.root_ca_pem,
     )
     .unwrap();
 }

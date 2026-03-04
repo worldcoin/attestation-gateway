@@ -681,13 +681,13 @@ async fn test_server_error_is_properly_logged() {
 #[serial]
 async fn test_apple_initial_attestation_e2e_success() {
     let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
-    let request_hash = "mock_e2e_test_request_hash";
-    let mock =
-        apple::test_helpers::build_mock_attestation(app_id, request_hash, "appattestdevelop");
+    let request_hash = "e2e_test_request_hash";
+    let test_data =
+        apple::test_helpers::build_test_attestation(app_id, request_hash, "appattestdevelop");
 
     let api_router = attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
-        .layer(get_global_config_extension_with_pem(mock.root_ca_pem))
+        .layer(get_global_config_extension_with_pem(test_data.root_ca_pem))
         .layer(get_redis_extension().await)
         .layer(get_kinesis_extension().await);
 
@@ -700,7 +700,7 @@ async fn test_apple_initial_attestation_e2e_success() {
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
         request_hash: request_hash.to_string(),
         client_error: None,
-        apple_initial_attestation: Some(mock.attestation_base64.clone()),
+        apple_initial_attestation: Some(test_data.attestation_base64.clone()),
         apple_public_key: None,
         apple_assertion: None,
         developer_token: None,
