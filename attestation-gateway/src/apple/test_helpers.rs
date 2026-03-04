@@ -20,6 +20,7 @@ use super::{Attestation, AttestationStatement};
 pub struct TestAttestation {
     pub attestation_base64: String,
     pub root_ca_pem: Vec<u8>,
+    pub key_id: String,
 }
 
 pub fn create_fake_root_ca() -> (X509, PKey<Private>) {
@@ -241,8 +242,11 @@ pub fn build_test_attestation(app_id: &str, request_hash: &str, aaguid: &str) ->
     ciborium::into_writer(&attestation, &mut cbor_bytes).unwrap();
     let attestation_base64 = general_purpose::STANDARD.encode(&cbor_bytes);
 
+    let key_id = general_purpose::STANDARD.encode(&hashed_public_key);
+
     TestAttestation {
         attestation_base64,
         root_ca_pem: root_cert.to_pem().unwrap(),
+        key_id,
     }
 }

@@ -727,23 +727,20 @@ async fn test_apple_initial_attestation_e2e_success() {
     let response: Value = serde_json::from_slice(&response).unwrap();
     let token = response["attestation_gateway_token"].as_str().unwrap();
 
-    // Verify the key was saved to Dynamo (scan for the key by bundle_identifier)
+    // Verify the key was saved to Dynamo
     let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
-    let scan_result = client
-        .scan()
+    let get_result = client
+        .get_item()
         .table_name(APPLE_KEYS_DYNAMO_TABLE_NAME.to_string())
-        .filter_expression("bundle_identifier = :bi")
-        .expression_attribute_values(
-            ":bi",
-            AttributeValue::S("org.worldcoin.insight.staging".to_string()),
+        .key(
+            "key_id",
+            AttributeValue::S(format!("key#{}", test_data.key_id)),
         )
         .send()
         .await
         .unwrap();
 
-    let items = scan_result.items.unwrap();
-    assert!(!items.is_empty(), "Expected at least one key in Dynamo");
-    let item = &items[0];
+    let item = get_result.item.expect("Expected key in Dynamo");
 
     assert!(!item.get("public_key").unwrap().as_s().unwrap().is_empty());
     assert_eq!(item.get("key_counter").unwrap().as_n().unwrap(), "0");
