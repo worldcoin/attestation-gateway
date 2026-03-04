@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
@@ -34,9 +35,10 @@ use tracing_test::traced_test;
 
 static APPLE_KEYS_DYNAMO_TABLE_NAME: &str = "attestation-gateway-apple-keys";
 
-static TEST_ATTESTATION_KEY_ID: &str = "us1sMB71A6ffTbD5UdkeevxwPIFyFEuI3vNc8R/jiBw=";
-static TEST_ATTESTATION_RAW_PUBLIC_KEY: &str = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEu5PyE6mg2JOA19zIosBmv/18/3B5ySWGLET7mQhWijPWWtKPEjdfDME7djEYaT81tvWoXXm95qfBYZw3Q2YDmQ==";
-static TEST_VALID_ASSERTION: &str = "omlzaWduYXR1cmVYSDBGAiEA0Qs8Xf23WStR6ZhWteHd6sS6YQ14VgDrC4+8vrakNFMCIQCl8CZ2iqpujjgbWxO7vadwCy3WSSB09Mi9X3tp+97ZrHFhdXRoZW50aWNhdG9yRGF0YVgl0lgIg/cWKQldEqyGUrhbrxBv4j/WaJlzkB6N9Dmg63VAAAAAAQ==";
+// These keys need to be replaced if the test attestation is updated
+static TEST_ATTESTATION_KEY_ID: &str = "QSMxLJmAOdfSiCfgSr0jj3dqSCrVf9MVbxbOH6y8cDI=";
+static TEST_ATTESTATION_RAW_PUBLIC_KEY: &str = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEoEd2NgBRXwJZTRe+bIw4RmEf9MhNpOm3CAQztk+5jbMyOXL7IKok08+blp9KtwDRqjLEus9zgQzqcFvHSHvVTw==";
+static TEST_VALID_ASSERTION: &str = "omlzaWduYXR1cmVYRjBEAiBX7NktwvtyY2f3Jt8IpoATgI6Zxu3jjFk2foIrAtJmkAIga3yByVSHE2jLqihyECe5PDIdrwTtcd/nuMCboSBuvD5xYXV0aGVudGljYXRvckRhdGFYJdJYCIP3FikJXRKshlK4W68Qb+I/1miZc5AejfQ5oOt1QAAAAAE=";
 static TEST_REQUEST_HASH: &str = "02072cdf5e347d876a89949e6c11febb55716e3e7026e76b7d90d0bed6cf28e9";
 
 // SECTION --- setup & config ---
@@ -1563,6 +1565,7 @@ fn generate_developer_certificate(
     client_public_key: &josekit::jwk::Jwk,
     developer_jwk: &josekit::jwk::Jwk,
     issuer: String,
+    extra: Option<HashMap<String, String>>,
 ) -> String {
     let mut header = josekit::jws::JwsHeader::new();
     header.set_token_type("JWT");
@@ -1579,6 +1582,22 @@ fn generate_developer_certificate(
             Some(josekit::Value::String(client_public_key.to_string())),
         )
         .unwrap();
+    payload
+        .set_claim(
+            "aud",
+            Some(josekit::Value::String("relying-party.certificate".into())),
+        )
+        .unwrap();
+
+    if let Some(extra) = extra {
+        let obj: josekit::Map<String, josekit::Value> = extra
+            .iter()
+            .map(|(k, v)| (k.clone(), josekit::Value::String(v.clone())))
+            .collect();
+        payload
+            .set_claim("extra", Some(josekit::Value::Object(obj)))
+            .unwrap();
+    }
 
     // Signing JWT
     let signer = ES256.signer_from_jwk(&developer_jwk).unwrap();
@@ -1678,12 +1697,14 @@ async fn test_developer_token_generation_e2e_success() {
     let api_router = get_api_router().await;
 
     let request_hash = String::from("i_am_a_sample_request_hash");
+    let extra = HashMap::from([("foo".to_string(), "bar".to_string())]);
 
     // Generate developer certificate
     let developer_certificate = generate_developer_certificate(
         &client_jwk.to_public_key().unwrap(),
         &developer_jwk,
         developer_server_base_url,
+        Some(extra),
     );
 
     // Generate client token
@@ -1750,7 +1771,14 @@ async fn test_developer_token_generation_e2e_success() {
         payload.claim("out"),
         Some(&josekit::Value::String("pass".to_string()))
     );
-
+    assert_eq!(
+        payload.claim("extra"),
+        Some(&josekit::Value::Object(
+            [("foo".to_string(), josekit::Value::String("bar".to_string()))]
+                .into_iter()
+                .collect::<josekit::Map<String, josekit::Value>>()
+        ))
+    );
     assert_eq!(payload.claim("app_version"), None);
 }
 
@@ -1772,6 +1800,7 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
         &client_jwk.to_public_key().unwrap(),
         &developer_jwk,
         developer_server_base_url,
+        None,
     );
     let generated_client_token =
         generate_client_token(&client_jwk, developer_certificate, &request_hash);
