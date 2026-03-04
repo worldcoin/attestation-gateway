@@ -729,7 +729,7 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     // Verify the key was saved to Dynamo
     let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
-    let get_result = client
+    let get_item_result = client
         .get_item()
         .table_name(APPLE_KEYS_DYNAMO_TABLE_NAME.to_string())
         .key(
@@ -740,9 +740,12 @@ async fn test_apple_initial_attestation_e2e_success() {
         .await
         .unwrap();
 
-    let item = get_result.item.expect("Expected key in Dynamo");
+    let item = get_item_result.item.expect("Expected key in Dynamo");
 
-    assert!(!item.get("public_key").unwrap().as_s().unwrap().is_empty());
+    assert_eq!(
+        item.get("public_key").unwrap().as_s().unwrap(),
+        &test_data.public_key
+    );
     assert_eq!(item.get("key_counter").unwrap().as_n().unwrap(), "0");
     assert_eq!(
         item.get("bundle_identifier").unwrap().as_s().unwrap(),

@@ -21,6 +21,7 @@ pub struct TestAttestation {
     pub attestation_base64: String,
     pub root_ca_pem: Vec<u8>,
     pub key_id: String,
+    pub public_key: String,
 }
 
 pub fn create_fake_root_ca() -> (X509, PKey<Private>) {
@@ -244,9 +245,12 @@ pub fn build_test_attestation(app_id: &str, request_hash: &str, aaguid: &str) ->
 
     let key_id = general_purpose::STANDARD.encode(&hashed_public_key);
 
+    let public_key_base64 = general_purpose::STANDARD.encode(&public_key_der);
+
     TestAttestation {
         attestation_base64,
         root_ca_pem: root_cert.to_pem().unwrap(),
         key_id,
+        public_key: public_key_base64,
     }
 }
