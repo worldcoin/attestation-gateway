@@ -208,6 +208,7 @@ async fn verify_android_or_apple_integrity(
                 request_hash,
                 aws_config,
                 &config.apple_keys_dynamo_table_name,
+                &config.apple_root_ca_pem,
             )
             .await?
         }

@@ -36,7 +36,6 @@ use tracing_test::traced_test;
 static APPLE_KEYS_DYNAMO_TABLE_NAME: &str = "attestation-gateway-apple-keys";
 
 // These keys need to be replaced if the test attestation is updated
-static TEST_VALID_ATTESTATION: &str = "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";
 static TEST_ATTESTATION_KEY_ID: &str = "QSMxLJmAOdfSiCfgSr0jj3dqSCrVf9MVbxbOH6y8cDI=";
 static TEST_ATTESTATION_RAW_PUBLIC_KEY: &str = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEoEd2NgBRXwJZTRe+bIw4RmEf9MhNpOm3CAQztk+5jbMyOXL7IKok08+blp9KtwDRqjLEus9zgQzqcFvHSHvVTw==";
 static TEST_VALID_ASSERTION: &str = "omlzaWduYXR1cmVYRjBEAiBX7NktwvtyY2f3Jt8IpoATgI6Zxu3jjFk2foIrAtJmkAIga3yByVSHE2jLqihyECe5PDIdrwTtcd/nuMCboSBuvD5xYXV0aGVudGljYXRvckRhdGFYJdJYCIP3FikJXRKshlK4W68Qb+I/1miZc5AejfQ5oOt1QAAAAAE=";
@@ -78,6 +77,14 @@ async fn reset_apple_keys_table(aws_config: &aws_config::SdkConfig) {
 }
 
 fn get_global_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
+    get_global_config_extension_with_pem(
+        include_bytes!("../src/apple/apple_app_attestation_root_ca.pem").to_vec(),
+    )
+}
+
+fn get_global_config_extension_with_pem(
+    apple_root_ca_pem: Vec<u8>,
+) -> Extension<attestation_gateway::utils::GlobalConfig> {
     // Required to load default env vars
     dotenvy::from_filename(".env.example").unwrap();
     let config = attestation_gateway::utils::GlobalConfig {
@@ -88,6 +95,7 @@ fn get_global_config_extension() -> Extension<attestation_gateway::utils::Global
         log_client_errors: false,
         kinesis_stream_arn: Some("arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
         developer_inner_jwks_url: std::env::var("DEVELOPER_INNER_JWKS_URL").ok(),
+        apple_root_ca_pem,
     };
     Extension(config)
 }
@@ -604,6 +612,8 @@ async fn test_server_error_is_properly_logged() {
             log_client_errors: false,
             kinesis_stream_arn: None,
             developer_inner_jwks_url: None,
+            apple_root_ca_pem: include_bytes!("../src/apple/apple_app_attestation_root_ca.pem")
+                .to_vec(),
         };
         Extension(config)
     }
@@ -670,7 +680,16 @@ async fn test_server_error_is_properly_logged() {
 #[tokio::test]
 #[serial]
 async fn test_apple_initial_attestation_e2e_success() {
-    let api_router = get_api_router().await;
+    let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
+    let request_hash = "e2e_test_request_hash";
+    let test_data =
+        apple::test_helpers::build_test_attestation(app_id, request_hash, "appattestdevelop");
+
+    let api_router = attestation_gateway::routes::handler()
+        .layer(get_aws_config_extension().await)
+        .layer(get_global_config_extension_with_pem(test_data.root_ca_pem))
+        .layer(get_redis_extension().await)
+        .layer(get_kinesis_extension().await);
 
     let aws_config = get_aws_config_extension().await;
     let mut redis = get_redis_extension().await.0;
@@ -679,10 +698,9 @@ async fn test_apple_initial_attestation_e2e_success() {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::IOSStageWorldApp,
-        request_hash: "02072cdf5e347d876a89949e6c11febb55716e3e7026e76b7d90d0bed6cf28e9"
-            .to_string(),
+        request_hash: request_hash.to_string(),
         client_error: None,
-        apple_initial_attestation: Some(TEST_VALID_ATTESTATION.to_string()),
+        apple_initial_attestation: Some(test_data.attestation_base64.clone()),
         apple_public_key: None,
         apple_assertion: None,
         developer_token: None,
@@ -716,17 +734,17 @@ async fn test_apple_initial_attestation_e2e_success() {
         .table_name(APPLE_KEYS_DYNAMO_TABLE_NAME.to_string())
         .key(
             "key_id",
-            aws_sdk_dynamodb::types::AttributeValue::S(format!("key#{TEST_ATTESTATION_KEY_ID}")),
+            AttributeValue::S(format!("key#{}", test_data.key_id)),
         )
         .send()
         .await
         .unwrap();
 
-    let item = get_item_result.item.unwrap();
+    let item = get_item_result.item.expect("Expected key in Dynamo");
 
     assert_eq!(
         item.get("public_key").unwrap().as_s().unwrap(),
-        TEST_ATTESTATION_RAW_PUBLIC_KEY
+        &test_data.public_key
     );
     assert_eq!(item.get("key_counter").unwrap().as_n().unwrap(), "0");
     assert_eq!(

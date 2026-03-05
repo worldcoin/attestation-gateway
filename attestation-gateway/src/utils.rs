@@ -20,6 +20,7 @@ pub struct GlobalConfig {
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
     pub log_client_errors: bool,
     pub kinesis_stream_arn: Option<String>,
+    pub apple_root_ca_pem: Vec<u8>,
 }
 
 impl GlobalConfig {
@@ -69,6 +70,7 @@ impl GlobalConfig {
             enabled_bundle_identifiers,
             log_client_errors,
             kinesis_stream_arn,
+            apple_root_ca_pem: include_bytes!("apple/apple_app_attestation_root_ca.pem").to_vec(),
         }
     }
 }

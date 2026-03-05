@@ -1,165 +1,37 @@
-use chrono::{TimeZone, Utc};
-use openssl::{
-    asn1::Asn1Time,
-    ec::{EcGroup, EcKey},
-    nid::Nid,
-    pkey::{Private, Public},
-    x509::{
-        X509Name,
-        extension::{BasicConstraints, KeyUsage, SubjectKeyIdentifier},
-    },
+use super::test_helpers::{
+    apple_root_ca_store, build_test_attestation, create_fake_cert, create_fake_root_ca,
 };
-
 use super::*;
-
-// NOTE: the attestation below is a valid attestation that was generated in World App Staging,
-// the certificate is valid until **Feb 28, 2026** after which it has to be replaced
-const TEST_VALID_ATTESTATION: &str = "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";
-const TEST_REQUEST_HASH: &str = "02072cdf5e347d876a89949e6c11febb55716e3e7026e76b7d90d0bed6cf28e9";
-
-fn helper_create_fake_root_ca() -> (X509, PKey<Private>) {
-    // create an EC key pair to sign the fake root CA
-    let group = EcGroup::from_curve_name(Nid::SECP256K1).unwrap();
-    let ec_key = EcKey::generate(&group).unwrap();
-    let secret_key = PKey::from_ec_key(ec_key).unwrap();
-    let pk: PKey<Public> =
-        PKey::public_key_from_der(&secret_key.public_key_to_der().unwrap()).unwrap();
-
-    // create a new fake root CA
-    let mut ca_cert_builder = X509::builder().unwrap();
-    ca_cert_builder.set_version(2).unwrap();
-
-    // Set the subject & issuer name
-    let mut name = X509Name::builder().unwrap();
-    name.append_entry_by_text("CN", "Apple App Attestation Root CA") // NOTE: this is the name for Apple's Root CA
-        .unwrap();
-    let name = name.build();
-    ca_cert_builder.set_subject_name(&name).unwrap();
-    ca_cert_builder.set_issuer_name(&name).unwrap(); // Self-signed, so issuer is the same as subject
-
-    // Set the public key for the certificate
-    ca_cert_builder.set_pubkey(&pk).unwrap();
-
-    ca_cert_builder
-        .set_not_before(Asn1Time::days_from_now(0).unwrap().as_ref())
-        .unwrap();
-    ca_cert_builder
-        .set_not_after(Asn1Time::days_from_now(1).unwrap().as_ref())
-        .unwrap();
-
-    ca_cert_builder
-        .sign(&secret_key, MessageDigest::sha384())
-        .unwrap();
-
-    let basic_constraints = BasicConstraints::new().critical().ca().build().unwrap();
-    ca_cert_builder.append_extension(basic_constraints).unwrap();
-
-    let key_usage = KeyUsage::new()
-        .critical()
-        .key_cert_sign()
-        .crl_sign()
-        .build()
-        .unwrap();
-    ca_cert_builder.append_extension(key_usage).unwrap();
-
-    let subject_key_identifier = SubjectKeyIdentifier::new()
-        .build(&ca_cert_builder.x509v3_context(None, None))
-        .unwrap();
-    ca_cert_builder
-        .append_extension(subject_key_identifier)
-        .unwrap();
-
-    let ca_cert = ca_cert_builder.build();
-
-    (ca_cert, secret_key)
-}
-
-fn helper_create_fake_cert(
-    issuer: &X509Name,
-    issuer_key: &PKey<Private>,
-    common_name: &str,
-    is_expired: bool,
-) -> (X509, PKey<Private>) {
-    // create an EC key pair to be attested in the certificate
-    let group = EcGroup::from_curve_name(Nid::SECP256K1).unwrap();
-    let ec_key = EcKey::generate(&group).unwrap();
-    let secret_key = PKey::from_ec_key(ec_key).unwrap();
-    let pk: PKey<Public> =
-        PKey::public_key_from_der(&secret_key.public_key_to_der().unwrap()).unwrap();
-
-    let mut ca_cert_builder = X509::builder().unwrap();
-    ca_cert_builder.set_version(2).unwrap();
-
-    let mut name = X509Name::builder().unwrap();
-    name.append_entry_by_text("CN", common_name).unwrap();
-    name.append_entry_by_text("O", "AAA Certification").unwrap();
-    let name = name.build();
-    ca_cert_builder.set_subject_name(&name).unwrap();
-    ca_cert_builder.set_issuer_name(issuer).unwrap();
-
-    ca_cert_builder.set_pubkey(&pk).unwrap();
-
-    ca_cert_builder
-        .set_not_before(Asn1Time::days_from_now(0).unwrap().as_ref())
-        .unwrap();
-    if is_expired {
-        let two_minutes_ago = Utc::now() - chrono::Duration::minutes(2);
-        ca_cert_builder
-            .set_not_after(
-                Asn1Time::from_unix(two_minutes_ago.timestamp())
-                    .unwrap()
-                    .as_ref(),
-            )
-            .unwrap();
-    } else {
-        ca_cert_builder
-            .set_not_after(Asn1Time::days_from_now(1).unwrap().as_ref())
-            .unwrap();
-    }
-
-    ca_cert_builder
-        .sign(issuer_key, MessageDigest::sha384())
-        .unwrap();
-
-    (ca_cert_builder.build(), secret_key)
-}
 
 // SECTION --- initial attestation ---
 
 #[test]
-fn test_verify_initial_attestation_success_real_attestation() {
-    // REFERENCE below contains an example attestation to verify proper implementation, however it cannot be used with our code
-    // because the server challenge is not hashed which causes a discrepancy in step 2
-    // https://developer.apple.com/documentation/devicecheck/attestation-object-validation-guide
-    let feb_28_2026 = Utc.with_ymd_and_hms(2026, 2, 28, 0, 0, 0).unwrap();
-    assert!(
-        Utc::now() <= feb_28_2026,
-        "this test is only valid until Feb 28, 2026. Please replace the attestation."
-    );
+fn test_verify_initial_attestation_success_with_test_attestation() {
+    let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
+    let request_hash = "test_request_hash";
+    let test_data = build_test_attestation(app_id, request_hash, "appattestdevelop");
 
     let result = decode_and_validate_initial_attestation(
-        TEST_VALID_ATTESTATION.to_string(),
-        TEST_REQUEST_HASH,
-        BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
+        test_data.attestation_base64,
+        request_hash,
+        app_id,
         &[AAGUID::AppAttestDevelop],
+        &test_data.root_ca_pem,
     )
     .unwrap();
 
     assert!(!result.receipt.is_empty());
-    assert!(!result.public_key.is_empty());
-    assert_eq!(
-        result.key_id,
-        "/oFIRNfDBjjE6xk6mGWIt2p+8ZVvA8m+ILNAJgkfUwg="
-    );
+    assert_eq!(result.public_key, test_data.public_key);
+    assert_eq!(result.key_id, test_data.key_id);
 }
 
 /// This is a test case of the test mechanism to use a fake root CA to sign the attestation.
 /// This test helps gurantee the validity of other failure test cases relying on a fake root CA.
 #[test]
 fn test_verify_initial_attestation_success_on_different_root_ca() {
-    let (root_cert, root_key) = helper_create_fake_root_ca();
+    let (root_cert, root_key) = create_fake_root_ca();
 
-    let (cert, _) = helper_create_fake_cert(
+    let (cert, _) = create_fake_cert(
         &root_cert.issuer_name().to_owned().unwrap(),
         &root_key,
         "testhash",
@@ -191,9 +63,9 @@ fn test_verify_initial_attestation_success_on_different_root_ca() {
 /// Tests an attestation from a different root CA which is not Apple's Root CA
 #[test]
 fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expected_apple_root_ca() {
-    let (root_cert, root_key) = helper_create_fake_root_ca();
+    let (root_cert, root_key) = create_fake_root_ca();
 
-    let (cert, _) = helper_create_fake_cert(
+    let (cert, _) = create_fake_cert(
         &root_cert.issuer_name().to_owned().unwrap(),
         &root_key,
         "testhash",
@@ -215,7 +87,10 @@ fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expect
         auth_data: ByteBuf::new(),
     };
 
-    let result = verify_cert_chain(&attestation).unwrap_err();
+    // Use the real Apple root CA store; this chain is not signed by Apple so it should fail
+    let store = apple_root_ca_store();
+
+    let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
 
     assert_eq!(
         result.to_string(),
@@ -225,16 +100,16 @@ fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expect
 
 #[test]
 fn test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca() {
-    let (root_cert, root_key) = helper_create_fake_root_ca();
+    let (root_cert, root_key) = create_fake_root_ca();
 
-    let (intermediate_cert, intermediate_key) = helper_create_fake_cert(
+    let (intermediate_cert, intermediate_key) = create_fake_cert(
         &root_cert.issuer_name().to_owned().unwrap(),
         &root_key,
         "Apple App Attestation CA 1",
         false,
     );
 
-    let (cert, _) = helper_create_fake_cert(
+    let (cert, _) = create_fake_cert(
         &intermediate_cert.issuer_name().to_owned().unwrap(),
         &intermediate_key,
         "testhash",
@@ -257,7 +132,9 @@ fn test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca() {
         auth_data: ByteBuf::new(),
     };
 
-    let result = verify_cert_chain(&attestation).unwrap_err();
+    let store = apple_root_ca_store();
+
+    let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
 
     assert_eq!(
         result.to_string(),
@@ -267,16 +144,16 @@ fn test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca() {
 
 #[test]
 fn test_verify_cert_chain_failure_with_invalid_root_ca() {
-    let (root_cert, root_key) = helper_create_fake_root_ca();
+    let (root_cert, root_key) = create_fake_root_ca();
 
-    let (intermediate_cert, intermediate_key) = helper_create_fake_cert(
+    let (intermediate_cert, intermediate_key) = create_fake_cert(
         &root_cert.issuer_name().to_owned().unwrap(),
         &root_key,
         "Apple App Attestation CA 1",
         false,
     );
 
-    let (cert, _) = helper_create_fake_cert(
+    let (cert, _) = create_fake_cert(
         &intermediate_cert.issuer_name().to_owned().unwrap(),
         &intermediate_key,
         "testhash",
@@ -299,7 +176,9 @@ fn test_verify_cert_chain_failure_with_invalid_root_ca() {
         auth_data: ByteBuf::new(),
     };
 
-    let result = verify_cert_chain(&attestation).unwrap_err();
+    let store = apple_root_ca_store();
+
+    let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
 
     assert_eq!(
         result.to_string(),
@@ -309,7 +188,7 @@ fn test_verify_cert_chain_failure_with_invalid_root_ca() {
 
 #[test]
 fn test_verify_initial_attestation_failure_on_self_signed_certificate() {
-    let (ca_cert, _) = helper_create_fake_root_ca();
+    let (ca_cert, _) = create_fake_root_ca();
 
     let attestation_statement = AttestationStatement {
         // chain is root CA (self signed)
@@ -323,7 +202,9 @@ fn test_verify_initial_attestation_failure_on_self_signed_certificate() {
         auth_data: ByteBuf::new(),
     };
 
-    let result = verify_cert_chain(&attestation).unwrap_err();
+    let store = apple_root_ca_store();
+
+    let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
 
     assert_eq!(
         result.to_string(),
@@ -333,9 +214,9 @@ fn test_verify_initial_attestation_failure_on_self_signed_certificate() {
 
 #[test]
 fn test_verify_initial_attestation_failure_on_expired_certificate() {
-    let (root_cert, root_key) = helper_create_fake_root_ca();
+    let (root_cert, root_key) = create_fake_root_ca();
 
-    let (cert, _) = helper_create_fake_cert(
+    let (cert, _) = create_fake_cert(
         &root_cert.issuer_name().to_owned().unwrap(),
         &root_key,
         "testhash",
@@ -374,6 +255,7 @@ fn test_verify_initial_attestation_failure_on_invalid_attestation() {
         "test",
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
         &[AAGUID::AppAttestDevelop],
+        include_bytes!("./apple_app_attestation_root_ca.pem"),
     )
     .unwrap_err();
 
@@ -397,6 +279,7 @@ fn test_verify_initial_attestation_failure_on_invalid_cbor_message() {
         "test",
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
         &[AAGUID::AppAttestDevelop],
+        include_bytes!("./apple_app_attestation_root_ca.pem"),
     )
     .unwrap_err();
 
@@ -411,11 +294,15 @@ fn test_verify_initial_attestation_failure_on_invalid_cbor_message() {
 
 #[test]
 fn test_verify_initial_attestation_failure_nonce_mismatch() {
+    let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
+    let test_data = build_test_attestation(app_id, "hash_a", "appattestdevelop");
+
     let result = decode_and_validate_initial_attestation(
-        TEST_VALID_ATTESTATION.to_string(),
-        "a_different_hash",
-        BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
+        test_data.attestation_base64,
+        "hash_b",
+        app_id,
         &[AAGUID::AppAttestDevelop],
+        &test_data.root_ca_pem,
     )
     .unwrap_err();
 
@@ -429,11 +316,19 @@ fn test_verify_initial_attestation_failure_nonce_mismatch() {
 
 #[test]
 fn test_verify_initial_attestation_failure_app_id_mismatch() {
+    let staging_app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
+    let prod_app_id = BundleIdentifier::IOSProdWorldApp.apple_app_id().unwrap();
+    let request_hash = "test_request_hash";
+    // Build test attestation with staging app_id
+    let test_data = build_test_attestation(staging_app_id, request_hash, "appattestdevelop");
+
+    // Verify with prod app_id — should fail
     let result = decode_and_validate_initial_attestation(
-        TEST_VALID_ATTESTATION.to_string(),
-        TEST_REQUEST_HASH,
-        BundleIdentifier::IOSProdWorldApp.apple_app_id().unwrap(),
+        test_data.attestation_base64,
+        request_hash,
+        prod_app_id,
         &[AAGUID::AppAttestDevelop],
+        &test_data.root_ca_pem,
     )
     .unwrap_err();
 
@@ -448,11 +343,18 @@ fn test_verify_initial_attestation_failure_app_id_mismatch() {
 
 #[test]
 fn test_verify_initial_attestation_failure_aaguid_mismatch() {
+    let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
+    let request_hash = "test_request_hash";
+    // Build test attestation with develop AAGUID
+    let test_data = build_test_attestation(app_id, request_hash, "appattestdevelop");
+
+    // Only allow production AAGUID — should fail
     let result = decode_and_validate_initial_attestation(
-        TEST_VALID_ATTESTATION.to_string(),
-        TEST_REQUEST_HASH,
-        BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
+        test_data.attestation_base64,
+        request_hash,
+        app_id,
         &[AAGUID::AppAttest],
+        &test_data.root_ca_pem,
     )
     .unwrap_err();
 
@@ -471,11 +373,17 @@ fn test_verify_initial_attestation_bypassing_aaguid_check_for_staging_apps() {
         AAGUID::allowed_for_bundle_identifier(&BundleIdentifier::IOSStageWorldApp).unwrap();
     assert_eq!(expected_aaguids.len(), 2);
 
+    let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
+    let request_hash = "test_request_hash";
+    // Build test attestation with develop AAGUID, but allow both
+    let test_data = build_test_attestation(app_id, request_hash, "appattestdevelop");
+
     decode_and_validate_initial_attestation(
-        TEST_VALID_ATTESTATION.to_string(),
-        TEST_REQUEST_HASH,
-        BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
+        test_data.attestation_base64,
+        request_hash,
+        app_id,
         &expected_aaguids,
+        &test_data.root_ca_pem,
     )
     .unwrap();
 }
@@ -501,7 +409,7 @@ fn verify_assertion_success() {
         // notice this is the public key from test_verify_initial_attestation_success
         "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEu5PyE6mg2JOA19zIosBmv/18/3B5ySWGLET7mQhWijPWWtKPEjdfDME7djEYaT81tvWoXXm95qfBYZw3Q2YDmQ==".to_string(),
         BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap(),
-        TEST_REQUEST_HASH,
+        "02072cdf5e347d876a89949e6c11febb55716e3e7026e76b7d90d0bed6cf28e9",
         0,
     );
 
