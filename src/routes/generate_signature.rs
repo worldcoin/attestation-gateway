@@ -62,7 +62,7 @@ pub async fn handler(
                 details: Some(e.to_string()),
             })?;
 
-            initial_attestation.key_public_key
+            initial_attestation.key_public_key_der
         }
         _ => {
             return Err(RequestError {

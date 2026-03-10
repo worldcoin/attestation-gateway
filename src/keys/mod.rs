@@ -134,7 +134,7 @@ async fn generate_new_key(
 
         let public_key = PKey::public_key_from_der(&public_key_der)?;
 
-        let jwk = public_key_to_jwk(&public_key, key_definition.id.clone())?;
+        let jwk = public_key_to_jwk(&public_key, Some(key_definition.id.clone()))?;
 
         let signing_key = SigningKey {
             key_definition,
@@ -281,7 +281,10 @@ async fn release_lock(redis: &mut ConnectionManager) -> eyre::Result<()> {
 
 /// Converts a DER public key to a JWK.
 /// Forked from `josekit::jwk::alg::ec::EcKeyPair.to_jwk` because the original function does not support using public-only keys.
-fn public_key_to_jwk(public_key: &PKey<Public>, key_id: String) -> eyre::Result<josekit::jwk::Jwk> {
+pub fn public_key_to_jwk(
+    public_key: &PKey<Public>,
+    key_id: Option<String>,
+) -> eyre::Result<josekit::jwk::Jwk> {
     let mut jwk = josekit::jwk::Jwk::new("EC");
 
     let ec_key = public_key.ec_key()?;
@@ -312,11 +315,14 @@ fn public_key_to_jwk(public_key: &PKey<Public>, key_id: String) -> eyre::Result<
     key.as_str();
 
     jwk.set_algorithm("ES256");
-    jwk.set_key_id(key_id);
     jwk.set_parameter(
         "crv",
         Some(Value::String(SIGNING_CONFIG.curve_str.to_string())),
     )?;
+
+    if let Some(key_id) = key_id {
+        jwk.set_key_id(key_id);
+    }
 
     Ok(jwk)
 }

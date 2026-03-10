@@ -188,7 +188,7 @@ pub struct InitialAttestationOutput {
     pub public_key: String,
     pub receipt: String,
     pub key_id: String,
-    pub key_public_key: String,
+    pub key_public_key_der: Vec<u8>,
 }
 
 /// Implements the verification of `DeviceCheck` *attestations* for iOS.
@@ -310,7 +310,7 @@ pub fn decode_and_validate_initial_attestation(
         public_key: general_purpose::STANDARD.encode(public_key_der),
         receipt: general_purpose::STANDARD.encode(attestation.att_stmt.receipt.as_ref()),
         key_id: general_purpose::STANDARD.encode(credential_id),
-        key_public_key: general_purpose::STANDARD.encode(public_key),
+        key_public_key_der: res.public_key().subject_public_key.clone().data.into(),
     })
 }
 

@@ -10,6 +10,7 @@ use std::{env, fmt};
 
 mod android;
 mod apple;
+mod challenges;
 mod developer;
 mod keys;
 mod kinesis;

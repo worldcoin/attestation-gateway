@@ -48,6 +48,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 uuid = { version = "1.16.0", default-features = false, features = ["v4"] }
 x509-parser = "0.16.0"
 world-id-primitives = "0.3.0"
+rand = "0.10.0"
 
 [build-dependencies]
 chrono = "0.4.41"
