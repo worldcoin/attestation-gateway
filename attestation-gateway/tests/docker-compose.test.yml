@@ -1,8 +1,8 @@
 name: attestation-gateway-tests
 services:
   localstack:
-    container_name: localstack
-    image: localstack/localstack
+    container_name: attestation-gateway-localstack
+    image: public.ecr.aws/localstack/localstack:latest
     ports:
       - "127.0.0.1:4566:4566" # LocalStack Gateway
       - "127.0.0.1:4510-4559:4510-4559" # external services port range
@@ -15,7 +15,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - "./aws-seed.sh:/etc/localstack/init/ready.d/aws-seed.sh"
   redis:
-    image: redis
+    image: public.ecr.aws/docker/library/redis:alpine
     container_name: redis
     ports:
       - "6379:6379"

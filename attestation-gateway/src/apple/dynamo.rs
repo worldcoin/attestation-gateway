@@ -71,7 +71,7 @@ impl ApplePublicKeyRecordOutput {
                     .ok_or_else(|| eyre::eyre!("public_key not found for key: {key_id}"))?
                     .as_s()
                     .map_err(|_| eyre::eyre!("unable to parse public_key as_s for key: {key_id}"))?
-                    .to_string();
+                    .clone();
                 let counter = item
                     .get("key_counter")
                     .ok_or_else(|| eyre::eyre!("key_counter not found for key: {key_id}"))?
@@ -158,10 +158,10 @@ pub async fn update_apple_public_key_counter_plus(
 
     match request {
         Ok(request) => {
-            if let Some(attributes) = &request.attributes {
-                if attributes.contains_key("key_counter") {
-                    return Ok(());
-                }
+            if let Some(attributes) = &request.attributes
+                && attributes.contains_key("key_counter")
+            {
+                return Ok(());
             }
 
             eyre::bail!(

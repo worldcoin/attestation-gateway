@@ -25,6 +25,8 @@ use x509_parser::{
 
 // made public to be used in integration tests
 pub mod dynamo;
+#[cfg(any(test, feature = "test-helpers"))]
+pub mod test_helpers;
 
 /// Verifies an Apple initial attestation and saves the key to Dynamo DB
 ///
@@ -36,6 +38,7 @@ pub async fn verify_initial_attestation(
     request_hash: String,
     aws_config: &aws_config::SdkConfig,
     apple_keys_dynamo_table_name: &String,
+    apple_root_ca_pem: &[u8],
 ) -> eyre::Result<VerificationOutput> {
     let attestation_result = decode_and_validate_initial_attestation(
         apple_initial_attestation,
@@ -44,6 +47,7 @@ pub async fn verify_initial_attestation(
             "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
         ))?,
         &AAGUID::allowed_for_bundle_identifier(&bundle_identifier)?,
+        apple_root_ca_pem,
     )?;
 
     dynamo::insert_apple_public_key(
@@ -129,7 +133,7 @@ struct AttestationStatement {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Attestation {
+struct Attestation {
     fmt: String,
     att_stmt: AttestationStatement,
     auth_data: ByteBuf,
@@ -199,6 +203,7 @@ pub fn decode_and_validate_initial_attestation(
     challenge: &str,
     expected_app_id: &str,
     allowed_aaguid: &[AAGUID],
+    apple_root_ca_pem: &[u8],
 ) -> eyre::Result<InitialAttestationOutput> {
     let attestation_bytes = general_purpose::STANDARD
         .decode(apple_initial_attestation)
@@ -222,8 +227,12 @@ pub fn decode_and_validate_initial_attestation(
 
     // REFERENCE https://developer.apple.com/documentation/devicecheck/validating-apps-that-connect-to-your-server#Verify-the-attestation
 
-    // Step 1: verify certificate
-    verify_cert_chain(&attestation)?;
+    // Step 1: verify certificate chain against the provided root CA
+    let root_cert = X509::from_pem(apple_root_ca_pem)?;
+    let mut store_builder = X509StoreBuilder::new()?;
+    store_builder.add_cert(root_cert)?;
+    let store = store_builder.build();
+    internal_verify_cert_chain_with_store(&attestation, &store)?;
 
     // Step 2 and 3: create clientDataHash from the `challenge` (internally called "request_hash")
     let mut hasher = Sha256::new();
@@ -312,18 +321,6 @@ pub fn decode_and_validate_initial_attestation(
         key_id: general_purpose::STANDARD.encode(credential_id),
         key_public_key_der: res.public_key().subject_public_key.clone().data.into(),
     })
-}
-
-/// Implements the verification of the certificate chain for `DeviceCheck` attestations, using Apple's root CA.
-fn verify_cert_chain(attestation: &Attestation) -> eyre::Result<()> {
-    let root_cert = X509::from_pem(include_bytes!("./apple_app_attestation_root_ca.pem"))?;
-
-    // Trusted root CA store
-    let mut store_builder = X509StoreBuilder::new()?;
-    store_builder.add_cert(root_cert)?;
-    let store = store_builder.build();
-
-    internal_verify_cert_chain_with_store(attestation, &store)
 }
 
 /// Implements the verification of the certificate chain for `DeviceCheck` attestations. Expects a store with the trusted root CA from Apple.

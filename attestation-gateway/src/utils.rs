@@ -4,6 +4,7 @@ use axum::response::IntoResponse;
 use josekit::{JoseError, jwt::JwtPayload};
 use redis::RedisError;
 use schemars::JsonSchema;
+use std::collections::HashMap;
 use std::{env, fmt::Display, time::SystemTime};
 use uuid::Uuid;
 
@@ -19,6 +20,7 @@ pub struct GlobalConfig {
     /// Determines whether to log the client errors as warnings for debugging purposes (should generally only be enabled in development or staging)
     pub log_client_errors: bool,
     pub kinesis_stream_arn: Option<String>,
+    pub apple_root_ca_pem: Vec<u8>,
 }
 
 impl GlobalConfig {
@@ -68,6 +70,7 @@ impl GlobalConfig {
             enabled_bundle_identifiers,
             log_client_errors,
             kinesis_stream_arn,
+            apple_root_ca_pem: include_bytes!("apple/apple_app_attestation_root_ca.pem").to_vec(),
         }
     }
 }
@@ -497,6 +500,7 @@ pub struct DataReport {
     // apple_device_check: None,
     pub check_type: Option<CheckType>,
     pub dev_check_sub: Option<String>,
+    pub extra: Option<HashMap<String, String>>,
 }
 
 impl DataReport {
@@ -521,6 +525,7 @@ impl DataReport {
             app_version: None,
             check_type: None,
             dev_check_sub: None,
+            extra: None,
         }
     }
 
@@ -556,6 +561,7 @@ pub struct OutputTokenPayload {
     pub error: Option<String>,
     pub app_version: Option<String>,
     pub check_type: Option<CheckType>,
+    pub extra: Option<HashMap<String, String>>,
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -630,6 +636,16 @@ impl OutputTokenPayload {
                 .map_err(handle_jose_error)?;
         }
 
+        if let Some(extra) = &self.extra {
+            let obj: josekit::Map<String, josekit::Value> = extra
+                .iter()
+                .map(|(k, v)| (k.clone(), josekit::Value::String(v.clone())))
+                .collect();
+            payload
+                .set_claim("extra", Some(josekit::Value::Object(obj)))
+                .map_err(handle_jose_error)?;
+        }
+
         Ok(payload)
     }
 }
@@ -665,6 +681,7 @@ mod tests {
             error: None,
             app_version: Some("1.25.0".to_string()),
             check_type: Some(CheckType::Developer),
+            extra: None,
         };
 
         let jwt_payload = payload.generate().unwrap();
@@ -762,6 +779,7 @@ mod tests {
             app_version: Some("1.25.0".to_string()),
             check_type: Some(CheckType::Android),
             dev_check_sub: None,
+            extra: None,
         };
         let serialized =
             serde_json::to_string(&data_report).expect("failed to serialize `DataReport` as json");

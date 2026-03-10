@@ -1,10 +1,12 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DeveloperTokenExtraClaims {
     pub public_key: String,
+    pub extra: Option<HashMap<String, String>>,
 }
 
 /// Claims contained within a developer token's inner JWT.
@@ -24,6 +26,10 @@ pub struct DeveloperTokenClaims {
     pub sub: String,
     /// The developer's public key (can be in PEM or JWK format)
     pub public_key: String,
+    /// Audience of the token - relying-party.certificate
+    pub aud: String,
+    /// Passthrough claims
+    pub extra: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

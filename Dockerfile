@@ -1,7 +1,7 @@
 ####################################################################################################
 ## Base image
 ####################################################################################################
-FROM rust:1.91.1 AS chef
+FROM public.ecr.aws/docker/library/rust:1.93.1-slim AS chef
 USER root
 WORKDIR /app
 
@@ -21,12 +21,11 @@ FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM chef AS builder
+FROM planner AS builder
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --target x86_64-unknown-linux-gnu --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --locked --target x86_64-unknown-linux-gnu
-RUN ls -la target/x86_64-unknown-linux-gnu/release
+RUN cargo build --release --locked --target x86_64-unknown-linux-musl --package attestation-gateway
 
 ####################################################################################################
 ## Final image
