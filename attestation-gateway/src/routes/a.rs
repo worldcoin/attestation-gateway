@@ -90,10 +90,10 @@ pub async fn handler(
             })?;
 
             validate_apple_attestation_and_get_device_public_key(
+                &global_config.apple_root_ca_pem,
                 &request.challenge,
                 &request.bundle_identifier,
                 apple_attestation,
-                &global_config.apple_root_ca_pem,
             )
             .await?
         }
@@ -147,10 +147,10 @@ pub async fn handler(
 }
 
 async fn validate_apple_attestation_and_get_device_public_key(
+    apple_root_ca_pem: &[u8],
     challenge: &str,
     bundle_identifier: &BundleIdentifier,
     apple_attestation: String,
-    apple_root_ca_pem: &[u8],
 ) -> Result<Vec<u8>, RequestError> {
     let app_id = bundle_identifier.apple_app_id().ok_or(RequestError {
         code: ErrorCode::BadRequest,
