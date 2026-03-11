@@ -1,19 +1,22 @@
 use std::time::SystemTime;
 
+use aws_config::SdkConfig;
 use base64::prelude::*;
 
 use axum::{Extension, Json};
+use josekit::jwt::JwtPayload;
 use openssl::{
     bn::BigNum,
     ec::{EcGroup, EcKey},
     nid::Nid,
-    pkey::PKey,
+    pkey::{PKey, Public},
 };
+use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
     apple,
-    challenges::ChallengesDb,
+    challenges::{ChallengesDb, TokenDetails},
     keys, kms_jws,
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, RequestError},
 };
@@ -41,13 +44,13 @@ pub struct IntegrityTokenPayload {
 }
 
 impl IntegrityTokenPayload {
-    pub fn generate(&self) -> eyre::Result<josekit::jwt::JwtPayload> {
+    pub fn generate(&self) -> eyre::Result<JwtPayload> {
         let cfn_jwk = keys::public_key_to_jwk(&self.cnf, None)?;
         let mut cfn = josekit::Map::new();
         cfn.insert("jwk".to_string(), josekit::Value::Object(cfn_jwk.into()));
 
-        let mut payload = josekit::jwt::JwtPayload::new();
-        payload.set_issued_at(&std::time::SystemTime::now());
+        let mut payload = JwtPayload::new();
+        payload.set_issued_at(&SystemTime::now());
         payload.set_issuer("attestation.worldcoin.org"); // TODO: what about attestation.worldcoin.dev?
         payload.set_expires_at(&self.exp);
         payload.set_claim("v", Some(josekit::Value::String(self.v.clone())))?;
@@ -61,9 +64,9 @@ impl IntegrityTokenPayload {
 
 pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
-    Extension(mut redis): Extension<redis::aio::ConnectionManager>,
+    Extension(mut redis): Extension<ConnectionManager>,
     Extension(mut challenges_db): Extension<ChallengesDb>,
-    Extension(aws_config): Extension<aws_config::SdkConfig>,
+    Extension(aws_config): Extension<SdkConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
     let tracing_span = tracing::span!(tracing::Level::DEBUG, "a", endpoint = "/a");
@@ -126,16 +129,6 @@ pub async fn handler(
         details: Some("Invalid device public key".to_string()),
     })?;
 
-    let kms_key = keys::fetch_active_key(&mut redis, &aws_config)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, "Error fetching active key");
-            RequestError {
-                code: ErrorCode::InternalServerError,
-                details: None,
-            }
-        })?;
-
     let token_details = challenges_db
         .consume_token_challenge(&request.challenge)
         .await
@@ -147,35 +140,8 @@ pub async fn handler(
             }
         })?;
 
-    let integrity_token_payload = IntegrityTokenPayload {
-        v: "1".to_string(),
-        aud: token_details.aud,
-        cnf,
-        pass: true,
-        exp: token_details.exp,
-    }
-    .generate()
-    .map_err(|e| {
-        tracing::error!(error = ?e, "Error generating integrity token payload");
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: None,
-        }
-    })?;
-
-    let integrity_token = kms_jws::generate_output_token(
-        &aws_config,
-        kms_key.key_definition.arn,
-        integrity_token_payload,
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(error = ?e, "Error generating output token");
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: None,
-        }
-    })?;
+    let integrity_token =
+        generate_integrity_token_v1(&mut redis, &aws_config, &cnf, token_details).await?;
 
     Ok(Json(Response { integrity_token }))
 }
@@ -235,4 +201,53 @@ async fn validate_android_attestation_and_get_device_public_key(
         })?;
 
     Ok(res.public_key().subject_public_key.data.clone().into())
+}
+
+async fn generate_integrity_token_v1(
+    mut redis: &mut ConnectionManager,
+    aws_config: &SdkConfig,
+    cnf: PKey<Public>,
+    token_details: TokenDetails,
+) -> Result<String, RequestError> {
+    let integrity_token_payload = IntegrityTokenPayload {
+        v: "1".to_string(),
+        aud: token_details.aud,
+        cnf,
+        pass: true,
+        exp: token_details.exp,
+    }
+    .generate()
+    .map_err(|e| {
+        tracing::error!(error = ?e, "Error generating integrity token payload");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    })?;
+
+    let kms_key = keys::fetch_active_key(&mut redis, &aws_config)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "Error fetching active key");
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: None,
+            }
+        })?;
+
+    let integrity_token = kms_jws::generate_output_token(
+        &aws_config,
+        kms_key.key_definition.arn,
+        integrity_token_payload,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = ?e, "Error generating output token");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    })?;
+
+    Ok(integrity_token)
 }
