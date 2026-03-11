@@ -3,7 +3,12 @@ use std::time::SystemTime;
 use base64::prelude::*;
 
 use axum::{Extension, Json};
-use eyre::ContextCompat;
+use openssl::{
+    bn::BigNum,
+    ec::{EcGroup, EcKey},
+    nid::Nid,
+    pkey::PKey,
+};
 use schemars::JsonSchema;
 
 use crate::{
@@ -81,35 +86,13 @@ pub async fn handler(
                 details: Some("Apple attestation is required".to_string()),
             })?;
 
-            let app_id = request
-                .bundle_identifier
-                .apple_app_id()
-                .context("".to_string())
-                .map_err(|_| RequestError {
-                    code: ErrorCode::BadRequest,
-                    details: Some("Invalid bundle identifier".to_string()),
-                })?;
-
-            let allowed_aaguid_vec = apple::AAGUID::allowed_for_bundle_identifier(
-                &request.bundle_identifier,
-            )
-            .map_err(|_| RequestError {
-                code: ErrorCode::BadRequest,
-                details: Some("Invalid bundle identifier".to_string()),
-            })?;
-
-            let initial_attestation = apple::decode_and_validate_initial_attestation(
-                apple_attestation,
+            validate_apple_attestation_and_get_device_public_key(
                 &request.challenge,
-                app_id,
-                &allowed_aaguid_vec.as_slice(),
+                &request.bundle_identifier,
+                apple_attestation,
+                &global_config.apple_root_ca_pem,
             )
-            .map_err(|e| RequestError {
-                code: ErrorCode::BadRequest,
-                details: Some(e.to_string()),
-            })?;
-
-            initial_attestation.key_public_key_der
+            .await?
         }
         BundleIdentifier::AndroidDevWorldApp
         | BundleIdentifier::AndroidStageWorldApp
@@ -119,34 +102,26 @@ pub async fn handler(
                 details: Some("Android attestation is required".to_string()),
             })?;
 
-            let attested_certificate = base64::engine::general_purpose::STANDARD
-                .decode(&android_attestation[0])
-                .map_err(|_| RequestError {
-                    code: ErrorCode::BadRequest,
-                    details: Some("Invalid attested certificate base64 encoding".to_string()),
-                })?;
-
-            let (_, res) = x509_parser::parse_x509_certificate(attested_certificate.as_slice())
-                .map_err(|_| RequestError {
-                    code: ErrorCode::BadRequest,
-                    details: Some("Not a valid X.509 certificate".to_string()),
-                })?;
-
-            res.public_key().subject_public_key.data.clone().into()
+            validate_android_attestation_and_get_device_public_key(
+                &request.challenge,
+                &request.bundle_identifier,
+                android_attestation,
+            )
+            .await?
         }
     };
 
-    let ec_key = openssl::ec::EcKey::from_public_key_affine_coordinates(
-        &openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1).unwrap(),
-        &openssl::bn::BigNum::from_slice(&device_public_key[1..33]).unwrap(),
-        &openssl::bn::BigNum::from_slice(&device_public_key[33..65]).unwrap(),
+    let ec_key = EcKey::from_public_key_affine_coordinates(
+        &EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap(),
+        &BigNum::from_slice(&device_public_key[1..33]).unwrap(),
+        &BigNum::from_slice(&device_public_key[33..65]).unwrap(),
     )
     .map_err(|e| RequestError {
         code: ErrorCode::BadRequest,
-        details: Some(e.to_string()),
+        details: Some("Invalid device public key".to_string()),
     })?;
 
-    let cnf = openssl::pkey::PKey::from_ec_key(ec_key).map_err(|_| RequestError {
+    let cnf = PKey::from_ec_key(ec_key).map_err(|_| RequestError {
         code: ErrorCode::BadRequest,
         details: Some("Invalid device public key".to_string()),
     })?;
@@ -203,4 +178,59 @@ pub async fn handler(
     })?;
 
     Ok(Json(Response { integrity_token }))
+}
+
+async fn validate_apple_attestation_and_get_device_public_key(
+    challenge: &str,
+    bundle_identifier: &BundleIdentifier,
+    apple_attestation: String,
+    apple_root_ca_pem: &[u8],
+) -> Result<Vec<u8>, RequestError> {
+    let app_id = bundle_identifier.apple_app_id().ok_or(RequestError {
+        code: ErrorCode::BadRequest,
+        details: Some("Invalid bundle identifier".to_string()),
+    })?;
+
+    let allowed_aaguid_vec = apple::AAGUID::allowed_for_bundle_identifier(&bundle_identifier)
+        .map_err(|_| RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("Invalid bundle identifier".to_string()),
+        })?;
+
+    let initial_attestation = apple::decode_and_validate_initial_attestation(
+        apple_attestation,
+        &challenge,
+        app_id,
+        &allowed_aaguid_vec.as_slice(),
+        &apple_root_ca_pem,
+    )
+    .map_err(|e| RequestError {
+        code: ErrorCode::BadRequest,
+        details: Some(e.to_string()),
+    })?;
+
+    Ok(initial_attestation.key_public_key_der)
+}
+
+async fn validate_android_attestation_and_get_device_public_key(
+    challenge: &str,
+    bundle_identifier: &BundleIdentifier,
+    android_attestation: Vec<String>,
+) -> Result<Vec<u8>, RequestError> {
+    let attested_certificate = base64::engine::general_purpose::STANDARD
+        .decode(&android_attestation[0])
+        .map_err(|_| RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("Invalid attested certificate base64 encoding".to_string()),
+        })?;
+
+    let (_, res) =
+        x509_parser::parse_x509_certificate(attested_certificate.as_slice()).map_err(|_| {
+            RequestError {
+                code: ErrorCode::BadRequest,
+                details: Some("Not a valid X.509 certificate".to_string()),
+            }
+        })?;
+
+    Ok(res.public_key().subject_public_key.data.clone().into())
 }

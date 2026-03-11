@@ -24,13 +24,6 @@ pub async fn handler(
         tracing::span!(tracing::Level::DEBUG, "c", aud = %request.aud, endpoint = "/c");
     let _enter = tracing_span.enter();
 
-    if request.aud.len() == 0 {
-        return Err(RequestError {
-            code: ErrorCode::BadRequest,
-            details: Some("`aud` is required.".to_string()),
-        });
-    }
-
     let token_details = TokenDetails::from_aud(request.aud.clone());
     let challenge = challenges_db
         .create_token_challenge(&token_details)
