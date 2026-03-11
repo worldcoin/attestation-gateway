@@ -119,7 +119,7 @@ pub async fn handler(
         &BigNum::from_slice(&device_public_key[1..33]).unwrap(),
         &BigNum::from_slice(&device_public_key[33..65]).unwrap(),
     )
-    .map_err(|e| RequestError {
+    .map_err(|_| RequestError {
         code: ErrorCode::BadRequest,
         details: Some("Invalid device public key".to_string()),
     })?;
