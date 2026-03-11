@@ -7,13 +7,13 @@ WORKDIR /app
 
 # Install dependencies for cross-compilation (perl & make are required for openssl-sys)
 RUN apt-get update && apt-get install -y \
-    build-essential \
+    musl-tools \
     ca-certificates \
     perl \
     make \
  && rm -rf /var/lib/apt/lists/*
 
-RUN rustup target add x86_64-unknown-linux-gnu
+RUN rustup target add x86_64-unknown-linux-musl
 
 RUN cargo install cargo-chef
 
@@ -23,18 +23,18 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM planner AS builder
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --target x86_64-unknown-linux-gnu --recipe-path recipe.json
+RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --locked --target x86_64-unknown-linux-musl --package attestation-gateway
 
 ####################################################################################################
 ## Final image
 ####################################################################################################
-FROM rust:1.91.1
+FROM scratch
 WORKDIR /app
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /app/target/x86_64-unknown-linux-gnu/release/attestation-gateway /app/attestation-gateway
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/attestation-gateway /app/attestation-gateway
 
 USER 100
 EXPOSE 8000
