@@ -179,8 +179,8 @@ async fn validate_apple_attestation_and_get_device_public_key(
 }
 
 async fn validate_android_attestation_and_get_device_public_key(
-    challenge: &str,
-    bundle_identifier: &BundleIdentifier,
+    _challenge: &str,
+    _bundle_identifier: &BundleIdentifier,
     android_attestation: Vec<String>,
 ) -> Result<Vec<u8>, RequestError> {
     // ! NOT IMPLEMENTED
