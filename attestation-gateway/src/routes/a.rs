@@ -141,7 +141,7 @@ pub async fn handler(
         })?;
 
     let integrity_token =
-        generate_integrity_token_v1(&mut redis, &aws_config, &cnf, token_details).await?;
+        generate_integrity_token_v1(&mut redis, &aws_config, cnf, token_details).await?;
 
     Ok(Json(Response { integrity_token }))
 }
