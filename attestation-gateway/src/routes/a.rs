@@ -217,6 +217,8 @@ async fn validate_android_attestation_and_get_device_public_key(
     bundle_identifier: &BundleIdentifier,
     android_attestation: Vec<String>,
 ) -> Result<Vec<u8>, RequestError> {
+    // ! NOT IMPLEMENTED
+
     let attested_certificate = base64::engine::general_purpose::STANDARD
         .decode(&android_attestation[0])
         .map_err(|_| RequestError {
