@@ -9,14 +9,14 @@ use openssl::{
     bn::BigNum,
     ec::{EcGroup, EcKey},
     nid::Nid,
-    pkey::{PKey, Public},
+    pkey::PKey,
 };
 use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
     apple,
-    challenges::{ChallengesDb, TokenDetails},
+    challenges::ChallengesDb,
     keys, kms_jws,
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, RequestError},
 };
@@ -38,16 +38,32 @@ pub struct Response {
 pub struct IntegrityTokenPayload {
     pub v: String,
     pub aud: String,
-    pub cnf: openssl::pkey::PKey<openssl::pkey::Public>,
+    pub cnf: Vec<u8>,
     pub pass: bool,
     pub exp: SystemTime,
 }
 
 impl IntegrityTokenPayload {
     pub fn generate(&self) -> eyre::Result<JwtPayload> {
-        let cfn_jwk = keys::public_key_to_jwk(&self.cnf, None)?;
+        let cnf_ec_key = EcKey::from_public_key_affine_coordinates(
+            &EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap(),
+            &BigNum::from_slice(&self.cnf[1..33]).unwrap(),
+            &BigNum::from_slice(&self.cnf[33..65]).unwrap(),
+        )
+        .map_err(|_| RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("Invalid device public key".to_string()),
+        })?;
+
+        let cnf_pkey = PKey::from_ec_key(cnf_ec_key).map_err(|_| RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("Invalid device public key".to_string()),
+        })?;
+
+        let cnf_jwk = keys::public_key_to_jwk(&cnf_pkey, None)?;
+
         let mut cfn = josekit::Map::new();
-        cfn.insert("jwk".to_string(), josekit::Value::Object(cfn_jwk.into()));
+        cfn.insert("jwk".to_string(), josekit::Value::Object(cnf_jwk.into()));
 
         let mut payload = JwtPayload::new();
         payload.set_issued_at(&SystemTime::now());
@@ -114,21 +130,6 @@ pub async fn handler(
         }
     };
 
-    let ec_key = EcKey::from_public_key_affine_coordinates(
-        &EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap(),
-        &BigNum::from_slice(&device_public_key[1..33]).unwrap(),
-        &BigNum::from_slice(&device_public_key[33..65]).unwrap(),
-    )
-    .map_err(|_| RequestError {
-        code: ErrorCode::BadRequest,
-        details: Some("Invalid device public key".to_string()),
-    })?;
-
-    let cnf = PKey::from_ec_key(ec_key).map_err(|_| RequestError {
-        code: ErrorCode::BadRequest,
-        details: Some("Invalid device public key".to_string()),
-    })?;
-
     let token_details = challenges_db
         .consume_token_challenge(&request.challenge)
         .await
@@ -140,8 +141,14 @@ pub async fn handler(
             }
         })?;
 
-    let integrity_token =
-        generate_integrity_token_v1(&mut redis, &aws_config, cnf, token_details).await?;
+    let integrity_token = generate_integrity_token_v1(
+        &mut redis,
+        &aws_config,
+        device_public_key,
+        token_details.aud,
+        token_details.exp,
+    )
+    .await?;
 
     Ok(Json(Response { integrity_token }))
 }
@@ -206,15 +213,16 @@ async fn validate_android_attestation_and_get_device_public_key(
 async fn generate_integrity_token_v1(
     mut redis: &mut ConnectionManager,
     aws_config: &SdkConfig,
-    cnf: PKey<Public>,
-    token_details: TokenDetails,
+    cnf: Vec<u8>,
+    aud: String,
+    exp: SystemTime,
 ) -> Result<String, RequestError> {
     let integrity_token_payload = IntegrityTokenPayload {
         v: "1".to_string(),
-        aud: token_details.aud,
+        aud,
         cnf,
         pass: true,
-        exp: token_details.exp,
+        exp,
     }
     .generate()
     .map_err(|e| {
