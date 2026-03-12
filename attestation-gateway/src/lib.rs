@@ -2,6 +2,7 @@
 
 pub mod android;
 pub mod apple;
+pub mod challenges;
 pub mod developer;
 pub mod keys;
 pub mod kinesis;

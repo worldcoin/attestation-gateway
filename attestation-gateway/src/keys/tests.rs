@@ -290,7 +290,7 @@ hnX+pFZq78Se67+BOJDjy1rpIDxDAJgXMy7QbKbztaUGOIrSiRCeMc8lhg==
 
     let jwk = public_key_to_jwk(
         &public_key,
-        "key_b9734d0e56ef4ad68e1fee2086a6e8e9".to_string(),
+        Some("key_b9734d0e56ef4ad68e1fee2086a6e8e9".to_string()),
     )
     .unwrap();
 
