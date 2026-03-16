@@ -53,6 +53,10 @@ impl IntegrityMeta {
     }
 
     #[must_use]
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "signature cannot be allocated in const context"
+    )]
     pub fn new(token: String, signature: Vec<u8>, timestamp: i64) -> Self {
         Self {
             version: IntegrityVersion::V1,
