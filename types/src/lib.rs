@@ -157,9 +157,8 @@ impl IntegrityMeta {
         let version =
             IntegrityVersion::parse(version_raw.ok_or(IntegrityError::MalformedSignatureHeader)?)?;
 
-        let signature =
-            hex::decode(signature_raw.ok_or(IntegrityError::MalformedSignatureHeader)?)
-                .map_err(|_| IntegrityError::InvalidSignature)?;
+        let signature = hex::decode(signature_raw.ok_or(IntegrityError::MalformedSignatureHeader)?)
+            .map_err(|_| IntegrityError::InvalidSignature)?;
 
         Ok((version, timestamp, signature))
     }
@@ -380,5 +379,4 @@ mod tests {
             panic!("expected InvalidSignature, got {err:?}");
         };
     }
-
 }
