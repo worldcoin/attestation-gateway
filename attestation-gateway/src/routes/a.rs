@@ -149,7 +149,7 @@ pub async fn handler(
         }
     })?;
 
-    let integrity_token = generate_integrity_token_v1(
+    let integrity_token = generate_integrity_token(
         &mut redis,
         &aws_config,
         IntegrityTokenPayload {
@@ -224,7 +224,7 @@ async fn validate_android_attestation_and_get_device_public_key(
     Ok(res.public_key().subject_public_key.data.clone().into())
 }
 
-async fn generate_integrity_token_v1(
+async fn generate_integrity_token(
     mut redis: &mut ConnectionManager,
     aws_config: &SdkConfig,
     integrity_token_payload: IntegrityTokenPayload,
