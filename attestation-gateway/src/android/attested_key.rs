@@ -1,0 +1,132 @@
+use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
+use openssl::{
+    stack::Stack,
+    x509::{X509, X509StoreContext, store::X509StoreBuilder},
+};
+use x509_parser::prelude::{FromDer, X509Certificate};
+
+#[derive(Debug)]
+pub enum AttestedKeyError {
+    InvalidBase64Encoding(DecodeError),
+    InvalidDerEncoding(openssl::error::ErrorStack),
+    InvalidChainLength,
+    InvalidCert(openssl::error::ErrorStack),
+    InvalidChain(Option<openssl::error::ErrorStack>),
+    InternalStackBuilder(openssl::error::ErrorStack),
+    InternalStoreBuilder(openssl::error::ErrorStack),
+    InternalContextBuilder(openssl::error::ErrorStack),
+    InternalPublicKeyExtract(Option<openssl::error::ErrorStack>),
+}
+
+#[derive(Debug)]
+pub struct AttestedKey {
+    pub device_public_key: Vec<u8>,
+    pub root_ca_public_key: Vec<u8>,
+}
+
+impl AttestedKey {
+    pub fn from_base64_cert_chain(
+        base64_cert_chain: Vec<String>,
+    ) -> eyre::Result<Self, AttestedKeyError> {
+        let der_cert_chain = base64_cert_chain
+            .iter()
+            .map(|c| Base64.decode(c))
+            .collect::<Result<Vec<Vec<u8>>, DecodeError>>()
+            .map_err(|e| AttestedKeyError::InvalidBase64Encoding(e))?;
+
+        return Self::from_der_cert_chain(der_cert_chain);
+    }
+
+    pub fn from_der_cert_chain(
+        der_cert_chain: Vec<Vec<u8>>,
+    ) -> eyre::Result<Self, AttestedKeyError> {
+        let cert_chain = der_cert_chain
+            .iter()
+            .map(|c| X509::from_der(c))
+            .collect::<Result<Vec<X509>, openssl::error::ErrorStack>>()
+            .map_err(|e| AttestedKeyError::InvalidDerEncoding(e))?;
+
+        return Self::from_cert_chain(cert_chain);
+    }
+
+    pub fn from_cert_chain(cert_chain: Vec<X509>) -> eyre::Result<Self, AttestedKeyError> {
+        if cert_chain.len() < 2 {
+            return Err(AttestedKeyError::InvalidChainLength);
+        }
+
+        let device_cert = cert_chain.first().unwrap();
+        let root_ca_cert = cert_chain.last().unwrap();
+
+        let mut cert_stack = Stack::new().map_err(|e| AttestedKeyError::InternalStackBuilder(e))?;
+        for cert in cert_chain.iter().rev().skip(1) {
+            cert_stack
+                .push(cert.to_owned())
+                .map_err(|e| AttestedKeyError::InvalidCert(e))?;
+        }
+
+        let mut store_builder =
+            X509StoreBuilder::new().map_err(|e| AttestedKeyError::InternalStoreBuilder(e))?;
+
+        store_builder
+            .add_cert(root_ca_cert.to_owned())
+            .map_err(|e| AttestedKeyError::InvalidCert(e))?;
+
+        let store = store_builder.build();
+
+        let mut context =
+            X509StoreContext::new().map_err(|e| AttestedKeyError::InternalContextBuilder(e))?;
+
+        match context.init(
+            &store,
+            device_cert,
+            &cert_stack,
+            openssl::x509::X509StoreContextRef::verify_cert,
+        ) {
+            Ok(result) => {
+                if result {
+                    let device_cert_der = device_cert
+                        .to_der()
+                        .map_err(|e| AttestedKeyError::InternalPublicKeyExtract(Some(e)))?;
+                    let (_, device_cert) = X509Certificate::from_der(&device_cert_der)
+                        .map_err(|_| AttestedKeyError::InternalPublicKeyExtract(None))?;
+                    let device_public_key =
+                        Vec::from(device_cert.public_key().subject_public_key.data.clone());
+
+                    let root_ca_cert_der = root_ca_cert
+                        .to_der()
+                        .map_err(|e| AttestedKeyError::InternalPublicKeyExtract(Some(e)))?;
+                    let (_, root_ca_cert) = X509Certificate::from_der(&root_ca_cert_der)
+                        .map_err(|_| AttestedKeyError::InternalPublicKeyExtract(None))?;
+                    let root_ca_public_key =
+                        Vec::from(root_ca_cert.public_key().subject_public_key.data.clone());
+
+                    Ok(Self {
+                        device_public_key,
+                        root_ca_public_key,
+                    })
+                } else {
+                    Err(AttestedKeyError::InvalidChain(None))
+                }
+            }
+            Err(e) => Err(AttestedKeyError::InvalidChain(Some(e))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_base64_cert_chain() {
+        let chain = vec![
+            "MIICzDCCAnOgAwIBAgIBATAKBggqhkjOPQQDAjApMRkwFwYDVQQFExAwZmNjZjBkNTQ4OWJhMDRjMQwwCgYDVQQMDANURUUwIBcNNzAwMTAxMDAwMDAwWhgPMjEwNjAyMDcwNjI4MTVaMB8xHTAbBgNVBAMMFEFuZHJvaWQgS2V5c3RvcmUgS2V5MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEs2uoTuLKmoC+unpsOJSFI0LsJCVNBiyKiTqYDXkno+MMeYoEsoHFdecOeBmoCImbKf8bWsDAxSbGOj6JzSIsqaOCAZIwggGOMA4GA1UdDwEB/wQEAwIHgDCCAXoGCisGAQQB1nkCAREEggFqMIIBZgIBAwoBAQIBBAoBAQRWYXBwLnN0YWdlLmZhY2Uud29ybGRjb2luLm9yZyE3NTRiYTQyM2FkZjNhNmQ1Y2IyZWMzNmRhOGVjZmQ0NCEyMDI2LTAyLTI2VDIxOjE3OjI0LjQ1N1oEADBav4N9AgUAv4U9CAIGAZyb0Wewv4VFRARCMEAxGjAYBBFjb20ud29ybGRjb2luLmRldgIDPQ2wMSIEIKNBbt/cqq7MXlkrnKoHu3jsxvMa7EQJ9Jym07Tf8dvgMIGhoQUxAwIBAqIDAgEDowQCAgEApQUxAwIBBKoDAgEBv4N3AgUAv4U+AwIBAL+FQEwwSgQgYf2hKzLthCFKnPE9Gv+3qoC9iiaKhh7Uu3oVFw8asAwBAf8KAQAEIMuBDKWKYbbA4RGjBGzOXFMM79ynwhOMxidq2r6VoXi6v4VBBQIDAdTAv4VCBQIDAxV+v4VOBgIEATRlPb+FTwYCBAE0ZT0wCgYIKoZIzj0EAwIDRwAwRAIgRYC4+rYMqjEi7Jq6J+lRR19BmcvCzaUqwMm5butcSVUCIB8pISV0K5+guf99CAxpRGlhc52EZvC+9YiAT5UUuHUA".to_string(),
+            "MIICJjCCAaugAwIBAgIKEVR4FBYnAJkBFDAKBggqhkjOPQQDAjApMRkwFwYDVQQFExBiN2U4OWVkYTVjN2U3ZDBiMQwwCgYDVQQMDANURUUwHhcNMTgwOTIwMjIyNjI4WhcNMjgwOTE3MjIyNjI4WjApMRkwFwYDVQQFExAwZmNjZjBkNTQ4OWJhMDRjMQwwCgYDVQQMDANURUUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQRJq9kgNwBtR8vqU8I/1nZuj8skYkwAtpmxtggw8nFYrrcgKMCYsyHsI0O2ry5ZhZWcQWYJ7IfEHjPgexP4qaGo4G6MIG3MB0GA1UdDgQWBBRhvyMRj+HccCnev8pqpqJs8Yt1/TAfBgNVHSMEGDAWgBSrOYp4HmrnQ/5m1TOgTUB3R0xfqDAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwICBDBUBgNVHR8ETTBLMEmgR6BFhkNodHRwczovL2FuZHJvaWQuZ29vZ2xlYXBpcy5jb20vYXR0ZXN0YXRpb24vY3JsLzExNTQ3ODE0MTYyNzAwOTkwMTE0MAoGCCqGSM49BAMCA2kAMGYCMQCE4gdd45J7cQ1oz4vfi18WMFPyq/euFzrXTIhAXXmAdm7IT0lqw3c8q+VwCZT3ocsCMQCI4ePgpo3r9rrzS/fQ2vQuqVL2G1FY428FKAjPWGZfdut/gnLo47M6+/r/oQ5UnHQ=".to_string(),
+            "MIID0TCCAbmgAwIBAgIKA4gmZ2BliZaFqDANBgkqhkiG9w0BAQsFADAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MB4XDTE4MDkyMDIyMjQ0NVoXDTI4MDkxNzIyMjQ0NVowKTEZMBcGA1UEBRMQYjdlODllZGE1YzdlN2QwYjEMMAoGA1UEDAwDVEVFMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEblioAoTtfGhsP2zIxjmsoKNiCwtSopTjrxGzbZHgOrHH9e2qdtnWkcI7NQGpGv2iOFpIY2cTWH/W3Aeppb4ZPqWazxhzT5juj2/NY2q9yO5UA0sFnr0+G5WBu9cPv35Fo4G2MIGzMB0GA1UdDgQWBBSrOYp4HmrnQ/5m1TOgTUB3R0xfqDAfBgNVHSMEGDAWgBQ2YeEAfIgFCVGLRGxH/xpMyepPEjAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwICBDBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwczovL2FuZHJvaWQuZ29vZ2xlYXBpcy5jb20vYXR0ZXN0YXRpb24vY3JsL0U4RkExOTYzMTREMkZBMTgwDQYJKoZIhvcNAQELBQADggIBACIaj2DMlC1k+FrxuQ11TOtC9p/3XLJjqbh8oL+i5E9nQszZehx8xzJOboup3L7UnSCCwP8xFSXLUKa+/eTODVhwYYumVkyIpaQdurajcz0shk0xXsC5dIsC0FlDbuNmNv6eEymd3pocJRqHgE4KEL47Ye5q+cQzmjQRTNHr1qrQZnc3XX+6bAGavbnSb7NwXs4jjNYMulVpvhTJwO1LhvvmuTnT4oUT/Vy2phgaWxH4AsfnyIh5IEPhtwVSrqsq+mIKnBRdj96Ym1yhmOuYVQf78bYvIYjeNjng5YM3CJkt7A2/bVh3vTnEjwgq3nN01+9pgujrBlkMhZXKFeHxorndi+uUSafxGCn4OZnUHoVGY1V/kYWZFYyBO7C1dR1ndNkuu39sm/HOFvkOjDkMpdrbF8QUnYEU3g0uddAJpcHMuCPd3iLhsqZVOAs/ajZ+c5mEJG07PYRvZ0TFDTZaSCyn3RPwNFJdUir9W+xpWAxNSEWAnlz6P99tX2hHDjQDJ5io4S2dOquY0diqibdjPYdXx1nOmzsy57IZVw6tFmtDf4IUrRXa3Y80G0XJgOXjCYM2YS0BqaTb9nwSW+Hh0UswMh9ZzgDdn5NSUryvew1PZEp8pzZiAvpXwiNnpBG7zMoJ0O07kClwaiJed1S+AURUv228frnoRvVs5g9ilmj0".to_string(),
+            "MIIFYDCCA0igAwIBAgIJAOj6GWMU0voYMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNVBAUTEGY5MjAwOWU4NTNiNmIwNDUwHhcNMTYwNTI2MTYyODUyWhcNMjYwNTI0MTYyODUyWjAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdSSxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggjnar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGqC4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQoVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+OJtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/EgsTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRiigHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+MRPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9EaDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5UmAGMCAwEAAaOBpjCBozAdBgNVHQ4EFgQUNmHhAHyIBQlRi0RsR/8aTMnqTxIwHwYDVR0jBBgwFoAUNmHhAHyIBQlRi0RsR/8aTMnqTxIwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cHM6Ly9hbmRyb2lkLmdvb2dsZWFwaXMuY29tL2F0dGVzdGF0aW9uL2NybC8wDQYJKoZIhvcNAQELBQADggIBACDIw41L3KlXG0aMiS//cqrG+EShHUGo8HNsw30W1kJtjn6UBwRM6jnmiwfBPb8VA91chb2vssAtX2zbTvqBJ9+LBPGCdw/E53Rbf86qhxKaiAHOjpvAy5Y3m00mqC0w/Zwvju1twb4vhLaJ5NkUJYsUS7rmJKHHBnETLi8GFqiEsqTWpG/6ibYCv7rYDBJDcR9W62BW9jfIoBQcxUCUJouMPH25lLNcDc1ssqvC2v7iUgI9LeoM1sNovqPmQUiG9rHli1vXxzCyaMTjwftkJLkf6724DFhuKug2jITV0QkXvaJWF4nUaHOTNA4uJU9WDvZLI1j83A+/xnAJUucIv/zGJ1AMH2boHqF8CY16LpsYgBt6tKxxWH00XcyDCdW2KlBCeqbQPcsFmWyWugxdcekhYsAWyoSf818NUsZdBWBaR/OukXrNLfkQ79IyZohZbvabO/X+MVT3rriAoKc8oE2Uws6DF+60PV7/WIPjNvXySdqspImSN78mflxDqwLqRBYkA3I75qppLGG9rp7UCdRjxMl8ZDBld+7yvHVgt1cVzJx9xnyGCC23UaicMDSXYrB4I4WHXPGjxhZuCuPBLTdOLU8YRvMYdEvYebWHMpvwGCF6bAx3JBpIeOQ1wDB5y0USicV3YgYGmi+NZfhA4URSh77Yd6uuJOJENRaNVTzk".to_string(),
+        ];
+
+        let attested_key = AttestedKey::from_base64_cert_chain(chain).unwrap();
+        println!("{:?}", hex::encode(attested_key.root_ca_public_key));
+    }
+}

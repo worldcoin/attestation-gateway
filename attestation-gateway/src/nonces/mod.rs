@@ -1,5 +1,5 @@
-mod challenges_db;
+mod nonce_db;
 mod token_details;
 
-pub use challenges_db::ChallengesDb;
+pub use nonce_db::NonceDb;
 pub use token_details::TokenDetails;

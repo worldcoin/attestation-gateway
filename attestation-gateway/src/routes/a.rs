@@ -15,15 +15,15 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    apple,
-    challenges::ChallengesDb,
-    keys, kms_jws,
-    utils::{BundleIdentifier, ErrorCode, GlobalConfig, RequestError},
+    apple, keys, kms_jws,
+    nonces::NonceDb,
+    utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
 };
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct Request {
-    pub challenge: String,
+    pub nonce: String,
+    pub app_version: String,
     pub bundle_identifier: BundleIdentifier,
     pub apple_attestation: Option<String>,
     pub android_attestation: Option<Vec<String>>,
@@ -37,6 +37,8 @@ pub struct Response {
 #[derive(Debug)]
 pub struct IntegrityTokenPayload {
     pub v: String,
+    pub platform: Platform,
+    pub app_version: String,
     pub aud: String,
     pub cnf: Vec<u8>,
     pub pass: bool,
@@ -70,6 +72,14 @@ impl IntegrityTokenPayload {
         payload.set_issuer("attestation.worldcoin.org"); // TODO: what about attestation.worldcoin.dev?
         payload.set_expires_at(&self.exp);
         payload.set_claim("v", Some(josekit::Value::String(self.v.clone())))?;
+        payload.set_claim(
+            "app_version",
+            Some(josekit::Value::String(self.app_version.clone())),
+        )?;
+        payload.set_claim(
+            "platform",
+            Some(josekit::Value::String(self.platform.to_string())),
+        )?;
         payload.set_claim("aud", Some(josekit::Value::String(self.aud.clone())))?;
         payload.set_claim("cnf", Some(josekit::Value::Object(cfn)))?;
         payload.set_claim("pass", Some(josekit::Value::Bool(self.pass)))?;
@@ -81,7 +91,7 @@ impl IntegrityTokenPayload {
 pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
-    Extension(mut challenges_db): Extension<ChallengesDb>,
+    Extension(mut nonce_db): Extension<NonceDb>,
     Extension(aws_config): Extension<SdkConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
@@ -98,20 +108,24 @@ pub async fn handler(
         });
     }
 
-    let device_public_key = match request.bundle_identifier {
+    let challenge = format!("n={},av={}", request.nonce, request.app_version);
+
+    let (platform, device_public_key) = match request.bundle_identifier {
         BundleIdentifier::IOSProdWorldApp | BundleIdentifier::IOSStageWorldApp => {
             let apple_attestation = request.apple_attestation.ok_or(RequestError {
                 code: ErrorCode::BadRequest,
                 details: Some("Apple attestation is required".to_string()),
             })?;
 
-            validate_apple_attestation_and_get_device_public_key(
+            let device_public_key = validate_apple_attestation_and_get_device_public_key(
                 &global_config.apple_root_ca_pem,
-                &request.challenge,
+                &challenge,
                 &request.bundle_identifier,
                 apple_attestation,
             )
-            .await?
+            .await?;
+
+            (Platform::AppleIOS, device_public_key)
         }
         BundleIdentifier::AndroidDevWorldApp
         | BundleIdentifier::AndroidStageWorldApp
@@ -121,32 +135,37 @@ pub async fn handler(
                 details: Some("Android attestation is required".to_string()),
             })?;
 
-            validate_android_attestation_and_get_device_public_key(
-                &request.challenge,
+            let device_public_key = validate_android_attestation_and_get_device_public_key(
+                &challenge,
                 &request.bundle_identifier,
                 android_attestation,
             )
-            .await?
+            .await?;
+
+            (Platform::Android, device_public_key)
         }
     };
 
-    let token_details = challenges_db
-        .consume_token_challenge(&request.challenge)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, "Error consuming token challenge");
-            RequestError {
-                code: ErrorCode::InternalServerError,
-                details: None,
-            }
-        })?;
+    let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
+        tracing::error!(error = ?e, "Error consuming token nonce");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    })?;
 
     let integrity_token = generate_integrity_token_v1(
         &mut redis,
         &aws_config,
-        device_public_key,
-        token_details.aud,
-        token_details.exp,
+        IntegrityTokenPayload {
+            v: "1".to_string(),
+            platform,
+            app_version: request.app_version,
+            aud: token_details.aud,
+            cnf: device_public_key,
+            pass: true,
+            exp: token_details.exp,
+        },
     )
     .await?;
 
@@ -213,19 +232,9 @@ async fn validate_android_attestation_and_get_device_public_key(
 async fn generate_integrity_token_v1(
     mut redis: &mut ConnectionManager,
     aws_config: &SdkConfig,
-    cnf: Vec<u8>,
-    aud: String,
-    exp: SystemTime,
+    integrity_token_payload: IntegrityTokenPayload,
 ) -> Result<String, RequestError> {
-    let integrity_token_payload = IntegrityTokenPayload {
-        v: "1".to_string(),
-        aud,
-        cnf,
-        pass: true,
-        exp,
-    }
-    .generate()
-    .map_err(|e| {
+    let integrity_token_payload = integrity_token_payload.generate().map_err(|e| {
         tracing::error!(error = ?e, "Error generating integrity token payload");
         RequestError {
             code: ErrorCode::InternalServerError,

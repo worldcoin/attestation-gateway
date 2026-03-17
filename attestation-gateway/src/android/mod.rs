@@ -4,6 +4,7 @@ pub use integrity_token_data::PlayIntegrityToken;
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
+mod attested_key;
 mod integrity_token_data;
 
 /// Verifies an Android Play Integrity token and returns a parsed `PlayIntegrityToken`
