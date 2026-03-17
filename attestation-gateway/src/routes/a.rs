@@ -141,6 +141,7 @@ pub async fn handler(
         }
     };
 
+    // TODO 404, but need to differentiate
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
         tracing::error!(error = ?e, "Error consuming token nonce");
         RequestError {
