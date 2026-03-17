@@ -109,40 +109,35 @@ pub async fn handler(
     }
 
     let challenge = format!("n={},av={}", request.nonce, request.app_version);
+    let platform = request.bundle_identifier.platform();
 
-    let (platform, device_public_key) = match request.bundle_identifier {
-        BundleIdentifier::IOSProdWorldApp | BundleIdentifier::IOSStageWorldApp => {
+    let device_public_key = match platform {
+        Platform::AppleIOS => {
             let apple_attestation = request.apple_attestation.ok_or(RequestError {
                 code: ErrorCode::BadRequest,
                 details: Some("Apple attestation is required".to_string()),
             })?;
 
-            let device_public_key = validate_apple_attestation_and_get_device_public_key(
+            validate_apple_attestation_and_get_device_public_key(
                 &global_config.apple_root_ca_pem,
                 &challenge,
                 &request.bundle_identifier,
                 apple_attestation,
             )
-            .await?;
-
-            (Platform::AppleIOS, device_public_key)
+            .await?
         }
-        BundleIdentifier::AndroidDevWorldApp
-        | BundleIdentifier::AndroidStageWorldApp
-        | BundleIdentifier::AndroidProdWorldApp => {
+        Platform::Android => {
             let android_attestation = request.android_attestation.ok_or(RequestError {
                 code: ErrorCode::BadRequest,
                 details: Some("Android attestation is required".to_string()),
             })?;
 
-            let device_public_key = validate_android_attestation_and_get_device_public_key(
+            validate_android_attestation_and_get_device_public_key(
                 &challenge,
                 &request.bundle_identifier,
                 android_attestation,
             )
-            .await?;
-
-            (Platform::Android, device_public_key)
+            .await?
         }
     };
 
