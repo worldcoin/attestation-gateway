@@ -1,7 +1,6 @@
 #![deny(clippy::all, clippy::pedantic, clippy::nursery)]
 
 use http::{HeaderMap, HeaderValue};
-use p256::ecdsa::Signature;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -35,8 +34,10 @@ pub struct IntegrityMeta {
     pub version: IntegrityVersion,
     /// The JWT from the Attestation Gateway that serves as a certificate to authenticate the signing key.
     pub token: String,
-    /// The signature for the specific request being asserted. Signed by the mobile device's secure element.
-    pub signature: Signature,
+    /// The raw signature bytes for the specific request being asserted. Signed by the mobile
+    /// device's secure element. On Android this is a DER-encoded ECDSA signature; on iOS this is
+    /// a CBOR-encoded assertion blob.
+    pub signature: Vec<u8>,
     /// The timestamp of the signature.
     pub timestamp: i64,
 }
@@ -54,9 +55,9 @@ impl IntegrityMeta {
     #[must_use]
     #[expect(
         clippy::missing_const_for_fn,
-        reason = "Signature and String are not const"
+        reason = "signature cannot be allocated in const context"
     )]
-    pub fn new(token: String, signature: Signature, timestamp: i64) -> Self {
+    pub fn new(token: String, signature: Vec<u8>, timestamp: i64) -> Self {
         Self {
             version: IntegrityVersion::V1,
             token,
@@ -70,7 +71,7 @@ impl IntegrityMeta {
     /// Expects:
     /// - `integrity-token` — the JWT token string
     /// - `integrity-signature` —
-    ///   `v=<version>,t=<timestamp>,s=<hex_der_sig>`
+    ///   `v=<version>,t=<timestamp>,s=<hex_sig>`
     ///
     /// # Warning
     /// This function does not perform any cryptographic verification of the signature, it
@@ -118,7 +119,7 @@ impl IntegrityMeta {
             "v={},t={},s={}",
             self.version,
             self.timestamp,
-            hex::encode(self.signature.to_der())
+            hex::encode(&self.signature)
         );
         headers.insert(
             "integrity-signature",
@@ -131,10 +132,10 @@ impl IntegrityMeta {
 
     /// Parses the `integrity-signature` header value.
     ///
-    /// Format: `v=<version>,t=<timestamp>,s=<hex_der_signature>`
+    /// Format: `v=<version>,t=<timestamp>,s=<hex_signature>`
     fn parse_signature_header(
         header: &str,
-    ) -> Result<(IntegrityVersion, i64, Signature), IntegrityError> {
+    ) -> Result<(IntegrityVersion, i64, Vec<u8>), IntegrityError> {
         let mut version_raw = None;
         let mut timestamp_raw = None;
         let mut signature_raw = None;
@@ -160,11 +161,8 @@ impl IntegrityMeta {
         let version =
             IntegrityVersion::parse(version_raw.ok_or(IntegrityError::MalformedSignatureHeader)?)?;
 
-        let sig_bytes = hex::decode(signature_raw.ok_or(IntegrityError::MalformedSignatureHeader)?)
+        let signature = hex::decode(signature_raw.ok_or(IntegrityError::MalformedSignatureHeader)?)
             .map_err(|_| IntegrityError::InvalidSignature)?;
-
-        let signature =
-            Signature::from_der(&sig_bytes).map_err(|_| IntegrityError::InvalidSignature)?;
 
         Ok((version, timestamp, signature))
     }
@@ -190,7 +188,7 @@ pub enum IntegrityError {
     #[error("timestamp is not a valid i64")]
     InvalidTimestamp,
 
-    #[error("signature hex or DER encoding is invalid")]
+    #[error("signature hex encoding is invalid")]
     InvalidSignature,
 
     #[error("invalid token")]
@@ -203,11 +201,10 @@ pub enum IntegrityError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use p256::ecdsa::{SigningKey, signature::Signer};
 
-    fn test_signature() -> Signature {
-        let key = SigningKey::from_slice(&[0x42; 32]).expect("valid key");
-        key.sign(b"test payload")
+    fn test_signature() -> Vec<u8> {
+        // Arbitrary bytes — could be DER (Android) or CBOR (iOS); the crate is agnostic.
+        vec![0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe]
     }
 
     fn test_meta() -> IntegrityMeta {
@@ -241,7 +238,7 @@ mod tests {
             "v={},t={},s={},x=unknown",
             meta.version,
             meta.timestamp,
-            hex::encode(meta.signature.to_der())
+            hex::encode(&meta.signature)
         );
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -379,21 +376,6 @@ mod tests {
         headers.insert(
             "integrity-signature",
             HeaderValue::from_static("v=1,t=1,s=zzzz"),
-        );
-
-        let err = IntegrityMeta::from_headers(&headers).unwrap_err();
-        let IntegrityError::InvalidSignature = err else {
-            panic!("expected InvalidSignature, got {err:?}");
-        };
-    }
-
-    #[test]
-    fn invalid_signature_bad_der() {
-        let mut headers = valid_headers();
-        // Valid hex, but not a valid DER-encoded ECDSA signature
-        headers.insert(
-            "integrity-signature",
-            HeaderValue::from_static("v=1,t=1,s=deadbeef"),
         );
 
         let err = IntegrityMeta::from_headers(&headers).unwrap_err();
