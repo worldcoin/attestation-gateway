@@ -6,7 +6,7 @@ use openssl::{
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 #[derive(Debug)]
-pub enum AttestedKeyError {
+pub enum AndroidCertChainError {
     InvalidBase64Encoding(DecodeError),
     InvalidDerEncoding(openssl::error::ErrorStack),
     InvalidChainLength,
@@ -19,62 +19,61 @@ pub enum AttestedKeyError {
 }
 
 #[derive(Debug)]
-pub struct AttestedKey {
+pub struct AndroidCertChain {
     pub device_public_key: Vec<u8>,
     pub root_ca_public_key: Vec<u8>,
 }
 
-impl AttestedKey {
-    pub fn from_base64_cert_chain(
+impl AndroidCertChain {
+    pub fn from_base64(
         base64_cert_chain: Vec<String>,
-    ) -> eyre::Result<Self, AttestedKeyError> {
+    ) -> eyre::Result<Self, AndroidCertChainError> {
         let der_cert_chain = base64_cert_chain
             .iter()
             .map(|c| Base64.decode(c))
             .collect::<Result<Vec<Vec<u8>>, DecodeError>>()
-            .map_err(|e| AttestedKeyError::InvalidBase64Encoding(e))?;
+            .map_err(|e| AndroidCertChainError::InvalidBase64Encoding(e))?;
 
-        return Self::from_der_cert_chain(der_cert_chain);
+        return Self::from_der(der_cert_chain);
     }
 
-    pub fn from_der_cert_chain(
-        der_cert_chain: Vec<Vec<u8>>,
-    ) -> eyre::Result<Self, AttestedKeyError> {
+    pub fn from_der(der_cert_chain: Vec<Vec<u8>>) -> eyre::Result<Self, AndroidCertChainError> {
         let cert_chain = der_cert_chain
             .iter()
             .map(|c| X509::from_der(c))
             .collect::<Result<Vec<X509>, openssl::error::ErrorStack>>()
-            .map_err(|e| AttestedKeyError::InvalidDerEncoding(e))?;
+            .map_err(|e| AndroidCertChainError::InvalidDerEncoding(e))?;
 
-        return Self::from_cert_chain(cert_chain);
+        return Self::from_x509(cert_chain);
     }
 
-    pub fn from_cert_chain(cert_chain: Vec<X509>) -> eyre::Result<Self, AttestedKeyError> {
+    pub fn from_x509(cert_chain: Vec<X509>) -> eyre::Result<Self, AndroidCertChainError> {
         if cert_chain.len() < 2 {
-            return Err(AttestedKeyError::InvalidChainLength);
+            return Err(AndroidCertChainError::InvalidChainLength);
         }
 
         let device_cert = cert_chain.first().unwrap();
         let root_ca_cert = cert_chain.last().unwrap();
 
-        let mut cert_stack = Stack::new().map_err(|e| AttestedKeyError::InternalStackBuilder(e))?;
+        let mut cert_stack =
+            Stack::new().map_err(|e| AndroidCertChainError::InternalStackBuilder(e))?;
         for cert in cert_chain.iter().rev().skip(1) {
             cert_stack
                 .push(cert.to_owned())
-                .map_err(|e| AttestedKeyError::InvalidCert(e))?;
+                .map_err(|e| AndroidCertChainError::InvalidCert(e))?;
         }
 
         let mut store_builder =
-            X509StoreBuilder::new().map_err(|e| AttestedKeyError::InternalStoreBuilder(e))?;
+            X509StoreBuilder::new().map_err(|e| AndroidCertChainError::InternalStoreBuilder(e))?;
 
         store_builder
             .add_cert(root_ca_cert.to_owned())
-            .map_err(|e| AttestedKeyError::InvalidCert(e))?;
+            .map_err(|e| AndroidCertChainError::InvalidCert(e))?;
 
         let store = store_builder.build();
 
-        let mut context =
-            X509StoreContext::new().map_err(|e| AttestedKeyError::InternalContextBuilder(e))?;
+        let mut context = X509StoreContext::new()
+            .map_err(|e| AndroidCertChainError::InternalContextBuilder(e))?;
 
         match context.init(
             &store,
@@ -86,17 +85,17 @@ impl AttestedKey {
                 if result {
                     let device_cert_der = device_cert
                         .to_der()
-                        .map_err(|e| AttestedKeyError::InternalPublicKeyExtract(Some(e)))?;
+                        .map_err(|e| AndroidCertChainError::InternalPublicKeyExtract(Some(e)))?;
                     let (_, device_cert) = X509Certificate::from_der(&device_cert_der)
-                        .map_err(|_| AttestedKeyError::InternalPublicKeyExtract(None))?;
+                        .map_err(|_| AndroidCertChainError::InternalPublicKeyExtract(None))?;
                     let device_public_key =
                         Vec::from(device_cert.public_key().subject_public_key.data.clone());
 
                     let root_ca_cert_der = root_ca_cert
                         .to_der()
-                        .map_err(|e| AttestedKeyError::InternalPublicKeyExtract(Some(e)))?;
+                        .map_err(|e| AndroidCertChainError::InternalPublicKeyExtract(Some(e)))?;
                     let (_, root_ca_cert) = X509Certificate::from_der(&root_ca_cert_der)
-                        .map_err(|_| AttestedKeyError::InternalPublicKeyExtract(None))?;
+                        .map_err(|_| AndroidCertChainError::InternalPublicKeyExtract(None))?;
                     let root_ca_public_key =
                         Vec::from(root_ca_cert.public_key().subject_public_key.data.clone());
 
@@ -105,10 +104,10 @@ impl AttestedKey {
                         root_ca_public_key,
                     })
                 } else {
-                    Err(AttestedKeyError::InvalidChain(None))
+                    Err(AndroidCertChainError::InvalidChain(None))
                 }
             }
-            Err(e) => Err(AttestedKeyError::InvalidChain(Some(e))),
+            Err(e) => Err(AndroidCertChainError::InvalidChain(Some(e))),
         }
     }
 }
@@ -126,7 +125,7 @@ mod tests {
             "MIIFYDCCA0igAwIBAgIJAOj6GWMU0voYMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNVBAUTEGY5MjAwOWU4NTNiNmIwNDUwHhcNMTYwNTI2MTYyODUyWhcNMjYwNTI0MTYyODUyWjAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdSSxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggjnar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGqC4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQoVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+OJtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/EgsTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRiigHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+MRPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9EaDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5UmAGMCAwEAAaOBpjCBozAdBgNVHQ4EFgQUNmHhAHyIBQlRi0RsR/8aTMnqTxIwHwYDVR0jBBgwFoAUNmHhAHyIBQlRi0RsR/8aTMnqTxIwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cHM6Ly9hbmRyb2lkLmdvb2dsZWFwaXMuY29tL2F0dGVzdGF0aW9uL2NybC8wDQYJKoZIhvcNAQELBQADggIBACDIw41L3KlXG0aMiS//cqrG+EShHUGo8HNsw30W1kJtjn6UBwRM6jnmiwfBPb8VA91chb2vssAtX2zbTvqBJ9+LBPGCdw/E53Rbf86qhxKaiAHOjpvAy5Y3m00mqC0w/Zwvju1twb4vhLaJ5NkUJYsUS7rmJKHHBnETLi8GFqiEsqTWpG/6ibYCv7rYDBJDcR9W62BW9jfIoBQcxUCUJouMPH25lLNcDc1ssqvC2v7iUgI9LeoM1sNovqPmQUiG9rHli1vXxzCyaMTjwftkJLkf6724DFhuKug2jITV0QkXvaJWF4nUaHOTNA4uJU9WDvZLI1j83A+/xnAJUucIv/zGJ1AMH2boHqF8CY16LpsYgBt6tKxxWH00XcyDCdW2KlBCeqbQPcsFmWyWugxdcekhYsAWyoSf818NUsZdBWBaR/OukXrNLfkQ79IyZohZbvabO/X+MVT3rriAoKc8oE2Uws6DF+60PV7/WIPjNvXySdqspImSN78mflxDqwLqRBYkA3I75qppLGG9rp7UCdRjxMl8ZDBld+7yvHVgt1cVzJx9xnyGCC23UaicMDSXYrB4I4WHXPGjxhZuCuPBLTdOLU8YRvMYdEvYebWHMpvwGCF6bAx3JBpIeOQ1wDB5y0USicV3YgYGmi+NZfhA4URSh77Yd6uuJOJENRaNVTzk".to_string(),
         ];
 
-        let attested_key = AttestedKey::from_base64_cert_chain(chain).unwrap();
+        let attested_key = AndroidCertChain::from_base64(chain).unwrap();
         println!("{:?}", hex::encode(attested_key.root_ca_public_key));
     }
 }
