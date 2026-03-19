@@ -15,6 +15,7 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
+    android::{AndroidAttestation, AndroidAttestationError},
     apple, keys, kms_jws,
     nonces::NonceDb,
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
@@ -92,6 +93,7 @@ pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(mut nonce_db): Extension<NonceDb>,
+    Extension(android_attestation): Extension<AndroidAttestation>,
     Extension(aws_config): Extension<SdkConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
@@ -127,17 +129,26 @@ pub async fn handler(
             .await?
         }
         Platform::Android => {
-            let android_attestation = request.android_attestation.ok_or(RequestError {
+            let android_cert_chain = request.android_attestation.ok_or(RequestError {
                 code: ErrorCode::BadRequest,
                 details: Some("Android attestation is required".to_string()),
             })?;
 
-            validate_android_attestation_and_get_device_public_key(
-                &challenge,
-                &request.bundle_identifier,
-                android_attestation,
-            )
-            .await?
+            let attestation_output =
+                android_attestation
+                    .verify(android_cert_chain)
+                    .map_err(|e| match e {
+                        AndroidAttestationError::InvalidCaRoot => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Invalid CA root".to_string()),
+                        },
+                        _ => RequestError {
+                            code: ErrorCode::InternalServerError,
+                            details: Some("Android attestation error".to_string()),
+                        },
+                    })?;
+
+            attestation_output.device_public_key
         }
     };
 
@@ -198,31 +209,6 @@ async fn validate_apple_attestation_and_get_device_public_key(
     })?;
 
     Ok(initial_attestation.key_public_key_der)
-}
-
-async fn validate_android_attestation_and_get_device_public_key(
-    _challenge: &str,
-    _bundle_identifier: &BundleIdentifier,
-    android_attestation: Vec<String>,
-) -> Result<Vec<u8>, RequestError> {
-    // ! NOT IMPLEMENTED
-
-    let attested_certificate = base64::engine::general_purpose::STANDARD
-        .decode(&android_attestation[0])
-        .map_err(|_| RequestError {
-            code: ErrorCode::BadRequest,
-            details: Some("Invalid attested certificate base64 encoding".to_string()),
-        })?;
-
-    let (_, res) =
-        x509_parser::parse_x509_certificate(attested_certificate.as_slice()).map_err(|_| {
-            RequestError {
-                code: ErrorCode::BadRequest,
-                details: Some("Not a valid X.509 certificate".to_string()),
-            }
-        })?;
-
-    Ok(res.public_key().subject_public_key.data.clone().into())
 }
 
 async fn generate_integrity_token(

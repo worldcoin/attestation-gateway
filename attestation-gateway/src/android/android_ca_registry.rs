@@ -1,123 +1,81 @@
-use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
-use openssl::{
-    stack::Stack,
-    x509::{X509, X509StoreContext, store::X509StoreBuilder},
+use openssl::x509::X509;
+use x509_parser::{
+    error::X509Error,
+    prelude::{FromDer, X509Certificate},
 };
-use x509_parser::prelude::{FromDer, X509Certificate};
 
 #[derive(Debug)]
-pub enum AndroidCertChainError {
-    InvalidBase64Encoding(DecodeError),
-    InvalidDerEncoding(openssl::error::ErrorStack),
-    InvalidChainLength,
-    InvalidCert(openssl::error::ErrorStack),
-    InvalidChain(Option<openssl::error::ErrorStack>),
-    InternalStackBuilder(openssl::error::ErrorStack),
-    InternalStoreBuilder(openssl::error::ErrorStack),
-    InternalContextBuilder(openssl::error::ErrorStack),
-    InternalPublicKeyExtract(Option<openssl::error::ErrorStack>),
+pub enum AndroidCaRegistryError {
+    PemParsing(openssl::error::ErrorStack),
+    DerParsing,
+    InternalDerEncoding(openssl::error::ErrorStack),
 }
 
-#[derive(Debug)]
-pub struct AndroidCertChain {
-    pub device_public_key: Vec<u8>,
-    pub root_ca_public_key: Vec<u8>,
+#[derive(Debug, Clone)]
+pub struct AndroidCaRegistry {
+    public_keys: Vec<Vec<u8>>,
 }
 
-impl AndroidCertChain {
-    pub fn from_base64(
-        base64_cert_chain: Vec<String>,
-    ) -> eyre::Result<Self, AndroidCertChainError> {
-        let der_cert_chain = base64_cert_chain
-            .iter()
-            .map(|c| Base64.decode(c))
-            .collect::<Result<Vec<Vec<u8>>, DecodeError>>()
-            .map_err(|e| AndroidCertChainError::InvalidBase64Encoding(e))?;
-
-        return Self::from_der(der_cert_chain);
+impl AndroidCaRegistry {
+    pub fn from_default_pem() -> Result<Self, AndroidCaRegistryError> {
+        Self::from_pem(vec![
+            include_bytes!("attestation_root_ca1.pem").to_vec(),
+            include_bytes!("attestation_root_ca2.pem").to_vec(),
+        ])
     }
 
-    pub fn from_der(der_cert_chain: Vec<Vec<u8>>) -> eyre::Result<Self, AndroidCertChainError> {
-        let cert_chain = der_cert_chain
+    pub fn from_pem(pem_certs: Vec<Vec<u8>>) -> Result<Self, AndroidCaRegistryError> {
+        let ca_certs = pem_certs
             .iter()
-            .map(|c| X509::from_der(c))
+            .map(|pem| X509::from_pem(pem))
             .collect::<Result<Vec<X509>, openssl::error::ErrorStack>>()
-            .map_err(|e| AndroidCertChainError::InvalidDerEncoding(e))?;
+            .map_err(|e| AndroidCaRegistryError::PemParsing(e))?;
 
-        return Self::from_x509(cert_chain);
+        Self::from_x509(ca_certs)
     }
 
-    pub fn from_x509(cert_chain: Vec<X509>) -> eyre::Result<Self, AndroidCertChainError> {
-        if cert_chain.len() < 2 {
-            return Err(AndroidCertChainError::InvalidChainLength);
-        }
+    pub fn from_x509(x509_certs: Vec<X509>) -> Result<Self, AndroidCaRegistryError> {
+        let der_ca_certs = x509_certs
+            .iter()
+            .map(|cert| cert.to_der())
+            .collect::<Result<Vec<Vec<u8>>, openssl::error::ErrorStack>>()
+            .map_err(|e| AndroidCaRegistryError::InternalDerEncoding(e))?;
 
-        let device_cert = cert_chain.first().unwrap();
-        let root_ca_cert = cert_chain.last().unwrap();
+        Self::from_der(der_ca_certs)
+    }
 
-        let mut cert_stack =
-            Stack::new().map_err(|e| AndroidCertChainError::InternalStackBuilder(e))?;
-        for cert in cert_chain.iter().rev().skip(1) {
-            cert_stack
-                .push(cert.to_owned())
-                .map_err(|e| AndroidCertChainError::InvalidCert(e))?;
-        }
+    pub fn from_der(der_certs: Vec<Vec<u8>>) -> Result<Self, AndroidCaRegistryError> {
+        let ca_public_keys = der_certs
+            .iter()
+            .map(|der| {
+                let (_, cert) = X509Certificate::from_der(der)?;
+                Ok(Vec::from(cert.public_key().subject_public_key.data.clone()))
+            })
+            .collect::<Result<Vec<Vec<u8>>, X509Error>>()
+            .map_err(|_| AndroidCaRegistryError::DerParsing)?;
 
-        let mut store_builder =
-            X509StoreBuilder::new().map_err(|e| AndroidCertChainError::InternalStoreBuilder(e))?;
+        Ok(Self {
+            public_keys: ca_public_keys,
+        })
+    }
 
-        store_builder
-            .add_cert(root_ca_cert.to_owned())
-            .map_err(|e| AndroidCertChainError::InvalidCert(e))?;
-
-        let store = store_builder.build();
-
-        let mut context = X509StoreContext::new()
-            .map_err(|e| AndroidCertChainError::InternalContextBuilder(e))?;
-
-        match context.init(
-            &store,
-            device_cert,
-            &cert_stack,
-            openssl::x509::X509StoreContextRef::verify_cert,
-        ) {
-            Ok(result) => {
-                if result {
-                    let device_cert_der = device_cert
-                        .to_der()
-                        .map_err(|e| AndroidCertChainError::InternalPublicKeyExtract(Some(e)))?;
-                    let (_, device_cert) = X509Certificate::from_der(&device_cert_der)
-                        .map_err(|_| AndroidCertChainError::InternalPublicKeyExtract(None))?;
-                    let device_public_key =
-                        Vec::from(device_cert.public_key().subject_public_key.data.clone());
-
-                    let root_ca_cert_der = root_ca_cert
-                        .to_der()
-                        .map_err(|e| AndroidCertChainError::InternalPublicKeyExtract(Some(e)))?;
-                    let (_, root_ca_cert) = X509Certificate::from_der(&root_ca_cert_der)
-                        .map_err(|_| AndroidCertChainError::InternalPublicKeyExtract(None))?;
-                    let root_ca_public_key =
-                        Vec::from(root_ca_cert.public_key().subject_public_key.data.clone());
-
-                    Ok(Self {
-                        device_public_key,
-                        root_ca_public_key,
-                    })
-                } else {
-                    Err(AndroidCertChainError::InvalidChain(None))
-                }
-            }
-            Err(e) => Err(AndroidCertChainError::InvalidChain(Some(e))),
-        }
+    pub fn has_public_key(self, public_key: Vec<u8>) -> bool {
+        self.public_keys.iter().any(|key| key == &public_key)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::android::android_cert_chain::AndroidCertChain;
 
     #[test]
-    fn test_from_base64_cert_chain() {
+    fn test_pablo_chain() {
+        let pem_ca_certs = vec![
+            include_bytes!("attestation_root_ca1.pem").to_vec(),
+            include_bytes!("attestation_root_ca2.pem").to_vec(),
+        ];
+
         let chain = vec![
             "MIICzDCCAnOgAwIBAgIBATAKBggqhkjOPQQDAjApMRkwFwYDVQQFExAwZmNjZjBkNTQ4OWJhMDRjMQwwCgYDVQQMDANURUUwIBcNNzAwMTAxMDAwMDAwWhgPMjEwNjAyMDcwNjI4MTVaMB8xHTAbBgNVBAMMFEFuZHJvaWQgS2V5c3RvcmUgS2V5MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEs2uoTuLKmoC+unpsOJSFI0LsJCVNBiyKiTqYDXkno+MMeYoEsoHFdecOeBmoCImbKf8bWsDAxSbGOj6JzSIsqaOCAZIwggGOMA4GA1UdDwEB/wQEAwIHgDCCAXoGCisGAQQB1nkCAREEggFqMIIBZgIBAwoBAQIBBAoBAQRWYXBwLnN0YWdlLmZhY2Uud29ybGRjb2luLm9yZyE3NTRiYTQyM2FkZjNhNmQ1Y2IyZWMzNmRhOGVjZmQ0NCEyMDI2LTAyLTI2VDIxOjE3OjI0LjQ1N1oEADBav4N9AgUAv4U9CAIGAZyb0Wewv4VFRARCMEAxGjAYBBFjb20ud29ybGRjb2luLmRldgIDPQ2wMSIEIKNBbt/cqq7MXlkrnKoHu3jsxvMa7EQJ9Jym07Tf8dvgMIGhoQUxAwIBAqIDAgEDowQCAgEApQUxAwIBBKoDAgEBv4N3AgUAv4U+AwIBAL+FQEwwSgQgYf2hKzLthCFKnPE9Gv+3qoC9iiaKhh7Uu3oVFw8asAwBAf8KAQAEIMuBDKWKYbbA4RGjBGzOXFMM79ynwhOMxidq2r6VoXi6v4VBBQIDAdTAv4VCBQIDAxV+v4VOBgIEATRlPb+FTwYCBAE0ZT0wCgYIKoZIzj0EAwIDRwAwRAIgRYC4+rYMqjEi7Jq6J+lRR19BmcvCzaUqwMm5butcSVUCIB8pISV0K5+guf99CAxpRGlhc52EZvC+9YiAT5UUuHUA".to_string(),
             "MIICJjCCAaugAwIBAgIKEVR4FBYnAJkBFDAKBggqhkjOPQQDAjApMRkwFwYDVQQFExBiN2U4OWVkYTVjN2U3ZDBiMQwwCgYDVQQMDANURUUwHhcNMTgwOTIwMjIyNjI4WhcNMjgwOTE3MjIyNjI4WjApMRkwFwYDVQQFExAwZmNjZjBkNTQ4OWJhMDRjMQwwCgYDVQQMDANURUUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQRJq9kgNwBtR8vqU8I/1nZuj8skYkwAtpmxtggw8nFYrrcgKMCYsyHsI0O2ry5ZhZWcQWYJ7IfEHjPgexP4qaGo4G6MIG3MB0GA1UdDgQWBBRhvyMRj+HccCnev8pqpqJs8Yt1/TAfBgNVHSMEGDAWgBSrOYp4HmrnQ/5m1TOgTUB3R0xfqDAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwICBDBUBgNVHR8ETTBLMEmgR6BFhkNodHRwczovL2FuZHJvaWQuZ29vZ2xlYXBpcy5jb20vYXR0ZXN0YXRpb24vY3JsLzExNTQ3ODE0MTYyNzAwOTkwMTE0MAoGCCqGSM49BAMCA2kAMGYCMQCE4gdd45J7cQ1oz4vfi18WMFPyq/euFzrXTIhAXXmAdm7IT0lqw3c8q+VwCZT3ocsCMQCI4ePgpo3r9rrzS/fQ2vQuqVL2G1FY428FKAjPWGZfdut/gnLo47M6+/r/oQ5UnHQ=".to_string(),
@@ -126,6 +84,8 @@ mod tests {
         ];
 
         let chain = AndroidCertChain::from_base64(chain).unwrap();
-        println!("{:?}", hex::encode(chain.root_ca_public_key));
+        let attestation = AndroidCaRegistry::from_pem(pem_ca_certs).unwrap();
+
+        assert!(attestation.has_public_key(chain.root_ca_public_key));
     }
 }
