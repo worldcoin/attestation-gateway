@@ -12,6 +12,8 @@ mod integrity_token_data;
 pub use android_attestation::AndroidAttestation;
 pub use android_attestation::AndroidAttestationError;
 pub use android_attestation::AndroidAttestationOutput;
+pub use android_ca_registry::AndroidCaRegistryError;
+pub use android_cert_chain::AndroidCertChainError;
 
 /// Verifies an Android Play Integrity token and returns a parsed `PlayIntegrityToken`
 ///

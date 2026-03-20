@@ -1,7 +1,6 @@
 use std::time::SystemTime;
 
 use aws_config::SdkConfig;
-use base64::prelude::*;
 
 use axum::{Extension, Json};
 use josekit::jwt::JwtPayload;
@@ -15,7 +14,7 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    android::{AndroidAttestation, AndroidAttestationError},
+    android::{AndroidAttestation, AndroidAttestationError, AndroidCertChainError},
     apple, keys, kms_jws,
     nonces::NonceDb,
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
@@ -134,18 +133,30 @@ pub async fn handler(
                 details: Some("Android attestation is required".to_string()),
             })?;
 
+            tracing::info!(android_cert_chain = ?android_cert_chain, "Android cert chain");
+
             let attestation_output =
                 android_attestation
                     .verify(android_cert_chain)
                     .map_err(|e| match e {
+                        AndroidAttestationError::CertChain(AndroidCertChainError::InvalidChain(code)) => {
+                            tracing::error!(code = ?code, "Certificate chain error");
+                            RequestError {
+                                code: ErrorCode::BadRequest,
+                                details: Some(format!("Certificate chain error: {}", code.to_string())),
+                            }
+                        },
                         AndroidAttestationError::InvalidCaRoot => RequestError {
                             code: ErrorCode::BadRequest,
                             details: Some("Invalid CA root".to_string()),
                         },
-                        _ => RequestError {
-                            code: ErrorCode::InternalServerError,
-                            details: Some("Android attestation error".to_string()),
-                        },
+                        _ => {
+                            tracing::error!(error = ?e, "Error during android attestation verification");
+                            RequestError {
+                                code: ErrorCode::InternalServerError,
+                                details: Some("Android attestation error".to_string()),
+                            }
+                        }
                     })?;
 
             attestation_output.device_public_key
