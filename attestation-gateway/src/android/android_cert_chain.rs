@@ -70,6 +70,7 @@ impl AndroidCertChain {
         let mut store_param =
             X509VerifyParam::new().map_err(|e| AndroidCertChainError::InternalParamBuilder(e))?;
 
+        // Account for clock drift
         store_param.set_time(
             60 + SystemTime::now()
                 .duration_since(UNIX_EPOCH)
