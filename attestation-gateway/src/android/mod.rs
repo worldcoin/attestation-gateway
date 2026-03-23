@@ -4,15 +4,13 @@ pub use integrity_token_data::PlayIntegrityToken;
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
-mod android_attestation;
+mod android_attestation_service;
 mod android_ca_registry;
 mod android_cert_chain;
 mod integrity_token_data;
 
-pub use android_attestation::AndroidAttestation;
-pub use android_attestation::AndroidAttestationError;
-pub use android_attestation::AndroidAttestationOutput;
-pub use android_ca_registry::AndroidCaRegistryError;
+pub use android_attestation_service::AndroidAttestationError;
+pub use android_attestation_service::AndroidAttestationService;
 pub use android_cert_chain::AndroidCertChainError;
 
 /// Verifies an Android Play Integrity token and returns a parsed `PlayIntegrityToken`

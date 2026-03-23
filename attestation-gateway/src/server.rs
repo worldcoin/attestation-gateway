@@ -1,6 +1,6 @@
 use std::{env, net::SocketAddr, time::Duration};
 
-use crate::{android::AndroidAttestation, nonces::NonceDb};
+use crate::{android::AndroidAttestationService, nonces::NonceDb};
 use aide::openapi::{Info, OpenApi};
 use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
@@ -35,7 +35,7 @@ pub async fn start(
     };
 
     let nonce_db = NonceDb::new(redis.clone());
-    let android_attestation = AndroidAttestation::from_default_pem().unwrap();
+    let android_attestation_service = AndroidAttestationService::from_default_pem().unwrap();
 
     let app = routes::handler()
         .finish_api(&mut openapi)
@@ -46,7 +46,7 @@ pub async fn start(
         .layer(Extension(global_config))
         .layer(CompressionLayer::new())
         .layer(Extension(kinesis_client))
-        .layer(Extension(android_attestation))
+        .layer(Extension(android_attestation_service))
         .layer(
             TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::new().include_headers(true)),
         )

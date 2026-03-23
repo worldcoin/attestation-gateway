@@ -14,7 +14,7 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    android::{AndroidAttestation, AndroidAttestationError, AndroidCertChainError},
+    android::{AndroidAttestationError, AndroidAttestationService, AndroidCertChainError},
     apple, keys, kms_jws,
     nonces::NonceDb,
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
@@ -92,7 +92,7 @@ pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(mut nonce_db): Extension<NonceDb>,
-    Extension(android_attestation): Extension<AndroidAttestation>,
+    Extension(android_attestation): Extension<AndroidAttestationService>,
     Extension(aws_config): Extension<SdkConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
