@@ -1,4 +1,3 @@
-use der_parser::asn1_rs::oid;
 use openssl::x509::X509;
 use x509_parser::prelude::{FromDer, X509Certificate};
 

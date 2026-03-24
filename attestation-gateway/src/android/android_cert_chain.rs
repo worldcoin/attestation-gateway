@@ -111,7 +111,7 @@ impl AndroidCertChain {
             return Err(AndroidCertChainError::InvalidChain(context.error()));
         }
 
-        let device_certificate = DeviceCertificate::new(device_cert.to_owned())
+        let device_certificate = DeviceCertificate::from_x509(device_cert.to_owned())
             .map_err(|e| AndroidCertChainError::DeviceCertificate(e))?;
 
         let root_certificate = RootCertificate::new(root_ca_cert.to_owned())
@@ -137,5 +137,9 @@ impl AndroidCertChain {
 
     pub fn device_locked(&self) -> bool {
         self.device_certificate.device_locked
+    }
+
+    pub fn device_package_name(&self) -> Option<&str> {
+        self.device_certificate.package_name.as_deref()
     }
 }

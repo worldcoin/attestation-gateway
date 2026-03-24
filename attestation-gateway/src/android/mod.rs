@@ -9,6 +9,7 @@ mod android_ca_registry;
 mod android_cert_chain;
 mod device_certificate;
 mod integrity_token_data;
+mod key_description;
 mod root_certificate;
 
 pub use android_attestation_service::AndroidAttestationError;
