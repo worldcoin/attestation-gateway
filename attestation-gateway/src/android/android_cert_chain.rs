@@ -5,7 +5,11 @@ use openssl::{
     stack::Stack,
     x509::{X509, X509StoreContext, store::X509StoreBuilder, verify::X509VerifyParam},
 };
-use x509_parser::prelude::{FromDer, X509Certificate};
+
+use crate::android::{
+    device_certificate::{DeviceCertificate, DeviceCertificateError},
+    root_certificate::{RootCertificate, RootCertificateError},
+};
 
 #[derive(Debug)]
 pub enum AndroidCertChainError {
@@ -14,18 +18,18 @@ pub enum AndroidCertChainError {
     InvalidChainLength,
     InvalidCert(openssl::error::ErrorStack),
     InvalidChain(openssl::x509::X509VerifyResult),
+    DeviceCertificate(DeviceCertificateError),
+    RootCertificate(RootCertificateError),
     InternalStackBuilder(openssl::error::ErrorStack),
     InternalParamBuilder(openssl::error::ErrorStack),
     InternalStoreBuilder(openssl::error::ErrorStack),
     InternalContextBuilder(openssl::error::ErrorStack),
     InternalChainVerification(openssl::error::ErrorStack),
-    InternalPublicKeyExtract(Option<openssl::error::ErrorStack>),
 }
 
-#[derive(Debug)]
 pub struct AndroidCertChain {
-    pub device_public_key: Vec<u8>,
-    pub root_ca_public_key: Vec<u8>,
+    device_certificate: DeviceCertificate,
+    root_certificate: RootCertificate,
 }
 
 impl AndroidCertChain {
@@ -107,23 +111,31 @@ impl AndroidCertChain {
             return Err(AndroidCertChainError::InvalidChain(context.error()));
         }
 
-        let device_public_key = get_x509_subject_public_key(device_cert)?;
-        let root_ca_public_key = get_x509_subject_public_key(root_ca_cert)?;
+        let device_certificate = DeviceCertificate::new(device_cert.to_owned())
+            .map_err(|e| AndroidCertChainError::DeviceCertificate(e))?;
+
+        let root_certificate = RootCertificate::new(root_ca_cert.to_owned())
+            .map_err(|e| AndroidCertChainError::RootCertificate(e))?;
 
         Ok(Self {
-            device_public_key,
-            root_ca_public_key,
+            device_certificate,
+            root_certificate,
         })
     }
-}
 
-fn get_x509_subject_public_key(cert: &X509) -> Result<Vec<u8>, AndroidCertChainError> {
-    let cert = cert
-        .to_der()
-        .map_err(|e| AndroidCertChainError::InternalPublicKeyExtract(Some(e)))?;
+    pub fn device_public_key(&self) -> Vec<u8> {
+        self.device_certificate.public_key.clone()
+    }
 
-    let (_, cert) = X509Certificate::from_der(&cert)
-        .map_err(|_| AndroidCertChainError::InternalPublicKeyExtract(None))?;
+    pub fn root_ca_public_key(&self) -> Vec<u8> {
+        self.root_certificate.public_key.clone()
+    }
 
-    Ok(Vec::from(cert.public_key().subject_public_key.data.clone()))
+    pub fn device_security_level(&self) -> u32 {
+        self.device_certificate.security_level
+    }
+
+    pub fn device_locked(&self) -> bool {
+        self.device_certificate.device_locked
+    }
 }
