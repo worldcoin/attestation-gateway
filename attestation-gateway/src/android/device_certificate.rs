@@ -17,6 +17,7 @@ pub enum DeviceCertificateError {
 
 pub struct DeviceCertificate {
     pub public_key: Vec<u8>,
+    pub attestation_challenge: String,
     pub security_level: u32,
     pub device_locked: bool,
     pub package_name: String,
@@ -54,6 +55,7 @@ impl DeviceCertificate {
 
         Ok(Self {
             public_key,
+            attestation_challenge: key_description.attestation_challenge,
             security_level: key_description.security_level,
             device_locked: key_description.device_locked,
             package_name: key_description.package_name,
@@ -86,6 +88,11 @@ mod tests {
         assert!(cert.public_key.len() > 0);
         assert!(cert.security_level == 2);
         assert!(cert.device_locked == false);
+
+        assert_eq!(
+            cert.attestation_challenge,
+            "n=7f3b08033f2c9a58b500f683d37044bc,av=4.0.1500"
+        );
     }
 
     #[test]

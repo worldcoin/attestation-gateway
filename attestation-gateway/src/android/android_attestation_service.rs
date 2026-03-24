@@ -1,6 +1,9 @@
-use crate::android::{
-    android_ca_registry::{AndroidCaRegistry, AndroidCaRegistryError},
-    android_cert_chain::{AndroidCertChain, AndroidCertChainError},
+use crate::{
+    android::{
+        android_ca_registry::{AndroidCaRegistry, AndroidCaRegistryError},
+        android_cert_chain::{AndroidCertChain, AndroidCertChainError},
+    },
+    utils::BundleIdentifier,
 };
 
 #[derive(Debug)]
@@ -9,8 +12,10 @@ pub enum AndroidAttestationError {
     CaRegistry(AndroidCaRegistryError),
     CertChain(AndroidCertChainError),
     InvalidCaRoot,
+    InvalidChallenge,
     LowSecurityLevel,
     DeviceNotLocked,
+    InvalidPackageName,
 }
 
 pub struct AndroidAttestationOutput {
@@ -37,6 +42,9 @@ impl AndroidAttestationService {
     pub fn verify(
         self,
         base64_cert_chain: Vec<String>,
+        bundle_identifier: &BundleIdentifier,
+        nonce: &String,
+        app_version: &String,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
         let cert_chain = AndroidCertChain::from_base64(base64_cert_chain)
             .map_err(|e| AndroidAttestationError::CertChain(e))?;
@@ -48,12 +56,20 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::InvalidCaRoot);
         }
 
+        if cert_chain.attestation_challenge() != format!("n={},av={}", nonce, app_version) {
+            return Err(AndroidAttestationError::InvalidChallenge);
+        }
+
         if cert_chain.device_security_level() < 1 {
             return Err(AndroidAttestationError::LowSecurityLevel);
         }
 
         if !cert_chain.device_locked() {
             return Err(AndroidAttestationError::DeviceNotLocked);
+        }
+
+        if cert_chain.device_package_name() != bundle_identifier.to_string() {
+            return Err(AndroidAttestationError::InvalidPackageName);
         }
 
         Ok(AndroidAttestationOutput {

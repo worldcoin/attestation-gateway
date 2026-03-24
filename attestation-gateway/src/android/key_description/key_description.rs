@@ -1,14 +1,34 @@
+use std::string::FromUtf8Error;
+
+use crate::android::key_description::key_description_3::KeyDescription3;
+use crate::android::key_description::key_description_300::KeyDescription300;
 use crate::android::key_description::key_description_400::KeyDescription400;
+
+/// Reads the leading `attestation_version` INTEGER without parsing the rest of the SEQUENCE.
+///
+/// `asn1::parse` / [`asn1::Sequence::parse`] require the entire SEQUENCE body to be consumed;
+/// different attestation versions use different schemas, so we peel the first TLV with
+/// [`asn1::strip_tlv`] (which allows trailing data) and only then [`asn1::parse_single`] the INTEGER.
+fn attestation_version_from_der(der: &[u8]) -> Result<u64, asn1::ParseError> {
+    let (outer, rest) = asn1::strip_tlv(der)?;
+    if !rest.is_empty() {
+        return Err(asn1::ParseError::new(asn1::ParseErrorKind::ExtraData));
+    }
+    let (version_tlv, _rest_of_sequence) = asn1::strip_tlv(outer.data())?;
+    asn1::parse_single::<u64>(version_tlv.full_data())
+}
 
 #[derive(Debug)]
 pub enum KeyDescriptionError {
     ParseVersion(asn1::ParseError),
     ParseError(asn1::ParseError),
+    ParseChallenge(FromUtf8Error),
     InvalidVersion(u64),
     MissingApplicationId,
 }
 
 pub struct KeyDescription {
+    pub attestation_challenge: String,
     pub security_level: u32,
     pub device_locked: bool,
     pub package_name: String,
@@ -16,40 +36,110 @@ pub struct KeyDescription {
 
 impl KeyDescription {
     pub fn from_der(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
-        let version = asn1::parse(&der, |d| {
-            return d.read_element::<asn1::Sequence>()?.parse(|d| {
-                let version = d.read_element::<u64>()?;
-                Ok(version)
-            });
-        })
-        .map_err(|e| KeyDescriptionError::ParseVersion(e))?;
+        let version =
+            attestation_version_from_der(&der).map_err(KeyDescriptionError::ParseVersion)?;
 
         match version {
-            400 => {
-                let key_description = asn1::parse_single::<KeyDescription400>(&der)
-                    .map_err(|e| KeyDescriptionError::ParseError(e))?;
-
-                let security_level = key_description.attestation_security_level.value();
-                let device_locked = match &key_description.hardware_enforced.root_of_trust {
-                    Some(root_of_trust) => root_of_trust.device_locked,
-                    None => false,
-                };
-                let package_name = key_description
-                    .try_parse_attestation_application_id()
-                    .and_then(|app_id| {
-                        app_id.package_infos.clone().next().and_then(|pkg| {
-                            std::str::from_utf8(pkg.package_name).ok().map(String::from)
-                        })
-                    })
-                    .ok_or(KeyDescriptionError::MissingApplicationId)?;
-
-                Ok(Self {
-                    security_level,
-                    device_locked,
-                    package_name,
-                })
-            }
+            3 => Self::from_key_description_3(der),
+            300 => Self::from_key_description_300(der),
+            400 => Self::from_key_description_400(der),
             _ => Err(KeyDescriptionError::InvalidVersion(version)),
         }
+    }
+
+    fn from_key_description_3(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
+        let key_description = asn1::parse_single::<KeyDescription3>(&der)
+            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+
+        let attestation_challenge =
+            String::from_utf8(key_description.attestation_challenge.to_vec())
+                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+
+        let security_level = key_description.attestation_security_level.value();
+
+        let device_locked = match &key_description.hardware_enforced.root_of_trust {
+            Some(root_of_trust) => root_of_trust.device_locked,
+            None => false,
+        };
+        let package_name =
+            key_description
+                .try_parse_attestation_application_id()
+                .and_then(|app_id| {
+                    app_id.package_infos.clone().next().and_then(|pkg| {
+                        std::str::from_utf8(pkg.package_name).ok().map(String::from)
+                    })
+                })
+                .ok_or(KeyDescriptionError::MissingApplicationId)?;
+
+        Ok(Self {
+            attestation_challenge,
+            security_level,
+            device_locked,
+            package_name,
+        })
+    }
+
+    fn from_key_description_300(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
+        let key_description = asn1::parse_single::<KeyDescription300>(&der)
+            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+
+        let attestation_challenge =
+            String::from_utf8(key_description.attestation_challenge.to_vec())
+                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+
+        let security_level = key_description.attestation_security_level.value();
+
+        let device_locked = match &key_description.hardware_enforced.root_of_trust {
+            Some(root_of_trust) => root_of_trust.device_locked,
+            None => false,
+        };
+        let package_name =
+            key_description
+                .try_parse_attestation_application_id()
+                .and_then(|app_id| {
+                    app_id.package_infos.clone().next().and_then(|pkg| {
+                        std::str::from_utf8(pkg.package_name).ok().map(String::from)
+                    })
+                })
+                .ok_or(KeyDescriptionError::MissingApplicationId)?;
+
+        Ok(Self {
+            attestation_challenge,
+            security_level,
+            device_locked,
+            package_name,
+        })
+    }
+
+    fn from_key_description_400(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
+        let key_description = asn1::parse_single::<KeyDescription400>(&der)
+            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+
+        let attestation_challenge =
+            String::from_utf8(key_description.attestation_challenge.to_vec())
+                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+
+        let security_level = key_description.attestation_security_level.value();
+
+        let device_locked = match &key_description.hardware_enforced.root_of_trust {
+            Some(root_of_trust) => root_of_trust.device_locked,
+            None => false,
+        };
+        let package_name =
+            key_description
+                .try_parse_attestation_application_id()
+                .and_then(|app_id| {
+                    app_id.package_infos.clone().next().and_then(|pkg| {
+                        std::str::from_utf8(pkg.package_name).ok().map(String::from)
+                    })
+                })
+                .ok_or(KeyDescriptionError::MissingApplicationId)?;
+
+        Ok(Self {
+            attestation_challenge,
+            security_level,
+            device_locked,
+            package_name,
+        })
     }
 }

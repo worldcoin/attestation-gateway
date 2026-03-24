@@ -131,6 +131,10 @@ impl AndroidCertChain {
         self.device_certificate.public_key.clone()
     }
 
+    pub fn attestation_challenge(&self) -> String {
+        self.device_certificate.attestation_challenge.clone()
+    }
+
     pub fn device_security_level(&self) -> u32 {
         self.device_certificate.security_level
     }

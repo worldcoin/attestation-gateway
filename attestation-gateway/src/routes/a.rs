@@ -137,7 +137,12 @@ pub async fn handler(
 
             let attestation_output =
                 android_attestation
-                    .verify(android_cert_chain)
+                    .verify(
+                    android_cert_chain,
+                        &request.bundle_identifier,
+                        &request.nonce,
+                        &request.app_version,
+                     )
                     .map_err(|e| match e {
                         AndroidAttestationError::CertChain(AndroidCertChainError::InvalidChain(code)) => {
                             tracing::error!(code = ?code, "Certificate chain error");
