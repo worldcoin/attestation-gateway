@@ -123,6 +123,6 @@ mod tests {
         assert!(cert.public_key().len() > 0);
         assert!(cert.security_level() == 1);
         assert!(cert.device_locked());
-        assert_eq!(cert.package_name(), "com.worldcoin.dev");
+        assert_eq!(cert.package_name(), "com.worldcoin.staging");
     }
 }
