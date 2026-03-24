@@ -3,7 +3,7 @@ use der_parser::asn1_rs::oid;
 use openssl::x509::X509;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
-use crate::android::key_description::KeyDescription;
+use crate::android::key_description::{KeyDescription, KeyDescriptionError};
 
 #[derive(Debug)]
 pub enum DeviceCertificateError {
@@ -12,15 +12,14 @@ pub enum DeviceCertificateError {
     DerDecoding,
     AttestationExtraction,
     MissingAttestation,
-    AttestationParsing(asn1::ParseError),
+    AttestationParsing(KeyDescriptionError),
 }
 
 pub struct DeviceCertificate {
     pub public_key: Vec<u8>,
     pub security_level: u32,
     pub device_locked: bool,
-    /// First package name from `attestation_application_id` (authorization tag 709), if present and UTF-8.
-    pub package_name: Option<String>,
+    pub package_name: String,
 }
 
 impl DeviceCertificate {
@@ -49,30 +48,15 @@ impl DeviceCertificate {
             .map_err(|_| DeviceCertificateError::AttestationExtraction)?
             .ok_or(DeviceCertificateError::MissingAttestation)?;
 
-        let key_description = asn1::parse_single::<KeyDescription>(key_description.value)
-            .map_err(|e| DeviceCertificateError::AttestationParsing(e))?;
-
         let public_key = Vec::from(cert.public_key().subject_public_key.data.clone());
-        let security_level = key_description.attestation_security_level.value();
-        let device_locked = match &key_description.hardware_enforced.root_of_trust {
-            Some(root_of_trust) => root_of_trust.device_locked,
-            None => false,
-        };
-
-        let package_name =
-            key_description
-                .try_parse_attestation_application_id()
-                .and_then(|app_id| {
-                    app_id.package_infos.clone().next().and_then(|pkg| {
-                        std::str::from_utf8(pkg.package_name).ok().map(String::from)
-                    })
-                });
+        let key_description = KeyDescription::from_der(key_description.value.to_vec())
+            .map_err(|e| DeviceCertificateError::AttestationParsing(e))?;
 
         Ok(Self {
             public_key,
-            security_level,
-            device_locked,
-            package_name,
+            security_level: key_description.security_level,
+            device_locked: key_description.device_locked,
+            package_name: key_description.package_name,
         })
     }
 }
@@ -89,7 +73,7 @@ mod tests {
         let cert = DeviceCertificate::from_x509(cert).unwrap();
 
         assert!(cert.public_key.len() > 0);
-        assert_eq!(cert.package_name.as_deref(), Some("com.worldcoin.dev"));
+        assert_eq!(cert.package_name, "com.worldcoin.dev");
     }
 
     #[test]

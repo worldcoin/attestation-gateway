@@ -123,12 +123,12 @@ impl AndroidCertChain {
         })
     }
 
-    pub fn device_public_key(&self) -> Vec<u8> {
-        self.device_certificate.public_key.clone()
-    }
-
     pub fn root_ca_public_key(&self) -> Vec<u8> {
         self.root_certificate.public_key.clone()
+    }
+
+    pub fn device_public_key(&self) -> Vec<u8> {
+        self.device_certificate.public_key.clone()
     }
 
     pub fn device_security_level(&self) -> u32 {
@@ -139,7 +139,7 @@ impl AndroidCertChain {
         self.device_certificate.device_locked
     }
 
-    pub fn device_package_name(&self) -> Option<&str> {
-        self.device_certificate.package_name.as_deref()
+    pub fn device_package_name(&self) -> String {
+        self.device_certificate.package_name.clone()
     }
 }

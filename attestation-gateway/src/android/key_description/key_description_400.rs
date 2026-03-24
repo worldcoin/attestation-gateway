@@ -1,35 +1,9 @@
-// https://source.android.com/docs/security/features/keystore/attestation#keydescription-fields
+// https://source.android.com/docs/security/features/keystore/attestation#attestation-v400
 
-/// `SET OF` where elements are not guaranteed to be in DER order. Some KeyMint builds
-/// encode digest algorithm integers (e.g. `4` then `0`) in an order `asn1::SetOf` rejects.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnorderedSetOfU64(pub Vec<u64>);
-
-impl<'a> asn1::Asn1Readable<'a> for UnorderedSetOfU64 {
-    fn parse(parser: &mut asn1::Parser<'a>) -> asn1::ParseResult<Self> {
-        let tlv = parser.read_element::<asn1::Tlv<'a>>()?;
-        let set_of_tag = <asn1::SetOf<'_, u64> as asn1::SimpleAsn1Readable<'_>>::TAG;
-        if tlv.tag() != set_of_tag {
-            return Err(asn1::ParseError::new(asn1::ParseErrorKind::UnexpectedTag {
-                actual: tlv.tag(),
-            }));
-        }
-        asn1::parse(tlv.data(), |p| {
-            let mut v = Vec::new();
-            while !p.is_empty() {
-                v.push(p.read_element::<u64>()?);
-            }
-            Ok(UnorderedSetOfU64(v))
-        })
-    }
-
-    fn can_parse(tag: asn1::Tag) -> bool {
-        tag == <asn1::SetOf<'_, u64> as asn1::SimpleAsn1Readable<'_>>::TAG
-    }
-}
+use crate::android::key_description::unordered_set_of_u64::UnorderedSetOfU64;
 
 #[derive(asn1::Asn1Read)]
-pub struct KeyDescription<'a> {
+pub struct KeyDescription400<'a> {
     pub attestation_version: u64,
     pub attestation_security_level: asn1::Enumerated,
     pub key_mint_version: u64,
@@ -40,7 +14,7 @@ pub struct KeyDescription<'a> {
     pub hardware_enforced: AuthorizationList<'a>,
 }
 
-impl<'a> KeyDescription<'a> {
+impl<'a> KeyDescription400<'a> {
     /// Parses tag `709` (`attestation_application_id`), preferring software-enforced.
     pub fn try_parse_attestation_application_id(&self) -> Option<AttestationApplicationId<'a>> {
         let bytes = self
