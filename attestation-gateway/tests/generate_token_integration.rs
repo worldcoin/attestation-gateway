@@ -96,6 +96,7 @@ fn get_global_config_extension_with_pem(
         kinesis_stream_arn: Some("arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
         developer_inner_jwks_url: std::env::var("DEVELOPER_INNER_JWKS_URL").ok(),
         apple_root_ca_pem,
+        aud_whitelist: vec!["relying-party.example.com".to_string()],
     };
     Extension(config)
 }
@@ -614,6 +615,7 @@ async fn test_server_error_is_properly_logged() {
             developer_inner_jwks_url: None,
             apple_root_ca_pem: include_bytes!("../src/apple/apple_app_attestation_root_ca.pem")
                 .to_vec(),
+            aud_whitelist: vec!["relying-party.example.com".to_string()],
         };
         Extension(config)
     }
