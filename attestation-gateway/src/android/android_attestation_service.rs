@@ -27,6 +27,7 @@ pub enum AndroidAttestationError {
     InvalidCaRoot,
     InvalidChallenge,
     LowSecurityLevel,
+    InconsistentSecurityLevels,
     DeviceNotLocked,
     BootNotVerified,
     KeyNotGeneratedInSecureHardware,
@@ -80,10 +81,16 @@ impl AndroidAttestationService {
         }
 
         if !matches!(
-            cert_chain.device_security_level(),
+            cert_chain.device_attestation_security_level(),
             KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT | KM_SECURITY_LEVEL_STRONG_BOX
         ) {
             return Err(AndroidAttestationError::LowSecurityLevel);
+        }
+
+        if cert_chain.device_key_mint_security_level()
+            != cert_chain.device_attestation_security_level()
+        {
+            return Err(AndroidAttestationError::InconsistentSecurityLevels);
         }
 
         let device_locked = cert_chain

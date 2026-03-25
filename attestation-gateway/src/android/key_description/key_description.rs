@@ -33,11 +33,11 @@ pub enum KeyDescriptionError {
 
 pub struct KeyDescription {
     pub attestation_challenge: String,
-    pub security_level: u32,
+    pub attestation_security_level: u32,
+    pub key_mint_security_level: u32,
     pub device_locked: Option<bool>,
     pub verified_boot_state: Option<u32>,
     pub key_origin: Option<u64>,
-    /// Tag `709` (`attestation_application_id`): signing-certificate digests when present and parseable.
     pub attestation_signature_digests: Option<Vec<Vec<u8>>>,
 }
 
@@ -67,7 +67,8 @@ impl KeyDescription {
             String::from_utf8(key_description.attestation_challenge.to_vec())
                 .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
 
-        let security_level = key_description.attestation_security_level.value();
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.keymaster_security_level.value();
 
         let device_locked = key_description
             .hardware_enforced
@@ -85,7 +86,8 @@ impl KeyDescription {
 
         Ok(Self {
             attestation_challenge,
-            security_level,
+            attestation_security_level,
+            key_mint_security_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -101,7 +103,8 @@ impl KeyDescription {
             String::from_utf8(key_description.attestation_challenge.to_vec())
                 .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
 
-        let security_level = key_description.attestation_security_level.value();
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.keymaster_security_level.value();
 
         let device_locked = key_description
             .hardware_enforced
@@ -128,7 +131,8 @@ impl KeyDescription {
 
         Ok(Self {
             attestation_challenge,
-            security_level,
+            attestation_security_level,
+            key_mint_security_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -144,7 +148,8 @@ impl KeyDescription {
             String::from_utf8(key_description.attestation_challenge.to_vec())
                 .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
 
-        let security_level = key_description.attestation_security_level.value();
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.keymaster_security_level.value();
 
         let device_locked = key_description
             .hardware_enforced
@@ -171,7 +176,8 @@ impl KeyDescription {
 
         Ok(Self {
             attestation_challenge,
-            security_level,
+            attestation_security_level,
+            key_mint_security_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -187,7 +193,8 @@ impl KeyDescription {
             String::from_utf8(key_description.attestation_challenge.to_vec())
                 .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
 
-        let security_level = key_description.attestation_security_level.value();
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.keymaster_security_level.value();
 
         let device_locked = key_description
             .hardware_enforced
@@ -214,7 +221,8 @@ impl KeyDescription {
 
         Ok(Self {
             attestation_challenge,
-            security_level,
+            attestation_security_level,
+            key_mint_security_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -230,7 +238,8 @@ impl KeyDescription {
             String::from_utf8(key_description.attestation_challenge.to_vec())
                 .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
 
-        let security_level = key_description.attestation_security_level.value();
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.key_mint_security_level.value();
 
         let device_locked = key_description
             .hardware_enforced
@@ -257,7 +266,8 @@ impl KeyDescription {
 
         Ok(Self {
             attestation_challenge,
-            security_level,
+            attestation_security_level,
+            key_mint_security_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -273,7 +283,8 @@ impl KeyDescription {
             String::from_utf8(key_description.attestation_challenge.to_vec())
                 .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
 
-        let security_level = key_description.attestation_security_level.value();
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.key_mint_security_level.value();
 
         let device_locked = key_description
             .hardware_enforced
@@ -300,7 +311,8 @@ impl KeyDescription {
 
         Ok(Self {
             attestation_challenge,
-            security_level,
+            attestation_security_level,
+            key_mint_security_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -316,7 +328,8 @@ impl KeyDescription {
             String::from_utf8(key_description.attestation_challenge.to_vec())
                 .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
 
-        let security_level = key_description.attestation_security_level.value();
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.key_mint_security_level.value();
 
         let device_locked = key_description
             .hardware_enforced
@@ -343,7 +356,8 @@ impl KeyDescription {
 
         Ok(Self {
             attestation_challenge,
-            security_level,
+            attestation_security_level,
+            key_mint_security_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -359,7 +373,8 @@ impl KeyDescription {
             String::from_utf8(key_description.attestation_challenge.to_vec())
                 .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
 
-        let security_level = key_description.attestation_security_level.value();
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.key_mint_security_level.value();
 
         let device_locked = key_description
             .hardware_enforced
@@ -386,7 +401,8 @@ impl KeyDescription {
 
         Ok(Self {
             attestation_challenge,
-            security_level,
+            attestation_security_level,
+            key_mint_security_level,
             device_locked,
             verified_boot_state,
             key_origin,

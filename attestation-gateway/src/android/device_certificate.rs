@@ -64,8 +64,12 @@ impl DeviceCertificate {
         self.key_description.attestation_challenge.clone()
     }
 
-    pub fn security_level(&self) -> u32 {
-        self.key_description.security_level
+    pub fn attestation_security_level(&self) -> u32 {
+        self.key_description.attestation_security_level
+    }
+
+    pub fn key_mint_security_level(&self) -> u32 {
+        self.key_description.key_mint_security_level
     }
 
     pub fn device_locked(&self) -> Option<bool> {
@@ -109,7 +113,7 @@ mod tests {
         let cert = DeviceCertificate::from_base64(cert).unwrap();
 
         assert!(cert.public_key().len() > 0);
-        assert!(cert.security_level() == 2);
+        assert!(cert.attestation_security_level() == 2);
         assert_eq!(cert.device_locked(), Some(false));
 
         assert_eq!(
@@ -124,7 +128,7 @@ mod tests {
         let cert = DeviceCertificate::from_base64(cert).unwrap();
 
         assert!(cert.public_key().len() > 0);
-        assert!(cert.security_level() == 1);
+        assert!(cert.attestation_security_level() == 1);
         assert_eq!(cert.device_locked(), Some(true));
     }
 
@@ -134,7 +138,7 @@ mod tests {
         let cert = DeviceCertificate::from_base64(cert).unwrap();
 
         assert!(cert.public_key().len() > 0);
-        assert!(cert.security_level() == 1);
+        assert!(cert.attestation_security_level() == 1);
         assert_eq!(cert.device_locked(), Some(true));
     }
 }

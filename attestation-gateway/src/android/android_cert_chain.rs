@@ -135,8 +135,12 @@ impl AndroidCertChain {
         self.device_certificate.attestation_challenge()
     }
 
-    pub fn device_security_level(&self) -> u32 {
-        self.device_certificate.security_level()
+    pub fn device_attestation_security_level(&self) -> u32 {
+        self.device_certificate.attestation_security_level()
+    }
+
+    pub fn device_key_mint_security_level(&self) -> u32 {
+        self.device_certificate.key_mint_security_level()
     }
 
     pub fn device_locked(&self) -> Option<bool> {
