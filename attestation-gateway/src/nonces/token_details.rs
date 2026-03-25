@@ -35,11 +35,11 @@ pub struct TokenDetails {
 
 impl TokenDetails {
     pub fn from_aud(aud: String) -> Self {
-        let ttl_seconds = match aud.as_str() {
-            _ => 3600,
+        let ttl = match aud.as_str() {
+            _ => Duration::from_mins(5),
         };
 
-        let exp = SystemTime::now() + Duration::from_secs(ttl_seconds);
+        let exp = SystemTime::now() + ttl;
 
         Self { aud, exp }
     }
