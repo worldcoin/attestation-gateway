@@ -171,6 +171,10 @@ pub async fn handler(
                             code: ErrorCode::BadRequest,
                             details: Some("Hardware-enforced key origin is missing from attestation".to_string()),
                         },
+                        AndroidAttestationError::InvalidPackageName => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Attestation package name does not match the requested bundle identifier".to_string()),
+                        },
                         _ => {
                             tracing::error!(error = ?e, "Error during android attestation verification");
                             RequestError {

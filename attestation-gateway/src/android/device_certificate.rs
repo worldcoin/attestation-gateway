@@ -93,6 +93,10 @@ impl DeviceCertificate {
             .attestation_signature_digests
             .as_deref()
     }
+
+    pub fn package_name(&self) -> Option<&str> {
+        self.key_description.package_name.as_deref()
+    }
 }
 
 #[cfg(test)]
@@ -105,6 +109,7 @@ mod tests {
         let cert = DeviceCertificate::from_base64(cert).unwrap();
 
         assert!(cert.public_key().len() > 0);
+        assert_eq!(cert.package_name(), Some("com.worldcoin.dev"));
     }
 
     #[test]

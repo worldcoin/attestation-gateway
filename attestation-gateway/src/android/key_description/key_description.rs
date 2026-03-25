@@ -39,6 +39,7 @@ pub struct KeyDescription {
     pub device_locked: Option<bool>,
     pub verified_boot_state: Option<u32>,
     pub key_origin: Option<u64>,
+    pub package_name: Option<String>,
     pub attestation_signature_digests: Option<Vec<Vec<u8>>>,
 }
 
@@ -97,6 +98,7 @@ impl KeyDescription {
             device_locked,
             verified_boot_state,
             key_origin,
+            package_name: None,
             attestation_signature_digests: None,
         })
     }
@@ -130,14 +132,19 @@ impl KeyDescription {
 
         let key_origin = key_description.hardware_enforced.origin;
 
-        let attestation_signature_digests = key_description
-            .try_parse_attestation_application_id()
-            .map(|aid| {
-                aid.signature_digests
-                    .into_iter()
-                    .map(|d| d.to_vec())
-                    .collect()
-            });
+        let app_id = key_description.try_parse_attestation_application_id();
+        let package_name = app_id.as_ref().and_then(|aid| {
+            aid.package_infos
+                .clone()
+                .next()
+                .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
+        });
+        let attestation_signature_digests = app_id.map(|aid| {
+            aid.signature_digests
+                .into_iter()
+                .map(|d| d.to_vec())
+                .collect()
+        });
 
         Ok(Self {
             attestation_challenge,
@@ -147,6 +154,7 @@ impl KeyDescription {
             device_locked,
             verified_boot_state,
             key_origin,
+            package_name,
             attestation_signature_digests,
         })
     }
@@ -180,14 +188,19 @@ impl KeyDescription {
 
         let key_origin = key_description.hardware_enforced.origin;
 
-        let attestation_signature_digests = key_description
-            .try_parse_attestation_application_id()
-            .map(|aid| {
-                aid.signature_digests
-                    .into_iter()
-                    .map(|d| d.to_vec())
-                    .collect()
-            });
+        let app_id = key_description.try_parse_attestation_application_id();
+        let package_name = app_id.as_ref().and_then(|aid| {
+            aid.package_infos
+                .clone()
+                .next()
+                .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
+        });
+        let attestation_signature_digests = app_id.map(|aid| {
+            aid.signature_digests
+                .into_iter()
+                .map(|d| d.to_vec())
+                .collect()
+        });
 
         Ok(Self {
             attestation_challenge,
@@ -197,6 +210,7 @@ impl KeyDescription {
             device_locked,
             verified_boot_state,
             key_origin,
+            package_name,
             attestation_signature_digests,
         })
     }
@@ -230,14 +244,19 @@ impl KeyDescription {
 
         let key_origin = key_description.hardware_enforced.origin;
 
-        let attestation_signature_digests = key_description
-            .try_parse_attestation_application_id()
-            .map(|aid| {
-                aid.signature_digests
-                    .into_iter()
-                    .map(|d| d.to_vec())
-                    .collect()
-            });
+        let app_id = key_description.try_parse_attestation_application_id();
+        let package_name = app_id.as_ref().and_then(|aid| {
+            aid.package_infos
+                .clone()
+                .next()
+                .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
+        });
+        let attestation_signature_digests = app_id.map(|aid| {
+            aid.signature_digests
+                .into_iter()
+                .map(|d| d.to_vec())
+                .collect()
+        });
 
         Ok(Self {
             attestation_challenge,
@@ -247,6 +266,7 @@ impl KeyDescription {
             device_locked,
             verified_boot_state,
             key_origin,
+            package_name,
             attestation_signature_digests,
         })
     }
@@ -280,14 +300,19 @@ impl KeyDescription {
 
         let key_origin = key_description.hardware_enforced.origin;
 
-        let attestation_signature_digests = key_description
-            .try_parse_attestation_application_id()
-            .map(|aid| {
-                aid.signature_digests
-                    .into_iter()
-                    .map(|d| d.to_vec())
-                    .collect()
-            });
+        let app_id = key_description.try_parse_attestation_application_id();
+        let package_name = app_id.as_ref().and_then(|aid| {
+            aid.package_infos
+                .clone()
+                .next()
+                .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
+        });
+        let attestation_signature_digests = app_id.map(|aid| {
+            aid.signature_digests
+                .into_iter()
+                .map(|d| d.to_vec())
+                .collect()
+        });
 
         Ok(Self {
             attestation_challenge,
@@ -297,6 +322,7 @@ impl KeyDescription {
             device_locked,
             verified_boot_state,
             key_origin,
+            package_name,
             attestation_signature_digests,
         })
     }
@@ -330,14 +356,19 @@ impl KeyDescription {
 
         let key_origin = key_description.hardware_enforced.origin;
 
-        let attestation_signature_digests = key_description
-            .try_parse_attestation_application_id()
-            .map(|aid| {
-                aid.signature_digests
-                    .into_iter()
-                    .map(|d| d.to_vec())
-                    .collect()
-            });
+        let app_id = key_description.try_parse_attestation_application_id();
+        let package_name = app_id.as_ref().and_then(|aid| {
+            aid.package_infos
+                .clone()
+                .next()
+                .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
+        });
+        let attestation_signature_digests = app_id.map(|aid| {
+            aid.signature_digests
+                .into_iter()
+                .map(|d| d.to_vec())
+                .collect()
+        });
 
         Ok(Self {
             attestation_challenge,
@@ -347,6 +378,7 @@ impl KeyDescription {
             device_locked,
             verified_boot_state,
             key_origin,
+            package_name,
             attestation_signature_digests,
         })
     }
@@ -380,14 +412,19 @@ impl KeyDescription {
 
         let key_origin = key_description.hardware_enforced.origin;
 
-        let attestation_signature_digests = key_description
-            .try_parse_attestation_application_id()
-            .map(|aid| {
-                aid.signature_digests
-                    .into_iter()
-                    .map(|d| d.to_vec())
-                    .collect()
-            });
+        let app_id = key_description.try_parse_attestation_application_id();
+        let package_name = app_id.as_ref().and_then(|aid| {
+            aid.package_infos
+                .clone()
+                .next()
+                .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
+        });
+        let attestation_signature_digests = app_id.map(|aid| {
+            aid.signature_digests
+                .into_iter()
+                .map(|d| d.to_vec())
+                .collect()
+        });
 
         Ok(Self {
             attestation_challenge,
@@ -397,6 +434,7 @@ impl KeyDescription {
             device_locked,
             verified_boot_state,
             key_origin,
+            package_name,
             attestation_signature_digests,
         })
     }
@@ -430,14 +468,19 @@ impl KeyDescription {
 
         let key_origin = key_description.hardware_enforced.origin;
 
-        let attestation_signature_digests = key_description
-            .try_parse_attestation_application_id()
-            .map(|aid| {
-                aid.signature_digests
-                    .into_iter()
-                    .map(|d| d.to_vec())
-                    .collect()
-            });
+        let app_id = key_description.try_parse_attestation_application_id();
+        let package_name = app_id.as_ref().and_then(|aid| {
+            aid.package_infos
+                .clone()
+                .next()
+                .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
+        });
+        let attestation_signature_digests = app_id.map(|aid| {
+            aid.signature_digests
+                .into_iter()
+                .map(|d| d.to_vec())
+                .collect()
+        });
 
         Ok(Self {
             attestation_challenge,
@@ -447,6 +490,7 @@ impl KeyDescription {
             device_locked,
             verified_boot_state,
             key_origin,
+            package_name,
             attestation_signature_digests,
         })
     }

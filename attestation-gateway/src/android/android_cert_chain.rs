@@ -159,6 +159,10 @@ impl AndroidCertChain {
         self.device_certificate.attestation_signature_digests()
     }
 
+    pub fn device_package_name(&self) -> Option<&str> {
+        self.device_certificate.package_name()
+    }
+
     pub fn device_os_patch_level(&self) -> Option<u64> {
         self.device_certificate.os_patch_level()
     }

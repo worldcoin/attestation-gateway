@@ -41,6 +41,8 @@ pub enum AndroidAttestationError {
     InvalidAttestationSignatureDigest,
     InternalMissingCertificateDigest,
     InvalidOsPatchLevel,
+    MissingPackageName,
+    InvalidPackageName,
 }
 
 pub struct AndroidAttestationOutput {
@@ -144,6 +146,14 @@ impl AndroidAttestationService {
 
         if !attestation_signature_digests.contains(&expected_attestation_signature_digest) {
             return Err(AndroidAttestationError::InvalidAttestationSignatureDigest);
+        }
+
+        let attestation_package_name = cert_chain
+            .device_package_name()
+            .ok_or(AndroidAttestationError::MissingPackageName)?;
+
+        if attestation_package_name != bundle_identifier.to_string() {
+            return Err(AndroidAttestationError::InvalidPackageName);
         }
 
         Ok(AndroidAttestationOutput {
