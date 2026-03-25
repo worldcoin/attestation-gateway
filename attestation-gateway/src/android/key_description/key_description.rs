@@ -30,12 +30,16 @@ pub enum KeyDescriptionError {
     ParseChallenge(FromUtf8Error),
     InvalidVersion(u64),
     MissingApplicationId,
+    MissingRootOfTrust,
+    MissingKeyOrigin,
 }
 
 pub struct KeyDescription {
     pub attestation_challenge: String,
     pub security_level: u32,
     pub device_locked: bool,
+    pub verified_boot_state: u32,
+    pub key_origin: u64,
     pub package_name: String,
 }
 
@@ -67,10 +71,18 @@ impl KeyDescription {
 
         let security_level = key_description.attestation_security_level.value();
 
-        let device_locked = match &key_description.hardware_enforced.root_of_trust {
-            Some(root_of_trust) => root_of_trust.device_locked,
-            None => false,
-        };
+        let root_of_trust = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .ok_or(KeyDescriptionError::MissingRootOfTrust)?;
+        let device_locked = root_of_trust.device_locked;
+        let verified_boot_state = root_of_trust.verified_boot_state.value();
+
+        let key_origin = key_description
+            .hardware_enforced
+            .origin
+            .ok_or(KeyDescriptionError::MissingKeyOrigin)?;
 
         // `Tag::ATTESTATION_APPLICATION_ID` (709) exists only for attestation schema >= 2.
         let package_name = String::new();
@@ -79,6 +91,8 @@ impl KeyDescription {
             attestation_challenge,
             security_level,
             device_locked,
+            verified_boot_state,
+            key_origin,
             package_name,
         })
     }
@@ -93,10 +107,17 @@ impl KeyDescription {
 
         let security_level = key_description.attestation_security_level.value();
 
-        let device_locked = match &key_description.hardware_enforced.root_of_trust {
-            Some(root_of_trust) => root_of_trust.device_locked,
-            None => false,
-        };
+        let root_of_trust = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .ok_or(KeyDescriptionError::MissingRootOfTrust)?;
+        let device_locked = root_of_trust.device_locked;
+        let verified_boot_state = root_of_trust.verified_boot_state.value();
+        let key_origin = key_description
+            .hardware_enforced
+            .origin
+            .ok_or(KeyDescriptionError::MissingKeyOrigin)?;
         let package_name =
             key_description
                 .try_parse_attestation_application_id()
@@ -111,6 +132,8 @@ impl KeyDescription {
             attestation_challenge,
             security_level,
             device_locked,
+            verified_boot_state,
+            key_origin,
             package_name,
         })
     }
@@ -125,10 +148,17 @@ impl KeyDescription {
 
         let security_level = key_description.attestation_security_level.value();
 
-        let device_locked = match &key_description.hardware_enforced.root_of_trust {
-            Some(root_of_trust) => root_of_trust.device_locked,
-            None => false,
-        };
+        let root_of_trust = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .ok_or(KeyDescriptionError::MissingRootOfTrust)?;
+        let device_locked = root_of_trust.device_locked;
+        let verified_boot_state = root_of_trust.verified_boot_state.value();
+        let key_origin = key_description
+            .hardware_enforced
+            .origin
+            .ok_or(KeyDescriptionError::MissingKeyOrigin)?;
         let package_name =
             key_description
                 .try_parse_attestation_application_id()
@@ -143,6 +173,8 @@ impl KeyDescription {
             attestation_challenge,
             security_level,
             device_locked,
+            verified_boot_state,
+            key_origin,
             package_name,
         })
     }
@@ -157,10 +189,17 @@ impl KeyDescription {
 
         let security_level = key_description.attestation_security_level.value();
 
-        let device_locked = match &key_description.hardware_enforced.root_of_trust {
-            Some(root_of_trust) => root_of_trust.device_locked,
-            None => false,
-        };
+        let root_of_trust = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .ok_or(KeyDescriptionError::MissingRootOfTrust)?;
+        let device_locked = root_of_trust.device_locked;
+        let verified_boot_state = root_of_trust.verified_boot_state.value();
+        let key_origin = key_description
+            .hardware_enforced
+            .origin
+            .ok_or(KeyDescriptionError::MissingKeyOrigin)?;
         let package_name =
             key_description
                 .try_parse_attestation_application_id()
@@ -175,6 +214,8 @@ impl KeyDescription {
             attestation_challenge,
             security_level,
             device_locked,
+            verified_boot_state,
+            key_origin,
             package_name,
         })
     }
@@ -189,10 +230,17 @@ impl KeyDescription {
 
         let security_level = key_description.attestation_security_level.value();
 
-        let device_locked = match &key_description.hardware_enforced.root_of_trust {
-            Some(root_of_trust) => root_of_trust.device_locked,
-            None => false,
-        };
+        let root_of_trust = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .ok_or(KeyDescriptionError::MissingRootOfTrust)?;
+        let device_locked = root_of_trust.device_locked;
+        let verified_boot_state = root_of_trust.verified_boot_state.value();
+        let key_origin = key_description
+            .hardware_enforced
+            .origin
+            .ok_or(KeyDescriptionError::MissingKeyOrigin)?;
         let package_name =
             key_description
                 .try_parse_attestation_application_id()
@@ -207,6 +255,8 @@ impl KeyDescription {
             attestation_challenge,
             security_level,
             device_locked,
+            verified_boot_state,
+            key_origin,
             package_name,
         })
     }
@@ -221,10 +271,17 @@ impl KeyDescription {
 
         let security_level = key_description.attestation_security_level.value();
 
-        let device_locked = match &key_description.hardware_enforced.root_of_trust {
-            Some(root_of_trust) => root_of_trust.device_locked,
-            None => false,
-        };
+        let root_of_trust = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .ok_or(KeyDescriptionError::MissingRootOfTrust)?;
+        let device_locked = root_of_trust.device_locked;
+        let verified_boot_state = root_of_trust.verified_boot_state.value();
+        let key_origin = key_description
+            .hardware_enforced
+            .origin
+            .ok_or(KeyDescriptionError::MissingKeyOrigin)?;
         let package_name =
             key_description
                 .try_parse_attestation_application_id()
@@ -239,6 +296,8 @@ impl KeyDescription {
             attestation_challenge,
             security_level,
             device_locked,
+            verified_boot_state,
+            key_origin,
             package_name,
         })
     }
@@ -253,10 +312,17 @@ impl KeyDescription {
 
         let security_level = key_description.attestation_security_level.value();
 
-        let device_locked = match &key_description.hardware_enforced.root_of_trust {
-            Some(root_of_trust) => root_of_trust.device_locked,
-            None => false,
-        };
+        let root_of_trust = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .ok_or(KeyDescriptionError::MissingRootOfTrust)?;
+        let device_locked = root_of_trust.device_locked;
+        let verified_boot_state = root_of_trust.verified_boot_state.value();
+        let key_origin = key_description
+            .hardware_enforced
+            .origin
+            .ok_or(KeyDescriptionError::MissingKeyOrigin)?;
         let package_name =
             key_description
                 .try_parse_attestation_application_id()
@@ -271,6 +337,8 @@ impl KeyDescription {
             attestation_challenge,
             security_level,
             device_locked,
+            verified_boot_state,
+            key_origin,
             package_name,
         })
     }
@@ -285,10 +353,17 @@ impl KeyDescription {
 
         let security_level = key_description.attestation_security_level.value();
 
-        let device_locked = match &key_description.hardware_enforced.root_of_trust {
-            Some(root_of_trust) => root_of_trust.device_locked,
-            None => false,
-        };
+        let root_of_trust = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .ok_or(KeyDescriptionError::MissingRootOfTrust)?;
+        let device_locked = root_of_trust.device_locked;
+        let verified_boot_state = root_of_trust.verified_boot_state.value();
+        let key_origin = key_description
+            .hardware_enforced
+            .origin
+            .ok_or(KeyDescriptionError::MissingKeyOrigin)?;
         let package_name =
             key_description
                 .try_parse_attestation_application_id()
@@ -303,6 +378,8 @@ impl KeyDescription {
             attestation_challenge,
             security_level,
             device_locked,
+            verified_boot_state,
+            key_origin,
             package_name,
         })
     }

@@ -143,6 +143,14 @@ impl AndroidCertChain {
         self.device_certificate.device_locked()
     }
 
+    pub fn device_verified_boot_state(&self) -> u32 {
+        self.device_certificate.verified_boot_state()
+    }
+
+    pub fn device_key_origin(&self) -> u64 {
+        self.device_certificate.key_origin()
+    }
+
     pub fn device_package_name(&self) -> String {
         self.device_certificate.package_name()
     }

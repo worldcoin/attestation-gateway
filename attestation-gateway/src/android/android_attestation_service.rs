@@ -6,6 +6,18 @@ use crate::{
     utils::BundleIdentifier,
 };
 
+/// Android `KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT` — KeyMint / Keymaster in the TEE.
+const KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT: u32 = 1;
+
+/// Android `KM_SECURITY_LEVEL_STRONG_BOX` — KeyMint / Keymaster in StrongBox.
+const KM_SECURITY_LEVEL_STRONG_BOX: u32 = 2;
+
+/// Android `KM_VERIFIED_BOOT_VERIFIED` — verified boot succeeded (boot hash matches expected).
+const KM_VERIFIED_BOOT_VERIFIED: u32 = 0;
+
+/// Android `KM_ORIGIN_GENERATED` — key generated inside secure KeyMint / Keymaster (TEE / StrongBox), not imported.
+const KM_ORIGIN_GENERATED: u64 = 0;
+
 #[derive(Debug)]
 
 pub enum AndroidAttestationError {
@@ -15,6 +27,8 @@ pub enum AndroidAttestationError {
     InvalidChallenge,
     LowSecurityLevel,
     DeviceNotLocked,
+    BootNotVerified,
+    KeyNotGeneratedInSecureHardware,
     InvalidPackageName,
 }
 
@@ -60,12 +74,23 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::InvalidChallenge);
         }
 
-        if cert_chain.device_security_level() < 1 {
+        if !matches!(
+            cert_chain.device_security_level(),
+            KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT | KM_SECURITY_LEVEL_STRONG_BOX
+        ) {
             return Err(AndroidAttestationError::LowSecurityLevel);
         }
 
         if !cert_chain.device_locked() {
             return Err(AndroidAttestationError::DeviceNotLocked);
+        }
+
+        if cert_chain.device_verified_boot_state() != KM_VERIFIED_BOOT_VERIFIED {
+            return Err(AndroidAttestationError::BootNotVerified);
+        }
+
+        if cert_chain.device_key_origin() != KM_ORIGIN_GENERATED {
+            return Err(AndroidAttestationError::KeyNotGeneratedInSecureHardware);
         }
 
         if cert_chain.device_package_name() != bundle_identifier.to_string() {

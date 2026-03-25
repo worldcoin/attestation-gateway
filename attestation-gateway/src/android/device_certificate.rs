@@ -72,6 +72,14 @@ impl DeviceCertificate {
         self.key_description.device_locked
     }
 
+    pub fn verified_boot_state(&self) -> u32 {
+        self.key_description.verified_boot_state
+    }
+
+    pub fn key_origin(&self) -> u64 {
+        self.key_description.key_origin
+    }
+
     pub fn package_name(&self) -> String {
         self.key_description.package_name.clone()
     }

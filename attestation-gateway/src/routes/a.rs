@@ -155,6 +155,14 @@ pub async fn handler(
                             code: ErrorCode::BadRequest,
                             details: Some("Invalid CA root".to_string()),
                         },
+                        AndroidAttestationError::BootNotVerified => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Verified boot state must be verified".to_string()),
+                        },
+                        AndroidAttestationError::KeyNotGeneratedInSecureHardware => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Key must be generated in secure hardware, not imported".to_string()),
+                        },
                         _ => {
                             tracing::error!(error = ?e, "Error during android attestation verification");
                             RequestError {
