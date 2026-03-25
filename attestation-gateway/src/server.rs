@@ -1,5 +1,6 @@
 use std::{env, net::SocketAddr, time::Duration};
 
+use crate::nonces::NonceDb;
 use aide::openapi::{Info, OpenApi};
 use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
@@ -33,8 +34,11 @@ pub async fn start(
         ..Default::default()
     };
 
+    let nonce_db = NonceDb::new(redis.clone());
+
     let app = routes::handler()
         .finish_api(&mut openapi)
+        .layer(Extension(nonce_db))
         .layer(Extension(redis))
         .layer(Extension(openapi))
         .layer(Extension(aws_config))

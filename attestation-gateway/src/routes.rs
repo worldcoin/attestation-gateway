@@ -6,6 +6,7 @@ use std::time::Duration;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
+mod c;
 mod generate_token;
 mod health;
 mod jwks;
@@ -20,6 +21,7 @@ pub fn get_timeout_layer() -> TimeoutLayer {
 
 pub fn handler() -> ApiRouter {
     ApiRouter::new()
+        .api_route("/c", post(c::handler))
         .api_route("/g", post(generate_token::handler))
         .api_route("/.well-known/jwks.json", get(jwks::handler))
         .api_route("/health", get(health::handler))
