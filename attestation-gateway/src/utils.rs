@@ -1,6 +1,7 @@
 use crate::{android::PlayIntegrityToken, developer::DeveloperTokenClaims};
 use aide::OperationIo;
 use axum::response::IntoResponse;
+use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use josekit::{JoseError, jwt::JwtPayload};
 use redis::RedisError;
 use schemars::JsonSchema;
@@ -149,6 +150,17 @@ impl BundleIdentifier {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
             Self::AndroidDevWorldApp => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
+            Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn certificate_sha256_digest_base64(&self) -> Option<&str> {
+        match self {
+            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp => {
+                Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
+            }
+            Self::AndroidDevWorldApp => Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="),
             Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
         }
     }

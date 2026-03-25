@@ -139,19 +139,19 @@ impl AndroidCertChain {
         self.device_certificate.security_level()
     }
 
-    pub fn device_locked(&self) -> bool {
+    pub fn device_locked(&self) -> Option<bool> {
         self.device_certificate.device_locked()
     }
 
-    pub fn device_verified_boot_state(&self) -> u32 {
+    pub fn device_verified_boot_state(&self) -> Option<u32> {
         self.device_certificate.verified_boot_state()
     }
 
-    pub fn device_key_origin(&self) -> u64 {
+    pub fn device_key_origin(&self) -> Option<u64> {
         self.device_certificate.key_origin()
     }
 
-    pub fn device_package_name(&self) -> String {
-        self.device_certificate.package_name()
+    pub fn device_attestation_signature_digests(&self) -> Option<&[Vec<u8>]> {
+        self.device_certificate.attestation_signature_digests()
     }
 }

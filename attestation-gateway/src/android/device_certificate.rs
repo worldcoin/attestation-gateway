@@ -68,20 +68,22 @@ impl DeviceCertificate {
         self.key_description.security_level
     }
 
-    pub fn device_locked(&self) -> bool {
+    pub fn device_locked(&self) -> Option<bool> {
         self.key_description.device_locked
     }
 
-    pub fn verified_boot_state(&self) -> u32 {
+    pub fn verified_boot_state(&self) -> Option<u32> {
         self.key_description.verified_boot_state
     }
 
-    pub fn key_origin(&self) -> u64 {
+    pub fn key_origin(&self) -> Option<u64> {
         self.key_description.key_origin
     }
 
-    pub fn package_name(&self) -> String {
-        self.key_description.package_name.clone()
+    pub fn attestation_signature_digests(&self) -> Option<&[Vec<u8>]> {
+        self.key_description
+            .attestation_signature_digests
+            .as_deref()
     }
 }
 
@@ -94,8 +96,11 @@ mod tests {
         let cert = "MIICzDCCAnOgAwIBAgIBATAKBggqhkjOPQQDAjApMRkwFwYDVQQFExAwZmNjZjBkNTQ4OWJhMDRjMQwwCgYDVQQMDANURUUwIBcNNzAwMTAxMDAwMDAwWhgPMjEwNjAyMDcwNjI4MTVaMB8xHTAbBgNVBAMMFEFuZHJvaWQgS2V5c3RvcmUgS2V5MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEs2uoTuLKmoC+unpsOJSFI0LsJCVNBiyKiTqYDXkno+MMeYoEsoHFdecOeBmoCImbKf8bWsDAxSbGOj6JzSIsqaOCAZIwggGOMA4GA1UdDwEB/wQEAwIHgDCCAXoGCisGAQQB1nkCAREEggFqMIIBZgIBAwoBAQIBBAoBAQRWYXBwLnN0YWdlLmZhY2Uud29ybGRjb2luLm9yZyE3NTRiYTQyM2FkZjNhNmQ1Y2IyZWMzNmRhOGVjZmQ0NCEyMDI2LTAyLTI2VDIxOjE3OjI0LjQ1N1oEADBav4N9AgUAv4U9CAIGAZyb0Wewv4VFRARCMEAxGjAYBBFjb20ud29ybGRjb2luLmRldgIDPQ2wMSIEIKNBbt/cqq7MXlkrnKoHu3jsxvMa7EQJ9Jym07Tf8dvgMIGhoQUxAwIBAqIDAgEDowQCAgEApQUxAwIBBKoDAgEBv4N3AgUAv4U+AwIBAL+FQEwwSgQgYf2hKzLthCFKnPE9Gv+3qoC9iiaKhh7Uu3oVFw8asAwBAf8KAQAEIMuBDKWKYbbA4RGjBGzOXFMM79ynwhOMxidq2r6VoXi6v4VBBQIDAdTAv4VCBQIDAxV+v4VOBgIEATRlPb+FTwYCBAE0ZT0wCgYIKoZIzj0EAwIDRwAwRAIgRYC4+rYMqjEi7Jq6J+lRR19BmcvCzaUqwMm5butcSVUCIB8pISV0K5+guf99CAxpRGlhc52EZvC+9YiAT5UUuHUA".to_string();
         let cert = DeviceCertificate::from_base64(cert).unwrap();
 
+        for digest in cert.attestation_signature_digests().unwrap() {
+            println!("{:?}", Base64.encode(digest.clone()));
+        }
+
         assert!(cert.public_key().len() > 0);
-        assert_eq!(cert.package_name(), "com.worldcoin.dev");
     }
 
     #[test]
@@ -105,7 +110,7 @@ mod tests {
 
         assert!(cert.public_key().len() > 0);
         assert!(cert.security_level() == 2);
-        assert!(cert.device_locked() == false);
+        assert_eq!(cert.device_locked(), Some(false));
 
         assert_eq!(
             cert.attestation_challenge(),
@@ -120,7 +125,7 @@ mod tests {
 
         assert!(cert.public_key().len() > 0);
         assert!(cert.security_level() == 1);
-        assert!(cert.device_locked());
+        assert_eq!(cert.device_locked(), Some(true));
     }
 
     #[test]
@@ -130,7 +135,6 @@ mod tests {
 
         assert!(cert.public_key().len() > 0);
         assert!(cert.security_level() == 1);
-        assert!(cert.device_locked());
-        assert_eq!(cert.package_name(), "com.worldcoin.staging");
+        assert_eq!(cert.device_locked(), Some(true));
     }
 }

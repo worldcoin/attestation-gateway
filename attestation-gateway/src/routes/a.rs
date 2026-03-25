@@ -138,10 +138,10 @@ pub async fn handler(
             let attestation_output =
                 android_attestation
                     .verify(
-                    android_cert_chain,
-                        &request.bundle_identifier,
+                        android_cert_chain,
                         &request.nonce,
                         &request.app_version,
+                        &request.bundle_identifier,
                      )
                     .map_err(|e| match e {
                         AndroidAttestationError::CertChain(AndroidCertChainError::InvalidChain(code)) => {
@@ -162,6 +162,14 @@ pub async fn handler(
                         AndroidAttestationError::KeyNotGeneratedInSecureHardware => RequestError {
                             code: ErrorCode::BadRequest,
                             details: Some("Key must be generated in secure hardware, not imported".to_string()),
+                        },
+                        AndroidAttestationError::MissingRootOfTrust => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Hardware-enforced root of trust is missing from attestation".to_string()),
+                        },
+                        AndroidAttestationError::MissingKeyOrigin => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Hardware-enforced key origin is missing from attestation".to_string()),
                         },
                         _ => {
                             tracing::error!(error = ?e, "Error during android attestation verification");
