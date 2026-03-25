@@ -2,7 +2,7 @@ name: attestation-gateway-tests
 services:
   localstack:
     container_name: attestation-gateway-localstack
-    image: public.ecr.aws/localstack/localstack:latest
+    image: public.ecr.aws/localstack/localstack:4.14.0
     ports:
       - "127.0.0.1:4566:4566" # LocalStack Gateway
       - "127.0.0.1:4510-4559:4510-4559" # external services port range
