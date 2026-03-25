@@ -23,7 +23,7 @@ impl NonceDb {
         let key = format!("nonce:{}", nonce);
         let value = serde_json::to_string(token_details)?;
         let options = SetOptions::default()
-            .with_expiration(SetExpiry::EX(Duration::minutes(120).num_seconds() as u64))
+            .with_expiration(SetExpiry::EX(Duration::minutes(5).num_seconds() as u64))
             .conditional_set(ExistenceCheck::NX);
 
         self.redis
