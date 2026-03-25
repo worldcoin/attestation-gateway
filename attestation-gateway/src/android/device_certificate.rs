@@ -72,6 +72,10 @@ impl DeviceCertificate {
         self.key_description.key_mint_security_level
     }
 
+    pub fn os_patch_level(&self) -> Option<u64> {
+        self.key_description.os_patch_level
+    }
+
     pub fn device_locked(&self) -> Option<bool> {
         self.key_description.device_locked
     }

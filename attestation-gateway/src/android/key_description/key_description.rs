@@ -35,6 +35,7 @@ pub struct KeyDescription {
     pub attestation_challenge: String,
     pub attestation_security_level: u32,
     pub key_mint_security_level: u32,
+    pub os_patch_level: Option<u64>,
     pub device_locked: Option<bool>,
     pub verified_boot_state: Option<u32>,
     pub key_origin: Option<u64>,
@@ -69,6 +70,10 @@ impl KeyDescription {
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
+        let os_patch_level = key_description
+            .software_enforced
+            .os_patch_level
+            .or(key_description.hardware_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -88,6 +93,7 @@ impl KeyDescription {
             attestation_challenge,
             attestation_security_level,
             key_mint_security_level,
+            os_patch_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -105,6 +111,10 @@ impl KeyDescription {
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
+        let os_patch_level = key_description
+            .software_enforced
+            .os_patch_level
+            .or(key_description.hardware_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -133,6 +143,7 @@ impl KeyDescription {
             attestation_challenge,
             attestation_security_level,
             key_mint_security_level,
+            os_patch_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -150,6 +161,10 @@ impl KeyDescription {
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
+        let os_patch_level = key_description
+            .software_enforced
+            .os_patch_level
+            .or(key_description.hardware_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -178,6 +193,7 @@ impl KeyDescription {
             attestation_challenge,
             attestation_security_level,
             key_mint_security_level,
+            os_patch_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -195,6 +211,10 @@ impl KeyDescription {
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
+        let os_patch_level = key_description
+            .software_enforced
+            .os_patch_level
+            .or(key_description.hardware_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -223,6 +243,7 @@ impl KeyDescription {
             attestation_challenge,
             attestation_security_level,
             key_mint_security_level,
+            os_patch_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -240,6 +261,10 @@ impl KeyDescription {
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
+        let os_patch_level = key_description
+            .software_enforced
+            .os_patch_level
+            .or(key_description.hardware_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -268,6 +293,7 @@ impl KeyDescription {
             attestation_challenge,
             attestation_security_level,
             key_mint_security_level,
+            os_patch_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -285,6 +311,10 @@ impl KeyDescription {
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
+        let os_patch_level = key_description
+            .software_enforced
+            .os_patch_level
+            .or(key_description.hardware_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -313,6 +343,7 @@ impl KeyDescription {
             attestation_challenge,
             attestation_security_level,
             key_mint_security_level,
+            os_patch_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -330,6 +361,10 @@ impl KeyDescription {
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
+        let os_patch_level = key_description
+            .software_enforced
+            .os_patch_level
+            .or(key_description.hardware_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -358,6 +393,7 @@ impl KeyDescription {
             attestation_challenge,
             attestation_security_level,
             key_mint_security_level,
+            os_patch_level,
             device_locked,
             verified_boot_state,
             key_origin,
@@ -375,6 +411,10 @@ impl KeyDescription {
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
+        let os_patch_level = key_description
+            .software_enforced
+            .os_patch_level
+            .or(key_description.hardware_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -403,6 +443,7 @@ impl KeyDescription {
             attestation_challenge,
             attestation_security_level,
             key_mint_security_level,
+            os_patch_level,
             device_locked,
             verified_boot_state,
             key_origin,

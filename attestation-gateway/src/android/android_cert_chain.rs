@@ -158,4 +158,8 @@ impl AndroidCertChain {
     pub fn device_attestation_signature_digests(&self) -> Option<&[Vec<u8>]> {
         self.device_certificate.attestation_signature_digests()
     }
+
+    pub fn device_os_patch_level(&self) -> Option<u64> {
+        self.device_certificate.os_patch_level()
+    }
 }

@@ -1,3 +1,5 @@
+use std::time::{Duration, SystemTime};
+
 use crate::{
     android::{
         android_ca_registry::{AndroidCaRegistry, AndroidCaRegistryError},
@@ -6,6 +8,7 @@ use crate::{
     utils::BundleIdentifier,
 };
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
+use chrono::{DateTime, Datelike, Utc};
 
 /// Android `KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT` — KeyMint / Keymaster in the TEE.
 const KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT: u32 = 1;
@@ -33,9 +36,11 @@ pub enum AndroidAttestationError {
     KeyNotGeneratedInSecureHardware,
     MissingRootOfTrust,
     MissingKeyOrigin,
+    MissingOsPatchLevel,
     MissingAttestationSignatureDigests,
     InvalidAttestationSignatureDigest,
     InternalMissingCertificateDigest,
+    InvalidOsPatchLevel,
 }
 
 pub struct AndroidAttestationOutput {
@@ -93,17 +98,40 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::InconsistentSecurityLevels);
         }
 
-        let device_locked = cert_chain
-            .device_locked()
-            .ok_or(AndroidAttestationError::MissingRootOfTrust)?;
-
         let verified_boot_state = cert_chain
             .device_verified_boot_state()
             .ok_or(AndroidAttestationError::MissingRootOfTrust)?;
 
+        if verified_boot_state != KM_VERIFIED_BOOT_VERIFIED {
+            return Err(AndroidAttestationError::BootNotVerified);
+        }
+
+        let device_locked = cert_chain
+            .device_locked()
+            .ok_or(AndroidAttestationError::MissingRootOfTrust)?;
+
+        if !device_locked {
+            return Err(AndroidAttestationError::DeviceNotLocked);
+        }
+
+        let os_patch_level = cert_chain
+            .device_os_patch_level()
+            .ok_or(AndroidAttestationError::MissingOsPatchLevel)?;
+
+        let year_ago = DateTime::<Utc>::from(SystemTime::now() - Duration::from_hours(24 * 365));
+        let min_os_patch_level = year_ago.year() as u64 * 100 + year_ago.month() as u64;
+
+        if os_patch_level < min_os_patch_level {
+            return Err(AndroidAttestationError::InvalidOsPatchLevel);
+        }
+
         let key_origin = cert_chain
             .device_key_origin()
             .ok_or(AndroidAttestationError::MissingKeyOrigin)?;
+
+        if key_origin != KM_ORIGIN_GENERATED {
+            return Err(AndroidAttestationError::KeyNotGeneratedInSecureHardware);
+        }
 
         let attestation_signature_digests = cert_chain
             .device_attestation_signature_digests()
@@ -113,18 +141,6 @@ impl AndroidAttestationService {
             .certificate_sha256_digest_base64()
             .and_then(|d| Base64.decode(d).ok())
             .ok_or(AndroidAttestationError::InternalMissingCertificateDigest)?;
-
-        if !device_locked {
-            return Err(AndroidAttestationError::DeviceNotLocked);
-        }
-
-        if verified_boot_state != KM_VERIFIED_BOOT_VERIFIED {
-            return Err(AndroidAttestationError::BootNotVerified);
-        }
-
-        if key_origin != KM_ORIGIN_GENERATED {
-            return Err(AndroidAttestationError::KeyNotGeneratedInSecureHardware);
-        }
 
         if !attestation_signature_digests.contains(&expected_attestation_signature_digest) {
             return Err(AndroidAttestationError::InvalidAttestationSignatureDigest);
