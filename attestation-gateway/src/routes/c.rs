@@ -3,7 +3,7 @@ use chrono::Utc;
 use schemars::JsonSchema;
 
 use crate::nonces::{NonceDb, TokenDetails};
-use crate::utils::{ErrorCode, RequestError};
+use crate::utils::{ErrorCode, GlobalConfig, RequestError};
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct Request {
@@ -18,11 +18,19 @@ pub struct Response {
 
 pub async fn handler(
     Extension(mut nonce_db): Extension<NonceDb>,
+    Extension(global_config): Extension<GlobalConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
     let tracing_span =
         tracing::span!(tracing::Level::DEBUG, "c", aud = %request.aud, endpoint = "/c");
     let _enter = tracing_span.enter();
+
+    if !global_config.aud_whitelist.contains(&request.aud) {
+        return Err(RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("This audience is currently unavailable.".to_string()),
+        });
+    }
 
     let token_details = TokenDetails::from_aud(request.aud.clone());
     let nonce = nonce_db

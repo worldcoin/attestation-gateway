@@ -22,6 +22,7 @@ pub struct GlobalConfig {
     pub log_client_errors: bool,
     pub kinesis_stream_arn: Option<String>,
     pub apple_root_ca_pem: Vec<u8>,
+    pub aud_whitelist: Vec<String>,
 }
 
 impl GlobalConfig {
@@ -58,6 +59,11 @@ impl GlobalConfig {
                 },
             );
 
+        let aud_whitelist = env::var("AUD_WHITELIST").map_or_else(
+            |_| Vec::new(),
+            |val| val.split(',').map(|s| s.to_string()).collect(),
+        );
+
         tracing::info!(
             "Running with enabled bundle identifiers: {:?}",
             enabled_bundle_identifiers
@@ -72,6 +78,7 @@ impl GlobalConfig {
             log_client_errors,
             kinesis_stream_arn,
             apple_root_ca_pem: include_bytes!("apple/apple_app_attestation_root_ca.pem").to_vec(),
+            aud_whitelist,
         }
     }
 }
