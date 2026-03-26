@@ -53,13 +53,14 @@ pub async fn handler(
     }
 
     let token_details = TokenDetails::from_aud(request.aud.clone());
-    let nonce = nonce_db
-        .generate_nonce(&token_details)
-        .await
-        .map_err(|_| RequestError {
+    let nonce = nonce_db.generate_nonce(&token_details).await.map_err(|e| {
+        tracing::error!(error = ?e, "Failed to generate nonce.");
+
+        RequestError {
             code: ErrorCode::InternalServerError,
             details: Some("Failed to generate nonce.".to_string()),
-        })?;
+        }
+    })?;
 
     let device_key_expires_at: chrono::DateTime<Utc> = token_details.exp.into();
     let device_key_expires_at =
