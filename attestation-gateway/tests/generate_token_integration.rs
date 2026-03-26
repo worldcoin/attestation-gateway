@@ -96,8 +96,15 @@ fn get_global_config_extension_with_pem(
         kinesis_stream_arn: Some("arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
         developer_inner_jwks_url: std::env::var("DEVELOPER_INNER_JWKS_URL").ok(),
         apple_root_ca_pem,
+        aud_whitelist: vec!["relying-party.example.com".to_string()],
     };
     Extension(config)
+}
+
+fn extension_nonce_db(
+    redis: &redis::aio::ConnectionManager,
+) -> Extension<attestation_gateway::nonces::NonceDb> {
+    Extension(attestation_gateway::nonces::NonceDb::new(redis.clone()))
 }
 
 async fn get_redis_extension() -> Extension<redis::aio::ConnectionManager> {
@@ -121,10 +128,12 @@ async fn get_kinesis_extension() -> Extension<aws_sdk_kinesis::Client> {
 }
 
 async fn get_api_router() -> aide::axum::ApiRouter {
+    let redis_ext = get_redis_extension().await;
     attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension())
-        .layer(get_redis_extension().await)
+        .layer(extension_nonce_db(&redis_ext.0))
+        .layer(redis_ext)
         .layer(get_kinesis_extension().await)
 }
 
@@ -614,15 +623,18 @@ async fn test_server_error_is_properly_logged() {
             developer_inner_jwks_url: None,
             apple_root_ca_pem: include_bytes!("../src/apple/apple_app_attestation_root_ca.pem")
                 .to_vec(),
+            aud_whitelist: vec!["relying-party.example.com".to_string()],
         };
         Extension(config)
     }
 
     async fn get_local_api_router() -> aide::axum::ApiRouter {
+        let redis_ext = get_redis_extension().await;
         attestation_gateway::routes::handler()
             .layer(get_aws_config_extension().await)
             .layer(get_local_config_extension())
-            .layer(get_redis_extension().await)
+            .layer(extension_nonce_db(&redis_ext.0))
+            .layer(redis_ext)
             .layer(get_kinesis_extension().await)
     }
 
@@ -685,10 +697,12 @@ async fn test_apple_initial_attestation_e2e_success() {
     let test_data =
         apple::test_helpers::build_test_attestation(app_id, request_hash, "appattestdevelop");
 
+    let redis_ext = get_redis_extension().await;
     let api_router = attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension_with_pem(test_data.root_ca_pem))
-        .layer(get_redis_extension().await)
+        .layer(extension_nonce_db(&redis_ext.0))
+        .layer(redis_ext)
         .layer(get_kinesis_extension().await);
 
     let aws_config = get_aws_config_extension().await;

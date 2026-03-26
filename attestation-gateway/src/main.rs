@@ -14,6 +14,7 @@ mod developer;
 mod keys;
 mod kinesis;
 mod kms_jws;
+mod nonces;
 mod routes;
 mod server;
 mod utils;
