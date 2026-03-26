@@ -22,7 +22,7 @@ pub struct NonceDb {
 
 impl NonceDb {
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)] // `ConnectionManager` is not usable in `const`
+    #[expect(clippy::missing_const_for_fn)] // `ConnectionManager` is not usable in `const`
     pub fn new(redis: ConnectionManager) -> Self {
         Self { redis }
     }
