@@ -1,12 +1,12 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TokenDetails {
     pub aud: String,
 
-    #[serde(serialize_with = "serialize_utc", deserialize_with = "deserialize_utc")]
+    #[serde(with = "chrono::serde::ts_milliseconds")]
     pub exp: DateTime<Utc>,
 }
 
@@ -18,27 +18,6 @@ impl TokenDetails {
 
         Self { aud, exp }
     }
-}
-
-fn serialize_utc<S>(t: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let t: DateTime<Utc> = (*t).into();
-    let rfc3339 = t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    s.serialize_str(&rfc3339)
-}
-
-fn deserialize_utc<'de, D>(d: D) -> Result<DateTime<Utc>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let rfc3339 = String::deserialize(d)?;
-    let t = DateTime::parse_from_rfc3339(&rfc3339)
-        .map_err(serde::de::Error::custom)?
-        .with_timezone(&Utc);
-
-    Ok(t)
 }
 
 #[cfg(test)]
@@ -66,7 +45,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_from_json() {
-        let json = r#"{"aud":"test-audience","exp":"2001-09-09T01:46:40.000Z"}"#;
+        let json = r#"{"aud":"test-audience","exp":1000000000000}"#;
         let token_details: TokenDetails = serde_json::from_str(json).unwrap();
 
         assert_eq!(token_details.aud, "test-audience");

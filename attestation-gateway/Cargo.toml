@@ -22,7 +22,7 @@ aws-sdk-kms = "1.102.0"
 axum = "0.7.9"
 axum-jsonschema = { version = "0.8.0", features = ["aide"] }
 base64 = "0.22.1"
-chrono = "0.4.44"
+chrono = { version = "0.4.44", features = ["serde"] }
 ciborium = "0.2.2"
 der-parser = "10.0.0"
 dotenvy = "0.15.7"
