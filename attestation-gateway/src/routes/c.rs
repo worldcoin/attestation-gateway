@@ -16,6 +16,26 @@ pub struct Response {
     pub device_key_expires_at: String,
 }
 
+/// Request a nonce to use as part of a challenge in the subsequent attestation request.
+/// For android also returns the expiration time that should be set for device key which
+/// ia also expiration that token generated will use.
+///
+/// # Example
+///
+/// Request:
+/// ```json
+/// {
+///     "aud": "android"
+/// }
+/// ```
+///
+/// Response:
+/// ```json
+/// {
+///     "nonce": "1234567890",
+///     "device_key_expires_at": "2026-03-26T12:00:00Z"
+/// }
+/// ```
 pub async fn handler(
     Extension(mut nonce_db): Extension<NonceDb>,
     Extension(global_config): Extension<GlobalConfig>,
