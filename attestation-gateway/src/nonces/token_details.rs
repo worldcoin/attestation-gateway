@@ -2,7 +2,25 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::time::{Duration, SystemTime};
 
-fn serialize_system_time<S>(t: &SystemTime, s: S) -> Result<S::Ok, S::Error>
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TokenDetails {
+    pub aud: String,
+
+    #[serde(serialize_with = "serialize_utc", deserialize_with = "deserialize_utc")]
+    pub exp: DateTime<Utc>,
+}
+
+impl TokenDetails {
+    #[must_use]
+    pub fn from_aud(aud: String) -> Self {
+        let ttl = Duration::from_mins(5);
+        let exp = DateTime::<Utc>::from(SystemTime::now()) + ttl;
+
+        Self { aud, exp }
+    }
+}
+
+fn serialize_utc<S>(t: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -11,50 +29,30 @@ where
     s.serialize_str(&rfc3339)
 }
 
-fn deserialize_system_time<'de, D>(d: D) -> Result<SystemTime, D::Error>
+fn deserialize_utc<'de, D>(d: D) -> Result<DateTime<Utc>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let rfc3339 = String::deserialize(d)?;
-    let dt = DateTime::parse_from_rfc3339(&rfc3339).map_err(serde::de::Error::custom)?;
-    let s: SystemTime = dt.into();
+    let t = DateTime::parse_from_rfc3339(&rfc3339)
+        .map_err(serde::de::Error::custom)?
+        .with_timezone(&Utc);
 
-    Ok(s)
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TokenDetails {
-    pub aud: String,
-
-    #[serde(
-        serialize_with = "serialize_system_time",
-        deserialize_with = "deserialize_system_time"
-    )]
-    pub exp: SystemTime,
-}
-
-impl TokenDetails {
-    #[must_use]
-    pub fn from_aud(aud: String) -> Self {
-        let ttl = Duration::from_mins(5);
-
-        let exp = SystemTime::now() + ttl;
-
-        Self { aud, exp }
-    }
+    Ok(t)
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::SubsecRound;
+
     use super::*;
-    use std::time::UNIX_EPOCH;
 
     #[test]
     fn test_from_aud() {
         let token_details = TokenDetails::from_aud("android".to_string());
 
         assert_eq!(token_details.aud, "android");
-        assert!(token_details.exp > SystemTime::now());
+        assert!(token_details.exp > DateTime::<Utc>::from(SystemTime::now()));
     }
 
     #[test]
@@ -74,7 +72,7 @@ mod tests {
         assert_eq!(token_details.aud, "test-audience");
         assert_eq!(
             token_details.exp,
-            SystemTime::from(DateTime::parse_from_rfc3339("2001-09-09T01:46:40.000Z").unwrap())
+            DateTime::parse_from_rfc3339("2001-09-09T01:46:40.000Z").unwrap()
         );
     }
 
@@ -85,13 +83,6 @@ mod tests {
         let deserialized: TokenDetails = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.aud, original.aud);
-        assert_eq!(
-            deserialized
-                .exp
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-            original.exp.duration_since(UNIX_EPOCH).unwrap().as_millis()
-        );
+        assert_eq!(deserialized.exp, original.exp.trunc_subsecs(3));
     }
 }
