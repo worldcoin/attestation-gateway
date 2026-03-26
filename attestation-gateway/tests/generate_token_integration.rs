@@ -101,7 +101,9 @@ fn get_global_config_extension_with_pem(
     Extension(config)
 }
 
-fn extension_nonce_db(redis: &redis::aio::ConnectionManager) -> Extension<attestation_gateway::nonces::NonceDb> {
+fn extension_nonce_db(
+    redis: &redis::aio::ConnectionManager,
+) -> Extension<attestation_gateway::nonces::NonceDb> {
     Extension(attestation_gateway::nonces::NonceDb::new(redis.clone()))
 }
 
