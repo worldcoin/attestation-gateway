@@ -56,7 +56,6 @@ impl NonceDb {
     /// # Errors
     ///
     /// When Redis `GETDEL` fails, the value is missing, or JSON does not decode to [`TokenDetails`].
-    #[allow(dead_code)] // Used by `POST /a` (separate PR); kept so nonce flow stays in one module.
     pub async fn consume_nonce(&mut self, nonce: &str) -> Result<TokenDetails, NonceDbError> {
         let key = format!("nonce:{nonce}");
         let value = self
