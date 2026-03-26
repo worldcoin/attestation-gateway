@@ -18,7 +18,7 @@ pub struct Response {
 
 /// Request a nonce to use as part of a challenge in the subsequent attestation request.
 /// For android also returns the expiration time that should be set for device key which
-/// ia also expiration that token generated will use.
+/// is also expiration that the generated token will use.
 ///
 /// # Example
 ///
