@@ -17,6 +17,7 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
+    android::{AndroidAttestationError, AndroidAttestationService, AndroidCertChainError},
     apple, keys, kms_jws,
     nonces::NonceDb,
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
@@ -99,6 +100,7 @@ pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(mut nonce_db): Extension<NonceDb>,
+    Extension(android_attestation): Extension<AndroidAttestationService>,
     Extension(aws_config): Extension<SdkConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
@@ -133,13 +135,67 @@ pub async fn handler(
             )?
         }
         Platform::Android => {
-            return Err(RequestError {
+            let android_cert_chain = request.android_attestation.ok_or_else(|| RequestError {
                 code: ErrorCode::BadRequest,
-                details: Some("Android attestation is not supported on this endpoint.".to_string()),
-            });
+                details: Some("Android attestation is required".to_string()),
+            })?;
+
+            tracing::info!(android_cert_chain = ?android_cert_chain, "Android cert chain");
+
+            let attestation_output =
+                android_attestation
+                    .verify(
+                        android_cert_chain,
+                        &request.nonce,
+                        &request.app_version,
+                        &request.bundle_identifier,
+                     )
+                    .map_err(|e| match e {
+                        AndroidAttestationError::CertChain(AndroidCertChainError::InvalidChain(code)) => {
+                            tracing::error!(code = ?code, "Certificate chain error");
+                            RequestError {
+                                code: ErrorCode::BadRequest,
+                                details: Some(format!("Certificate chain error: {code}")),
+                            }
+                        },
+                        AndroidAttestationError::InvalidCaRoot => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Invalid CA root".to_string()),
+                        },
+                        AndroidAttestationError::BootNotVerified => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Verified boot state must be verified".to_string()),
+                        },
+                        AndroidAttestationError::KeyNotGeneratedInSecureHardware => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Key must be generated in secure hardware, not imported".to_string()),
+                        },
+                        AndroidAttestationError::MissingRootOfTrust => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Hardware-enforced root of trust is missing from attestation".to_string()),
+                        },
+                        AndroidAttestationError::MissingKeyOrigin => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Hardware-enforced key origin is missing from attestation".to_string()),
+                        },
+                        AndroidAttestationError::InvalidPackageName => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Attestation package name does not match the requested bundle identifier".to_string()),
+                        },
+                        _ => {
+                            tracing::error!(error = ?e, "Error during android attestation verification");
+                            RequestError {
+                                code: ErrorCode::InternalServerError,
+                                details: Some("Android attestation error".to_string()),
+                            }
+                        }
+                    })?;
+
+            attestation_output.device_public_key
         }
     };
 
+    // TODO 404, but need to differentiate
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
         tracing::error!(error = ?e, "Error consuming token nonce");
         RequestError {

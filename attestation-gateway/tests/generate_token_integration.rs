@@ -107,6 +107,11 @@ fn extension_nonce_db(
     Extension(attestation_gateway::nonces::NonceDb::new(redis.clone()))
 }
 
+fn extension_android_attestation()
+-> Extension<attestation_gateway::android::AndroidAttestationService> {
+    Extension(attestation_gateway::android::AndroidAttestationService::from_default_pem().unwrap())
+}
+
 async fn get_redis_extension() -> Extension<redis::aio::ConnectionManager> {
     let client = redis::Client::open("redis://localhost").unwrap();
     // Reset Redis before each test run
@@ -132,6 +137,7 @@ async fn get_api_router() -> aide::axum::ApiRouter {
     attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension())
+        .layer(extension_android_attestation())
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
         .layer(get_kinesis_extension().await)
@@ -633,6 +639,7 @@ async fn test_server_error_is_properly_logged() {
         attestation_gateway::routes::handler()
             .layer(get_aws_config_extension().await)
             .layer(get_local_config_extension())
+            .layer(extension_android_attestation())
             .layer(extension_nonce_db(&redis_ext.0))
             .layer(redis_ext)
             .layer(get_kinesis_extension().await)
@@ -701,6 +708,7 @@ async fn test_apple_initial_attestation_e2e_success() {
     let api_router = attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension_with_pem(test_data.root_ca_pem))
+        .layer(extension_android_attestation())
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
         .layer(get_kinesis_extension().await);
