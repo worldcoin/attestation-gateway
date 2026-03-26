@@ -3,6 +3,7 @@ use std::time::SystemTime;
 use aws_config::SdkConfig;
 
 use axum::{Extension, Json};
+use base64::{Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::{DateTime, Utc};
 use josekit::jwt::JwtPayload;
 use openssl::{
@@ -10,6 +11,7 @@ use openssl::{
     ec::{EcGroup, EcKey},
     nid::Nid,
     pkey::PKey,
+    sha::sha256,
 };
 use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
@@ -66,7 +68,8 @@ impl IntegrityTokenPayload {
             details: Some("Invalid device public key".to_string()),
         })?;
 
-        let cnf_jwk = keys::public_key_to_jwk(&cnf_pkey, None)?;
+        let cnf_key_id = Base64.encode(sha256(&self.cnf));
+        let cnf_jwk = keys::public_key_to_jwk(&cnf_pkey, Some(cnf_key_id))?;
 
         let mut cfn = josekit::Map::new();
         cfn.insert("jwk".to_string(), josekit::Value::Object(cnf_jwk.into()));
