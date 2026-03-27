@@ -6,26 +6,40 @@ use openssl::{
     x509::{X509, X509StoreContext, store::X509StoreBuilder, verify::X509VerifyParam},
 };
 
+use thiserror::Error;
+
 use crate::android::{
     android_revocation_list::AndroidRevocationList,
     device_certificate::{DeviceCertificate, DeviceCertificateError},
     root_certificate::{RootCertificate, RootCertificateError},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AndroidCertChainError {
-    InvalidBase64Encoding(DecodeError),
-    InvalidDerEncoding(openssl::error::ErrorStack),
+    #[error("invalid base64 encoding")]
+    InvalidBase64Encoding(#[source] DecodeError),
+    #[error("invalid DER encoding")]
+    InvalidDerEncoding(#[source] openssl::error::ErrorStack),
+    #[error("certificate chain must contain at least two certificates")]
     InvalidChainLength,
-    InvalidCert(openssl::error::ErrorStack),
+    #[error("invalid certificate")]
+    InvalidCert(#[source] openssl::error::ErrorStack),
+    #[error("certificate chain verification failed: {0}")]
     InvalidChain(openssl::x509::X509VerifyResult),
-    DeviceCertificate(DeviceCertificateError),
-    RootCertificate(RootCertificateError),
-    InternalStackBuilder(openssl::error::ErrorStack),
-    InternalParamBuilder(openssl::error::ErrorStack),
-    InternalStoreBuilder(openssl::error::ErrorStack),
-    InternalContextBuilder(openssl::error::ErrorStack),
-    InternalChainVerification(openssl::error::ErrorStack),
+    #[error("device certificate")]
+    DeviceCertificate(#[source] DeviceCertificateError),
+    #[error("root certificate")]
+    RootCertificate(#[source] RootCertificateError),
+    #[error("internal stack builder")]
+    InternalStackBuilder(#[source] openssl::error::ErrorStack),
+    #[error("internal verify param builder")]
+    InternalParamBuilder(#[source] openssl::error::ErrorStack),
+    #[error("internal store builder")]
+    InternalStoreBuilder(#[source] openssl::error::ErrorStack),
+    #[error("internal store context builder")]
+    InternalContextBuilder(#[source] openssl::error::ErrorStack),
+    #[error("internal chain verification")]
+    InternalChainVerification(#[source] openssl::error::ErrorStack),
 }
 
 /// ASN.1 serial number in the two string forms used as keys in Google's attestation status JSON.

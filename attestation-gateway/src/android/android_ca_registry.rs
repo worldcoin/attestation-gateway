@@ -1,14 +1,18 @@
 use openssl::x509::X509;
+use thiserror::Error;
 use x509_parser::{
     error::X509Error,
     prelude::{FromDer, X509Certificate},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AndroidCaRegistryError {
-    PemParsing(openssl::error::ErrorStack),
+    #[error("PEM parsing failed")]
+    PemParsing(#[source] openssl::error::ErrorStack),
+    #[error("DER parsing failed")]
     DerParsing,
-    InternalDerEncoding(openssl::error::ErrorStack),
+    #[error("internal DER encoding failed")]
+    InternalDerEncoding(#[source] openssl::error::ErrorStack),
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +64,8 @@ impl AndroidCaRegistry {
     }
 
     pub fn has_public_key(&self, public_key: &[u8]) -> bool {
-        self.public_keys.iter().any(|key| key.as_slice() == public_key)
+        self.public_keys
+            .iter()
+            .any(|key| key.as_slice() == public_key)
     }
 }

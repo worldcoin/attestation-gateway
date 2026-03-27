@@ -1,9 +1,12 @@
 use openssl::x509::X509;
+use thiserror::Error;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum RootCertificateError {
-    InternalEncodeDer(openssl::error::ErrorStack),
+    #[error("internal DER encoding failed")]
+    InternalEncodeDer(#[source] openssl::error::ErrorStack),
+    #[error("internal DER decode failed")]
     InternalDecodeDer,
 }
 

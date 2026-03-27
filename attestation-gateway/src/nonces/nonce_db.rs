@@ -1,18 +1,22 @@
-use std::fmt::Display;
-
 use chrono::Duration;
 use rand::Rng;
 use redis::{
     AsyncTypedCommands, ExistenceCheck, RedisError, SetExpiry, SetOptions, aio::ConnectionManager,
 };
+use thiserror::Error;
 
 use super::TokenDetails;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum NonceDbError {
+    #[error("nonce not found")]
     NonceNotFound,
-    SerializationError(serde_json::Error),
-    RedisError(RedisError),
+
+    #[error("serialization error: {0}")]
+    SerializationError(#[from] serde_json::Error),
+
+    #[error("redis error: {0}")]
+    RedisError(#[from] RedisError),
 }
 
 #[derive(Clone)]
@@ -39,16 +43,14 @@ impl NonceDb {
         let nonce = hex::encode(nonce);
 
         let key = format!("nonce:{nonce}");
-        let value = serde_json::to_string(token_details)
-            .map_err(|e| NonceDbError::SerializationError(e))?;
+        let value = serde_json::to_string(token_details)?;
         let options = SetOptions::default()
             .with_expiration(SetExpiry::EX(Duration::minutes(5).num_seconds() as u64))
             .conditional_set(ExistenceCheck::NX);
 
         self.redis
             .set_options::<String, String>(key, value, options)
-            .await
-            .map_err(|e| NonceDbError::RedisError(e))?;
+            .await?;
 
         Ok(nonce)
     }
@@ -61,33 +63,11 @@ impl NonceDb {
         let value = self
             .redis
             .get_del::<String>(key)
-            .await
-            .map_err(|e| NonceDbError::RedisError(e))?
+            .await?
             .ok_or(NonceDbError::NonceNotFound)?;
 
-        let token_details: TokenDetails =
-            serde_json::from_str(&value).map_err(|e| NonceDbError::SerializationError(e))?;
+        let token_details: TokenDetails = serde_json::from_str(&value)?;
 
         Ok(token_details)
-    }
-}
-
-impl Display for NonceDbError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NonceNotFound => write!(f, "nonce not found"),
-            Self::SerializationError(e) => write!(f, "serialization error: {e}"),
-            Self::RedisError(e) => write!(f, "redis error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for NonceDbError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::SerializationError(e) => Some(e),
-            Self::RedisError(e) => Some(e),
-            Self::NonceNotFound => None,
-        }
     }
 }

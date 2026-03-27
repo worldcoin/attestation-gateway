@@ -1,5 +1,7 @@
 use std::string::FromUtf8Error;
 
+use thiserror::Error;
+
 use crate::android::key_description::key_description_1::KeyDescription1;
 use crate::android::key_description::key_description_2::KeyDescription2;
 use crate::android::key_description::key_description_3::KeyDescription3;
@@ -23,11 +25,15 @@ fn attestation_version_from_der(der: &[u8]) -> Result<u64, asn1::ParseError> {
     asn1::parse_single::<u64>(version_tlv.full_data())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum KeyDescriptionError {
-    ParseVersion(asn1::ParseError),
-    ParseError(asn1::ParseError),
-    ParseChallenge(FromUtf8Error),
+    #[error("failed to read attestation version")]
+    ParseVersion(#[source] asn1::ParseError),
+    #[error("invalid attestation extension")]
+    ParseError(#[source] asn1::ParseError),
+    #[error("invalid attestation challenge UTF-8")]
+    ParseChallenge(#[source] FromUtf8Error),
+    #[error("unsupported attestation version: {0}")]
     InvalidVersion(u64),
 }
 

@@ -187,6 +187,7 @@ pub async fn handler(
                         },
                         _ => {
                             tracing::error!(error = ?e, "Error during android attestation verification");
+                            
                             RequestError {
                                 code: ErrorCode::InternalServerError,
                                 details: Some("Android attestation error".to_string()),

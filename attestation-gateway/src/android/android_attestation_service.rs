@@ -10,6 +10,7 @@ use crate::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::{DateTime, Datelike, Utc};
+use thiserror::Error;
 
 /// Android `KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT` — KeyMint / Keymaster in the TEE.
 const KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT: u32 = 1;
@@ -23,28 +24,47 @@ const KM_VERIFIED_BOOT_VERIFIED: u32 = 0;
 /// Android `KM_ORIGIN_GENERATED` — key generated inside secure KeyMint / Keymaster (TEE / StrongBox), not imported.
 const KM_ORIGIN_GENERATED: u64 = 0;
 
-#[derive(Debug)]
-
+#[derive(Debug, Error)]
 pub enum AndroidAttestationError {
-    CaRegistry(AndroidCaRegistryError),
-    RevocationList(AndroidRevocationListError),
-    CertChain(AndroidCertChainError),
+    #[error(transparent)]
+    CaRegistry(#[from] AndroidCaRegistryError),
+    #[error(transparent)]
+    RevocationList(#[from] AndroidRevocationListError),
+    #[error(transparent)]
+    CertChain(#[from] AndroidCertChainError),
+    #[error("device certificate is not signed by a trusted Android attestation root CA")]
     InvalidCaRoot,
+    #[error("attestation challenge does not match expected nonce and app version")]
     InvalidChallenge,
+    #[error("attestation or KeyMint security level is not TEE or StrongBox")]
     LowSecurityLevel,
+    #[error("attestation and KeyMint security levels differ")]
     InconsistentSecurityLevels,
+    #[error("device must be locked")]
     DeviceNotLocked,
+    #[error("verified boot state is not verified")]
     BootNotVerified,
+    #[error("key was not generated in secure hardware")]
     KeyNotGeneratedInSecureHardware,
+    #[error("missing root of trust in attestation extension")]
     MissingRootOfTrust,
+    #[error("missing key origin in attestation extension")]
     MissingKeyOrigin,
+    #[error("missing OS patch level in attestation extension")]
     MissingOsPatchLevel,
+    #[error("missing attestation signature digests in attestation extension")]
     MissingAttestationSignatureDigests,
+    #[error("attestation signature digest does not match app certificate")]
     InvalidAttestationSignatureDigest,
+    #[error("bundle identifier has no SHA-256 certificate digest configured")]
     InternalMissingCertificateDigest,
+    #[error("OS patch level is too old")]
     InvalidOsPatchLevel,
+    #[error("missing package name in attestation extension")]
     MissingPackageName,
+    #[error("attestation package name does not match bundle identifier")]
     InvalidPackageName,
+    #[error("certificate serial is on the revocation list")]
     CertificateRevoked,
 }
 
