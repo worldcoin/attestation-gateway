@@ -140,8 +140,6 @@ pub async fn handler(
                 details: Some("Android attestation is required".to_string()),
             })?;
 
-            tracing::info!(android_cert_chain = ?android_cert_chain, "Android cert chain");
-
             let attestation_output =
                 android_attestation
                     .verify(
