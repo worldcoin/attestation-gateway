@@ -154,7 +154,7 @@ pub async fn handler(
                             
                             RequestError {
                                 code: ErrorCode::BadRequest,
-                                details: Some(format!("Certificate chain error: {code}")),
+                                details: Some("Certificate chain error".to_string()),
                             }
                         },
                         AndroidAttestationError::InvalidCaRoot => RequestError {
