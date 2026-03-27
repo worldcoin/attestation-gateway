@@ -151,7 +151,7 @@ pub async fn handler(
                     .map_err(|e| match e {
                         AndroidAttestationError::CertChain(AndroidCertChainError::InvalidChain(code)) => {
                             tracing::error!(code = ?code, "Certificate chain error");
-                            
+
                             RequestError {
                                 code: ErrorCode::BadRequest,
                                 details: Some("Certificate chain error".to_string()),
@@ -187,7 +187,7 @@ pub async fn handler(
                         },
                         _ => {
                             tracing::error!(error = ?e, "Error during android attestation verification");
-                            
+
                             RequestError {
                                 code: ErrorCode::InternalServerError,
                                 details: Some("Android attestation error".to_string()),
