@@ -7,6 +7,7 @@ use josekit::jws::ES256;
 mod android_attestation_service;
 mod android_ca_registry;
 mod android_cert_chain;
+mod android_revocation_list;
 mod device_certificate;
 mod integrity_token_data;
 mod key_description;
@@ -14,7 +15,11 @@ mod root_certificate;
 
 pub use android_attestation_service::AndroidAttestationError;
 pub use android_attestation_service::AndroidAttestationService;
+pub use android_ca_registry::{AndroidCaRegistry, AndroidCaRegistryError};
 pub use android_cert_chain::AndroidCertChainError;
+pub use android_revocation_list::{
+    AndroidRevocationList, AndroidRevocationListError, DEFAULT_ATTESTATION_STATUS_URL,
+};
 
 /// Verifies an Android Play Integrity token and returns a parsed `PlayIntegrityToken`
 ///

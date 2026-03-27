@@ -107,9 +107,23 @@ fn extension_nonce_db(
     Extension(attestation_gateway::nonces::NonceDb::new(redis.clone()))
 }
 
-fn extension_android_attestation()
--> Extension<attestation_gateway::android::AndroidAttestationService> {
-    Extension(attestation_gateway::android::AndroidAttestationService::from_default_pem().unwrap())
+async fn extension_android_attestation(
+) -> Extension<attestation_gateway::android::AndroidAttestationService> {
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/status")
+        .with_status(200)
+        .with_header("Cache-Control", "max-age=60")
+        .with_body(r#"{"entries":{}}"#)
+        .create();
+    let url = format!("{}/status", server.url());
+    let list = attestation_gateway::android::AndroidRevocationList::connect(url)
+        .await
+        .unwrap();
+    Extension(attestation_gateway::android::AndroidAttestationService::new(
+        attestation_gateway::android::AndroidCaRegistry::from_default_pem().unwrap(),
+        list,
+    ))
 }
 
 async fn get_redis_extension() -> Extension<redis::aio::ConnectionManager> {
@@ -137,7 +151,7 @@ async fn get_api_router() -> aide::axum::ApiRouter {
     attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension())
-        .layer(extension_android_attestation())
+        .layer(extension_android_attestation().await)
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
         .layer(get_kinesis_extension().await)
@@ -639,7 +653,7 @@ async fn test_server_error_is_properly_logged() {
         attestation_gateway::routes::handler()
             .layer(get_aws_config_extension().await)
             .layer(get_local_config_extension())
-            .layer(extension_android_attestation())
+            .layer(extension_android_attestation().await)
             .layer(extension_nonce_db(&redis_ext.0))
             .layer(redis_ext)
             .layer(get_kinesis_extension().await)
@@ -708,7 +722,7 @@ async fn test_apple_initial_attestation_e2e_success() {
     let api_router = attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension_with_pem(test_data.root_ca_pem))
-        .layer(extension_android_attestation())
+        .layer(extension_android_attestation().await)
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
         .layer(get_kinesis_extension().await);

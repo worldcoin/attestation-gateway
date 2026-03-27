@@ -7,6 +7,7 @@ use openssl::{
 };
 
 use crate::android::{
+    android_revocation_list::AndroidRevocationList,
     device_certificate::{DeviceCertificate, DeviceCertificateError},
     root_certificate::{RootCertificate, RootCertificateError},
 };
@@ -27,9 +28,28 @@ pub enum AndroidCertChainError {
     InternalChainVerification(openssl::error::ErrorStack),
 }
 
+/// ASN.1 serial number in the two string forms used as keys in Google's attestation status JSON.
+#[derive(Debug, Clone)]
+pub struct CertificateSerial {
+    /// Decimal digits (e.g. `"6681152659205225093"`).
+    pub decimal: String,
+    /// Lowercase hex without `0x` (e.g. `"c35747a084470c3135aeefe2b8d40cd6"`).
+    pub hex: String,
+}
+
+impl CertificateSerial {
+    /// `true` if either representation appears in [`AndroidRevocationList`].
+    #[must_use]
+    pub fn is_revoked(&self, list: &AndroidRevocationList) -> bool {
+        list.is_revoked(&self.decimal) || list.is_revoked(&self.hex)
+    }
+}
+
 pub struct AndroidCertChain {
     device_certificate: DeviceCertificate,
     root_certificate: RootCertificate,
+    /// Per-certificate serials (leaf → root) for Android attestation status lookup.
+    serials: Vec<CertificateSerial>,
 }
 
 impl AndroidCertChain {
@@ -117,10 +137,23 @@ impl AndroidCertChain {
         let root_certificate = RootCertificate::new(root_ca_cert.to_owned())
             .map_err(|e| AndroidCertChainError::RootCertificate(e))?;
 
+        let serials = cert_chain
+            .iter()
+            .map(|c| certificate_serial(c))
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Self {
             device_certificate,
             root_certificate,
+            serials,
         })
+    }
+
+    /// Serial numbers for each certificate in the validated chain, **leaf first, root last** (same
+    /// order as the client-sent chain). Use [`CertificateSerial::is_revoked`] against
+    /// [`AndroidRevocationList`] (Google's feed keys are decimal or lowercase hex).
+    pub fn serials(&self) -> &[CertificateSerial] {
+        &self.serials
     }
 
     pub fn root_ca_public_key(&self) -> Vec<u8> {
@@ -166,4 +199,24 @@ impl AndroidCertChain {
     pub fn device_os_patch_level(&self) -> Option<u64> {
         self.device_certificate.os_patch_level()
     }
+}
+
+fn certificate_serial(cert: &X509) -> Result<CertificateSerial, AndroidCertChainError> {
+    let bn = cert
+        .serial_number()
+        .to_bn()
+        .map_err(|e| AndroidCertChainError::InvalidCert(e))?;
+
+    let decimal = bn
+        .to_dec_str()
+        .map_err(|e| AndroidCertChainError::InvalidCert(e))?
+        .to_string();
+
+    let hex = bn
+        .to_hex_str()
+        .map_err(|e| AndroidCertChainError::InvalidCert(e))?
+        .to_string()
+        .to_lowercase();
+
+    Ok(CertificateSerial { decimal, hex })
 }

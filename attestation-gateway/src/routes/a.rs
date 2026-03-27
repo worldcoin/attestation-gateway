@@ -181,6 +181,10 @@ pub async fn handler(
                             code: ErrorCode::BadRequest,
                             details: Some("Attestation package name does not match the requested bundle identifier".to_string()),
                         },
+                        AndroidAttestationError::CertificateRevoked => RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some("Certificate chain includes a revoked attestation key".to_string()),
+                        },
                         _ => {
                             tracing::error!(error = ?e, "Error during android attestation verification");
                             RequestError {

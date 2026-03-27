@@ -4,6 +4,7 @@ use crate::{
     android::{
         android_ca_registry::{AndroidCaRegistry, AndroidCaRegistryError},
         android_cert_chain::{AndroidCertChain, AndroidCertChainError},
+        android_revocation_list::{AndroidRevocationList, AndroidRevocationListError},
     },
     utils::BundleIdentifier,
 };
@@ -26,6 +27,7 @@ const KM_ORIGIN_GENERATED: u64 = 0;
 
 pub enum AndroidAttestationError {
     CaRegistry(AndroidCaRegistryError),
+    RevocationList(AndroidRevocationListError),
     CertChain(AndroidCertChainError),
     InvalidCaRoot,
     InvalidChallenge,
@@ -43,6 +45,7 @@ pub enum AndroidAttestationError {
     InvalidOsPatchLevel,
     MissingPackageName,
     InvalidPackageName,
+    CertificateRevoked,
 }
 
 pub struct AndroidAttestationOutput {
@@ -52,18 +55,30 @@ pub struct AndroidAttestationOutput {
 #[derive(Clone)]
 pub struct AndroidAttestationService {
     ca_registry: AndroidCaRegistry,
+    revocation_list: AndroidRevocationList,
 }
 
 impl AndroidAttestationService {
-    pub fn new(ca_registry: AndroidCaRegistry) -> Self {
-        Self { ca_registry }
+    pub fn new(ca_registry: AndroidCaRegistry, revocation_list: AndroidRevocationList) -> Self {
+        Self {
+            ca_registry,
+            revocation_list,
+        }
     }
 
-    pub fn from_default_pem() -> Result<Self, AndroidAttestationError> {
-        let ca_registry = AndroidCaRegistry::from_default_pem()
-            .map_err(|e| AndroidAttestationError::CaRegistry(e))?;
+    /// Loads bundled Android attestation root CAs and fetches the default Google revocation feed.
+    pub async fn from_defaults() -> Result<Self, AndroidAttestationError> {
+        let ca_registry =
+            AndroidCaRegistry::from_default_pem().map_err(AndroidAttestationError::CaRegistry)?;
+        let revocation_list = AndroidRevocationList::connect_google_default()
+            .await
+            .map_err(AndroidAttestationError::RevocationList)?;
+        Ok(Self::new(ca_registry, revocation_list))
+    }
 
-        Ok(Self::new(ca_registry))
+    /// Background refresh for the revocation list; see [`AndroidRevocationList::spawn_refresh_loop`].
+    pub fn spawn_refresh_loop(&self) -> tokio::task::JoinHandle<()> {
+        self.revocation_list.spawn_refresh_loop()
     }
 
     pub fn verify(
@@ -75,6 +90,14 @@ impl AndroidAttestationService {
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
         let cert_chain = AndroidCertChain::from_base64(base64_cert_chain)
             .map_err(|e| AndroidAttestationError::CertChain(e))?;
+
+        if cert_chain
+            .serials()
+            .iter()
+            .any(|s| s.is_revoked(&self.revocation_list))
+        {
+            return Err(AndroidAttestationError::CertificateRevoked);
+        }
 
         if !self
             .ca_registry

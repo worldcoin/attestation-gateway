@@ -35,7 +35,10 @@ pub async fn start(
     };
 
     let nonce_db = NonceDb::new(redis.clone());
-    let android_attestation_service = AndroidAttestationService::from_default_pem().unwrap();
+    let android_attestation_service = AndroidAttestationService::from_defaults()
+        .await
+        .expect("failed to construct Android attestation service");
+    android_attestation_service.spawn_refresh_loop();
 
     let app = routes::handler()
         .finish_api(&mut openapi)
