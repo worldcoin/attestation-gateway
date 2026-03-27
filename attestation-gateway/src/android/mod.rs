@@ -13,9 +13,15 @@ mod integrity_token_data;
 mod key_description;
 mod root_certificate;
 
-pub use android_attestation_service::AndroidAttestationError;
-pub use android_attestation_service::AndroidAttestationService;
+pub use android_attestation_service::{AndroidAttestationError, AndroidAttestationService};
+
+#[allow(unused_imports)]
+pub use android_ca_registry::AndroidCaRegistry;
+
 pub use android_cert_chain::AndroidCertChainError;
+
+#[allow(unused_imports)]
+pub use android_revocation_list::AndroidRevocationList;
 
 /// Verifies an Android Play Integrity token and returns a parsed `PlayIntegrityToken`
 ///
