@@ -72,9 +72,9 @@ impl KeyDescription {
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
         let os_patch_level = key_description
-            .software_enforced
+            .hardware_enforced
             .os_patch_level
-            .or(key_description.hardware_enforced.os_patch_level);
+            .or(key_description.software_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -114,9 +114,9 @@ impl KeyDescription {
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
         let os_patch_level = key_description
-            .software_enforced
+            .hardware_enforced
             .os_patch_level
-            .or(key_description.hardware_enforced.os_patch_level);
+            .or(key_description.software_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -170,9 +170,9 @@ impl KeyDescription {
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
         let os_patch_level = key_description
-            .software_enforced
+            .hardware_enforced
             .os_patch_level
-            .or(key_description.hardware_enforced.os_patch_level);
+            .or(key_description.software_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -226,9 +226,9 @@ impl KeyDescription {
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
         let os_patch_level = key_description
-            .software_enforced
+            .hardware_enforced
             .os_patch_level
-            .or(key_description.hardware_enforced.os_patch_level);
+            .or(key_description.software_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -282,9 +282,9 @@ impl KeyDescription {
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
         let os_patch_level = key_description
-            .software_enforced
+            .hardware_enforced
             .os_patch_level
-            .or(key_description.hardware_enforced.os_patch_level);
+            .or(key_description.software_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -338,9 +338,9 @@ impl KeyDescription {
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
         let os_patch_level = key_description
-            .software_enforced
+            .hardware_enforced
             .os_patch_level
-            .or(key_description.hardware_enforced.os_patch_level);
+            .or(key_description.software_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -394,9 +394,9 @@ impl KeyDescription {
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
         let os_patch_level = key_description
-            .software_enforced
+            .hardware_enforced
             .os_patch_level
-            .or(key_description.hardware_enforced.os_patch_level);
+            .or(key_description.software_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
@@ -450,9 +450,9 @@ impl KeyDescription {
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
         let os_patch_level = key_description
-            .software_enforced
+            .hardware_enforced
             .os_patch_level
-            .or(key_description.hardware_enforced.os_patch_level);
+            .or(key_description.software_enforced.os_patch_level);
 
         let device_locked = key_description
             .hardware_enforced
