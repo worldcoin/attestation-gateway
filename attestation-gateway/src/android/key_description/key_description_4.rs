@@ -16,12 +16,12 @@ pub struct KeyDescription4<'a> {
 }
 
 impl<'a> KeyDescription4<'a> {
-    /// Parses tag `709` (`attestation_application_id`), preferring software-enforced.
+    /// Parses tag `709` (`attestation_application_id`), preferring hardware-enforced.
     pub fn try_parse_attestation_application_id(&self) -> Option<AttestationApplicationId<'a>> {
         let bytes = self
-            .software_enforced
+            .hardware_enforced
             .attestation_application_id
-            .or(self.hardware_enforced.attestation_application_id)?;
+            .or(self.software_enforced.attestation_application_id)?;
         asn1::parse_single(bytes).ok()
     }
 }
