@@ -107,8 +107,8 @@ fn extension_nonce_db(
     Extension(attestation_gateway::nonces::NonceDb::new(redis.clone()))
 }
 
-async fn extension_android_attestation(
-) -> Extension<attestation_gateway::android::AndroidAttestationService> {
+async fn extension_android_attestation()
+-> Extension<attestation_gateway::android::AndroidAttestationService> {
     let mut server = mockito::Server::new_async().await;
     let _m = server
         .mock("GET", "/status")
@@ -120,10 +120,12 @@ async fn extension_android_attestation(
     let list = attestation_gateway::android::AndroidRevocationList::connect(url)
         .await
         .unwrap();
-    Extension(attestation_gateway::android::AndroidAttestationService::new(
-        attestation_gateway::android::AndroidCaRegistry::from_default_pem().unwrap(),
-        list,
-    ))
+    Extension(
+        attestation_gateway::android::AndroidAttestationService::new(
+            attestation_gateway::android::AndroidCaRegistry::from_default_pem().unwrap(),
+            list,
+        ),
+    )
 }
 
 async fn get_redis_extension() -> Extension<redis::aio::ConnectionManager> {

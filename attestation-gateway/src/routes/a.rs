@@ -199,8 +199,10 @@ pub async fn handler(
         }
     };
 
-    let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
-        match e {
+    let token_details = nonce_db
+        .consume_nonce(&request.nonce)
+        .await
+        .map_err(|e| match e {
             NonceDbError::NonceNotFound => RequestError {
                 code: ErrorCode::BadRequest,
                 details: Some("Nonce not found".to_string()),
@@ -213,8 +215,7 @@ pub async fn handler(
                     details: Some("Error consuming token nonce".to_string()),
                 }
             }
-        }
-    })?;
+        })?;
 
     let integrity_token = generate_integrity_token(
         &mut redis,
