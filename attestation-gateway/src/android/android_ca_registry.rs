@@ -59,7 +59,7 @@ impl AndroidCaRegistry {
         })
     }
 
-    pub fn has_public_key(self, public_key: Vec<u8>) -> bool {
-        self.public_keys.iter().any(|key| key == &public_key)
+    pub fn has_public_key(&self, public_key: &[u8]) -> bool {
+        self.public_keys.iter().any(|key| key.as_slice() == public_key)
     }
 }

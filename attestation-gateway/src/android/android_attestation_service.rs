@@ -67,7 +67,7 @@ impl AndroidAttestationService {
     }
 
     pub fn verify(
-        self,
+        &self,
         base64_cert_chain: Vec<String>,
         nonce: &String,
         app_version: &String,
@@ -78,7 +78,7 @@ impl AndroidAttestationService {
 
         if !self
             .ca_registry
-            .has_public_key(cert_chain.root_ca_public_key())
+            .has_public_key(&cert_chain.root_ca_public_key())
         {
             return Err(AndroidAttestationError::InvalidCaRoot);
         }
