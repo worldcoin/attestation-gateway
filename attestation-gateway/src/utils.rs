@@ -150,7 +150,10 @@ impl BundleIdentifier {
             Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
                 Platform::Android
             }
-            Self::IOSProdWorldApp | Self::IOSStageWorldApp | Self::IOSProdWorldID | Self::IOSStageWorldID => Platform::AppleIOS,
+            Self::IOSProdWorldApp
+            | Self::IOSStageWorldApp
+            | Self::IOSProdWorldID
+            | Self::IOSStageWorldID => Platform::AppleIOS,
         }
     }
 
@@ -162,7 +165,10 @@ impl BundleIdentifier {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
             Self::AndroidDevWorldApp => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
-            Self::IOSProdWorldApp | Self::IOSStageWorldApp | Self::IOSProdWorldID | Self::IOSStageWorldID => None,
+            Self::IOSProdWorldApp
+            | Self::IOSStageWorldApp
+            | Self::IOSProdWorldID
+            | Self::IOSStageWorldID => None,
         }
     }
 
