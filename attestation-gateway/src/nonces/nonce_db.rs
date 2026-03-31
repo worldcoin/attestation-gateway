@@ -13,10 +13,10 @@ pub enum NonceDbError {
     NonceNotFound,
 
     #[error("serialization error: {0}")]
-    SerializationError(serde_json::Error),
+    SerializationError(#[source] serde_json::Error),
 
     #[error("redis error: {0}")]
-    RedisError(RedisError),
+    RedisError(#[source] RedisError),
 }
 
 #[derive(Clone)]
@@ -43,7 +43,8 @@ impl NonceDb {
         let nonce = hex::encode(nonce);
 
         let key = format!("nonce:{nonce}");
-        let value = serde_json::to_string(token_details)?;
+        let value =
+            serde_json::to_string(token_details).map_err(NonceDbError::SerializationError)?;
         let options = SetOptions::default()
             .with_expiration(SetExpiry::EX(Duration::minutes(5).num_seconds() as u64))
             .conditional_set(ExistenceCheck::NX);
