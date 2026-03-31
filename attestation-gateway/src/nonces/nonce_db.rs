@@ -13,10 +13,10 @@ pub enum NonceDbError {
     NonceNotFound,
 
     #[error("serialization error: {0}")]
-    SerializationError(#[from] serde_json::Error),
+    SerializationError(serde_json::Error),
 
     #[error("redis error: {0}")]
-    RedisError(#[from] RedisError),
+    RedisError(RedisError),
 }
 
 #[derive(Clone)]
@@ -50,7 +50,8 @@ impl NonceDb {
 
         self.redis
             .set_options::<String, String>(key, value, options)
-            .await?;
+            .await
+            .map_err(NonceDbError::RedisError)?;
 
         Ok(nonce)
     }
@@ -63,10 +64,12 @@ impl NonceDb {
         let value = self
             .redis
             .get_del::<String>(key)
-            .await?
+            .await
+            .map_err(NonceDbError::RedisError)?
             .ok_or(NonceDbError::NonceNotFound)?;
 
-        let token_details: TokenDetails = serde_json::from_str(&value)?;
+        let token_details: TokenDetails =
+            serde_json::from_str(&value).map_err(NonceDbError::SerializationError)?;
 
         Ok(token_details)
     }
