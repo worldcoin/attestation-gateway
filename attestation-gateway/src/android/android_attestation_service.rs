@@ -121,30 +121,33 @@ impl AndroidAttestationService {
 
         if !self
             .ca_registry
-            .has_public_key(&cert_chain.root_ca_public_key())
+            .has_public_key(&cert_chain.root_certificate().public_key)
         {
             return Err(AndroidAttestationError::InvalidCaRoot);
         }
 
-        if cert_chain.attestation_challenge() != format!("n={},av={}", nonce, app_version) {
+        if cert_chain.device_certificate().attestation_challenge()
+            != format!("n={},av={}", nonce, app_version)
+        {
             return Err(AndroidAttestationError::InvalidChallenge);
         }
 
         if !matches!(
-            cert_chain.device_attestation_security_level(),
+            cert_chain.device_certificate().attestation_security_level(),
             KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT | KM_SECURITY_LEVEL_STRONG_BOX
         ) {
             return Err(AndroidAttestationError::LowSecurityLevel);
         }
 
-        if cert_chain.device_key_mint_security_level()
-            != cert_chain.device_attestation_security_level()
+        if cert_chain.device_certificate().key_mint_security_level()
+            != cert_chain.device_certificate().attestation_security_level()
         {
             return Err(AndroidAttestationError::InconsistentSecurityLevels);
         }
 
         let verified_boot_state = cert_chain
-            .device_verified_boot_state()
+            .device_certificate()
+            .verified_boot_state()
             .ok_or(AndroidAttestationError::MissingRootOfTrust)?;
 
         if verified_boot_state != KM_VERIFIED_BOOT_VERIFIED {
@@ -152,6 +155,7 @@ impl AndroidAttestationService {
         }
 
         let device_locked = cert_chain
+            .device_certificate()
             .device_locked()
             .ok_or(AndroidAttestationError::MissingRootOfTrust)?;
 
@@ -160,7 +164,8 @@ impl AndroidAttestationService {
         }
 
         let os_patch_level = cert_chain
-            .device_os_patch_level()
+            .device_certificate()
+            .os_patch_level()
             .ok_or(AndroidAttestationError::MissingOsPatchLevel)?;
 
         let year_ago = DateTime::<Utc>::from(SystemTime::now() - Duration::from_hours(24 * 365));
@@ -171,7 +176,8 @@ impl AndroidAttestationService {
         }
 
         let key_origin = cert_chain
-            .device_key_origin()
+            .device_certificate()
+            .key_origin()
             .ok_or(AndroidAttestationError::MissingKeyOrigin)?;
 
         if key_origin != KM_ORIGIN_GENERATED {
@@ -179,7 +185,8 @@ impl AndroidAttestationService {
         }
 
         let attestation_signature_digests = cert_chain
-            .device_attestation_signature_digests()
+            .device_certificate()
+            .attestation_signature_digests()
             .ok_or(AndroidAttestationError::MissingAttestationSignatureDigests)?;
 
         let expected_attestation_signature_digest = bundle_identifier
@@ -192,7 +199,8 @@ impl AndroidAttestationService {
         }
 
         let attestation_package_name = cert_chain
-            .device_package_name()
+            .device_certificate()
+            .package_name()
             .ok_or(AndroidAttestationError::MissingPackageName)?;
 
         if attestation_package_name != bundle_identifier.to_string() {
@@ -200,7 +208,7 @@ impl AndroidAttestationService {
         }
 
         Ok(AndroidAttestationOutput {
-            device_public_key: cert_chain.device_public_key(),
+            device_public_key: cert_chain.device_certificate().public_key(),
         })
     }
 }

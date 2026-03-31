@@ -170,48 +170,12 @@ impl AndroidCertChain {
         &self.serials
     }
 
-    pub fn root_ca_public_key(&self) -> Vec<u8> {
-        self.root_certificate.public_key.clone()
+    pub fn device_certificate(&self) -> &DeviceCertificate {
+        &self.device_certificate
     }
 
-    pub fn device_public_key(&self) -> Vec<u8> {
-        self.device_certificate.public_key()
-    }
-
-    pub fn attestation_challenge(&self) -> String {
-        self.device_certificate.attestation_challenge()
-    }
-
-    pub fn device_attestation_security_level(&self) -> u32 {
-        self.device_certificate.attestation_security_level()
-    }
-
-    pub fn device_key_mint_security_level(&self) -> u32 {
-        self.device_certificate.key_mint_security_level()
-    }
-
-    pub fn device_locked(&self) -> Option<bool> {
-        self.device_certificate.device_locked()
-    }
-
-    pub fn device_verified_boot_state(&self) -> Option<u32> {
-        self.device_certificate.verified_boot_state()
-    }
-
-    pub fn device_key_origin(&self) -> Option<u64> {
-        self.device_certificate.key_origin()
-    }
-
-    pub fn device_attestation_signature_digests(&self) -> Option<&[Vec<u8>]> {
-        self.device_certificate.attestation_signature_digests()
-    }
-
-    pub fn device_package_name(&self) -> Option<&str> {
-        self.device_certificate.package_name()
-    }
-
-    pub fn device_os_patch_level(&self) -> Option<u64> {
-        self.device_certificate.os_patch_level()
+    pub fn root_certificate(&self) -> &RootCertificate {
+        &self.root_certificate
     }
 }
 
