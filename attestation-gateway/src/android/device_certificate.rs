@@ -171,10 +171,6 @@ mod tests {
         assert!(cert.attestation_security_level() == 1);
         assert_eq!(cert.device_locked(), Some(true));
         assert_eq!(cert.os_patch_level(), Some(202503));
-
-        let year_ago = DateTime::<Utc>::from(SystemTime::now() - Duration::from_hours(24 * 365));
-        let min_os_patch_level = year_ago.year() as u64 * 100 + year_ago.month() as u64;
-        assert_eq!(min_os_patch_level, 202503);
     }
 
     #[test]
