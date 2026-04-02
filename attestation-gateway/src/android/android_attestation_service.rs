@@ -227,7 +227,7 @@ impl AndroidAttestationService {
                 .map(|os_patch_level| {
                     let now = DateTime::<Utc>::from(SystemTime::now());
                     let now = now.year_ce().1 * 100 + now.month();
-                    os_patch_level - now
+                    now - os_patch_level
                 });
 
         Ok(AndroidAttestationOutput {
