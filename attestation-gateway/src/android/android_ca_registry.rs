@@ -7,12 +7,14 @@ use x509_parser::{
 
 #[derive(Debug, Error)]
 pub enum AndroidCaRegistryError {
-    #[error("PEM parsing failed")]
+    #[error("pem parsing: {0}")]
     PemParsing(#[source] openssl::error::ErrorStack),
-    #[error("DER parsing failed")]
+
+    #[error("der parsing")]
     DerParsing,
-    #[error("internal DER encoding failed")]
-    InternalDerEncoding(#[source] openssl::error::ErrorStack),
+
+    #[error("der encoding: {0}")]
+    DerEncoding(#[source] openssl::error::ErrorStack),
 }
 
 #[derive(Debug, Clone)]
@@ -43,7 +45,7 @@ impl AndroidCaRegistry {
             .iter()
             .map(|cert| cert.to_der())
             .collect::<Result<Vec<Vec<u8>>, openssl::error::ErrorStack>>()
-            .map_err(|e| AndroidCaRegistryError::InternalDerEncoding(e))?;
+            .map_err(|e| AndroidCaRegistryError::DerEncoding(e))?;
 
         Self::from_der(der_ca_certs)
     }
@@ -67,5 +69,23 @@ impl AndroidCaRegistry {
         self.public_keys
             .iter()
             .any(|key| key.as_slice() == public_key)
+    }
+}
+
+impl AndroidCaRegistryError {
+    pub fn reason_tag(&self) -> String {
+        match self {
+            AndroidCaRegistryError::PemParsing(_) => "pem_parsing".to_string(),
+            AndroidCaRegistryError::DerParsing => "der_parsing".to_string(),
+            AndroidCaRegistryError::DerEncoding(_) => "der_encoding".to_string(),
+        }
+    }
+
+    pub fn is_internal_error(&self) -> bool {
+        match self {
+            AndroidCaRegistryError::PemParsing(_) => false,
+            AndroidCaRegistryError::DerParsing => false,
+            AndroidCaRegistryError::DerEncoding(_) => true,
+        }
     }
 }

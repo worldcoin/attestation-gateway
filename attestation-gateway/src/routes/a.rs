@@ -17,7 +17,7 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    android::{AndroidAttestationError, AndroidAttestationService, AndroidCertChainError},
+    android::AndroidAttestationService,
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
@@ -140,60 +140,41 @@ pub async fn handler(
                 details: Some("Android attestation is required".to_string()),
             })?;
 
-            let attestation_output =
-                android_attestation
-                    .verify(
-                        android_cert_chain,
-                        &request.nonce,
-                        &request.app_version,
-                        &request.bundle_identifier,
-                     )
-                    .map_err(|e| match e {
-                        AndroidAttestationError::CertChain(AndroidCertChainError::InvalidChain(code)) => {
-                            tracing::error!(code = ?code, "Certificate chain error");
+            let attestation_result = android_attestation.verify(
+                android_cert_chain,
+                &request.nonce,
+                &request.app_version,
+                &request.bundle_identifier,
+            );
 
-                            RequestError {
-                                code: ErrorCode::BadRequest,
-                                details: Some("Certificate chain error".to_string()),
-                            }
-                        },
-                        AndroidAttestationError::InvalidCaRoot => RequestError {
-                            code: ErrorCode::BadRequest,
-                            details: Some("Invalid CA root".to_string()),
-                        },
-                        AndroidAttestationError::BootNotVerified => RequestError {
-                            code: ErrorCode::BadRequest,
-                            details: Some("Verified boot state must be verified".to_string()),
-                        },
-                        AndroidAttestationError::KeyNotGeneratedInSecureHardware => RequestError {
-                            code: ErrorCode::BadRequest,
-                            details: Some("Key must be generated in secure hardware, not imported".to_string()),
-                        },
-                        AndroidAttestationError::MissingRootOfTrust => RequestError {
-                            code: ErrorCode::BadRequest,
-                            details: Some("Hardware-enforced root of trust is missing from attestation".to_string()),
-                        },
-                        AndroidAttestationError::MissingKeyOrigin => RequestError {
-                            code: ErrorCode::BadRequest,
-                            details: Some("Hardware-enforced key origin is missing from attestation".to_string()),
-                        },
-                        AndroidAttestationError::InvalidPackageName => RequestError {
-                            code: ErrorCode::BadRequest,
-                            details: Some("Attestation package name does not match the requested bundle identifier".to_string()),
-                        },
-                        AndroidAttestationError::CertificateRevoked => RequestError {
-                            code: ErrorCode::BadRequest,
-                            details: Some("Certificate chain includes a revoked attestation key".to_string()),
-                        },
-                        _ => {
-                            tracing::error!(error = ?e, "Error during android attestation verification");
+            let attestation_output = match attestation_result {
+                Ok(attestation_output) => Ok(attestation_output),
+                Err(e) => {
+                    metrics::counter!("android_attestation_error",  "reason" => e.reason_tag())
+                        .increment(1);
 
-                            RequestError {
-                                code: ErrorCode::InternalServerError,
-                                details: Some("Android attestation error".to_string()),
-                            }
-                        }
-                    })?;
+                    if e.is_internal_error() {
+                        tracing::error!(error = ?e, "Error validating Android attestation");
+
+                        Err(RequestError {
+                            code: ErrorCode::InternalServerError,
+                            details: None,
+                        })
+                    } else {
+                        Err(RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some(e.to_string()),
+                        })
+                    }
+                }
+            }?;
+
+            metrics::counter!("android_attestation_success").increment(1);
+            if let Some(os_patch_level) = attestation_output.os_patch_level {
+                metrics::gauge!("android_attestation_os_patch_level").set(os_patch_level as f64);
+            } else {
+                metrics::counter!("android_attestation_missing_os_patch_level").increment(1);
+            }
 
             attestation_output.device_public_key
         }

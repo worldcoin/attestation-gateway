@@ -34,10 +34,14 @@ const REFRESH_FAILURE_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum AndroidRevocationListError {
-    #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
-    #[error("invalid JSON: {0}")]
-    Json(#[from] serde_json::Error),
+    #[error("reqwest error: {0}")]
+    ReqwestError(#[source] reqwest::Error),
+
+    #[error("fetch revocations http error: {0}")]
+    FetchRevocationsHttpError(#[source] reqwest::Error),
+
+    #[error("fetch revocations json error: {0}")]
+    FetchRevocationsJsonError(#[source] serde_json::Error),
 }
 
 /// Shared handle to Google's attestation revocation JSON (thread-safe, cheap to clone).
@@ -68,7 +72,7 @@ impl AndroidRevocationList {
     /// Fetches the revocation feed once and returns a list whose cache is populated.
     pub async fn connect(url: impl Into<String>) -> Result<Self, AndroidRevocationListError> {
         let url = url.into();
-        let client = build_http_client()?;
+        let client = build_http_client().map_err(AndroidRevocationListError::ReqwestError)?;
         let state = fetch_revocations(&client, &url).await?;
 
         Ok(Self {
@@ -129,6 +133,7 @@ impl AndroidRevocationList {
                 if !wait.is_zero() {
                     tokio::time::sleep(wait).await;
                 }
+
                 match list.refresh().await {
                     Ok(()) => {}
                     Err(e) => {
@@ -136,6 +141,7 @@ impl AndroidRevocationList {
                             error = %e,
                             "android attestation revocation list refresh failed; retrying after backoff"
                         );
+
                         tokio::time::sleep(REFRESH_FAILURE_BACKOFF).await;
                     }
                 }
@@ -148,7 +154,12 @@ async fn fetch_revocations(
     client: &Client,
     url: &str,
 ) -> Result<CacheState, AndroidRevocationListError> {
-    let response = client.get(url).send().await?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(AndroidRevocationListError::FetchRevocationsHttpError)?;
+
     let max_age = response
         .headers()
         .get(reqwest::header::CACHE_CONTROL)
@@ -156,8 +167,13 @@ async fn fetch_revocations(
         .and_then(parse_cache_control_max_age)
         .unwrap_or(DEFAULT_FALLBACK_MAX_AGE);
 
-    let body = response.bytes().await?;
-    let parsed: StatusResponse = serde_json::from_slice(&body)?;
+    let body = response
+        .bytes()
+        .await
+        .map_err(AndroidRevocationListError::FetchRevocationsHttpError)?;
+
+    let parsed: StatusResponse = serde_json::from_slice(&body)
+        .map_err(AndroidRevocationListError::FetchRevocationsJsonError)?;
 
     let mut revoked = HashSet::with_capacity(parsed.entries.len());
     for (key, entry) in parsed.entries {
@@ -170,6 +186,24 @@ async fn fetch_revocations(
         revoked_ids: revoked,
         valid_until: Some(Instant::now() + max_age),
     })
+}
+
+impl AndroidRevocationListError {
+    pub fn reason_tag(&self) -> String {
+        match self {
+            AndroidRevocationListError::ReqwestError(_) => "reqwest_error".to_string(),
+            AndroidRevocationListError::FetchRevocationsHttpError(_) => {
+                "fetch_revocations_http_error".to_string()
+            }
+            AndroidRevocationListError::FetchRevocationsJsonError(_) => {
+                "fetch_revocations_json_error".to_string()
+            }
+        }
+    }
+
+    pub fn is_internal_error(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Deserialize)]

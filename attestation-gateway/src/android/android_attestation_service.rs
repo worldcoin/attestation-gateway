@@ -1,5 +1,3 @@
-use std::time::{Duration, SystemTime};
-
 use crate::{
     android::{
         android_ca_registry::{AndroidCaRegistry, AndroidCaRegistryError},
@@ -8,8 +6,7 @@ use crate::{
     },
     utils::BundleIdentifier,
 };
-use base64::{Engine, engine::general_purpose::STANDARD as Base64};
-use chrono::{DateTime, Datelike, Utc};
+use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use thiserror::Error;
 
 /// Android `KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT` — KeyMint / Keymaster in the TEE.
@@ -26,50 +23,67 @@ const KM_ORIGIN_GENERATED: u64 = 0;
 
 #[derive(Debug, Error)]
 pub enum AndroidAttestationError {
-    #[error(transparent)]
-    CaRegistry(#[from] AndroidCaRegistryError),
-    #[error(transparent)]
-    RevocationList(#[from] AndroidRevocationListError),
-    #[error(transparent)]
-    CertChain(#[from] AndroidCertChainError),
-    #[error("device certificate is not signed by a trusted Android attestation root CA")]
+    #[error("ca registry: {0}")]
+    CaRegistry(#[source] AndroidCaRegistryError),
+
+    #[error("revocation list: {0}")]
+    RevocationList(#[source] AndroidRevocationListError),
+
+    #[error("cert chain: {0}")]
+    CertChain(#[source] AndroidCertChainError),
+
+    #[error("invalid ca root")]
     InvalidCaRoot,
-    #[error("attestation challenge does not match expected nonce and app version")]
+
+    #[error("invalid challenge")]
     InvalidChallenge,
-    #[error("attestation or KeyMint security level is not TEE or StrongBox")]
+
+    #[error("low security level")]
     LowSecurityLevel,
-    #[error("attestation and KeyMint security levels differ")]
+
+    #[error("inconsistent security levels")]
     InconsistentSecurityLevels,
-    #[error("device must be locked")]
+
+    #[error("device not locked")]
     DeviceNotLocked,
-    #[error("verified boot state is not verified")]
+
+    #[error("boot not verified")]
     BootNotVerified,
-    #[error("key was not generated in secure hardware")]
+
+    #[error("key not generated in secure hardware")]
     KeyNotGeneratedInSecureHardware,
-    #[error("missing root of trust in attestation extension")]
+
+    #[error("missing root of trust")]
     MissingRootOfTrust,
-    #[error("missing key origin in attestation extension")]
+
+    #[error("missing key origin")]
     MissingKeyOrigin,
-    #[error("missing OS patch level in attestation extension")]
-    MissingOsPatchLevel,
-    #[error("missing attestation signature digests in attestation extension")]
+
+    #[error("missing attestation signature digests")]
     MissingAttestationSignatureDigests,
-    #[error("attestation signature digest does not match app certificate")]
+
+    #[error("invalid attestation signature digest")]
     InvalidAttestationSignatureDigest,
-    #[error("bundle identifier has no SHA-256 certificate digest configured")]
-    InternalMissingCertificateDigest,
-    #[error("OS patch level is too old")]
-    InvalidOsPatchLevel,
-    #[error("missing package name in attestation extension")]
+
+    #[error("missing package name")]
     MissingPackageName,
-    #[error("attestation package name does not match bundle identifier")]
+
+    #[error("invalid package name")]
     InvalidPackageName,
-    #[error("certificate serial is on the revocation list")]
+
+    #[error("certificate revoked")]
     CertificateRevoked,
+
+    #[error("missing certificate digest")]
+    MissingCertificateDigest,
+
+    #[error("bad certificate digest encoding: {0}")]
+    BadCertificateDigestEncoding(#[source] DecodeError),
 }
 
 pub struct AndroidAttestationOutput {
     pub device_public_key: Vec<u8>,
+    pub os_patch_level: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -163,18 +177,6 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::DeviceNotLocked);
         }
 
-        let os_patch_level = cert_chain
-            .device_certificate()
-            .os_patch_level()
-            .ok_or(AndroidAttestationError::MissingOsPatchLevel)?;
-
-        let year_ago = DateTime::<Utc>::from(SystemTime::now() - Duration::from_hours(24 * 365));
-        let min_os_patch_level = year_ago.year() as u64 * 100 + year_ago.month() as u64;
-
-        if os_patch_level < min_os_patch_level {
-            return Err(AndroidAttestationError::InvalidOsPatchLevel);
-        }
-
         let key_origin = cert_chain
             .device_certificate()
             .key_origin()
@@ -191,8 +193,11 @@ impl AndroidAttestationService {
 
         let expected_attestation_signature_digest = bundle_identifier
             .certificate_sha256_digest_base64()
-            .and_then(|d| Base64.decode(d).ok())
-            .ok_or(AndroidAttestationError::InternalMissingCertificateDigest)?;
+            .ok_or(AndroidAttestationError::MissingCertificateDigest)?;
+
+        let expected_attestation_signature_digest = Base64
+            .decode(expected_attestation_signature_digest)
+            .map_err(AndroidAttestationError::BadCertificateDigestEncoding)?;
 
         if !attestation_signature_digests.contains(&expected_attestation_signature_digest) {
             return Err(AndroidAttestationError::InvalidAttestationSignatureDigest);
@@ -209,6 +214,75 @@ impl AndroidAttestationService {
 
         Ok(AndroidAttestationOutput {
             device_public_key: cert_chain.device_certificate().public_key(),
+            os_patch_level: cert_chain.device_certificate().os_patch_level(),
         })
+    }
+}
+
+impl AndroidAttestationError {
+    pub fn reason_tag(&self) -> String {
+        match self {
+            AndroidAttestationError::CaRegistry(e) => {
+                format!("ca_registry_{}", e.reason_tag())
+            }
+            AndroidAttestationError::RevocationList(e) => {
+                format!("revocation_list_{}", e.reason_tag())
+            }
+            AndroidAttestationError::CertChain(e) => {
+                format!("cert_chain_{}", e.reason_tag())
+            }
+            AndroidAttestationError::InvalidCaRoot => "invalid_ca_root".to_string(),
+            AndroidAttestationError::InvalidChallenge => "invalid_challenge".to_string(),
+            AndroidAttestationError::LowSecurityLevel => "low_security_level".to_string(),
+            AndroidAttestationError::InconsistentSecurityLevels => {
+                "inconsistent_security_levels".to_string()
+            }
+            AndroidAttestationError::DeviceNotLocked => "device_not_locked".to_string(),
+            AndroidAttestationError::BootNotVerified => "boot_not_verified".to_string(),
+            AndroidAttestationError::KeyNotGeneratedInSecureHardware => {
+                "key_not_generated_in_secure_hardware".to_string()
+            }
+            AndroidAttestationError::MissingRootOfTrust => "missing_root_of_trust".to_string(),
+            AndroidAttestationError::MissingKeyOrigin => "missing_key_origin".to_string(),
+            AndroidAttestationError::MissingAttestationSignatureDigests => {
+                "missing_attestation_signature_digests".to_string()
+            }
+            AndroidAttestationError::InvalidAttestationSignatureDigest => {
+                "invalid_attestation_signature_digest".to_string()
+            }
+            AndroidAttestationError::MissingPackageName => "missing_package_name".to_string(),
+            AndroidAttestationError::InvalidPackageName => "invalid_package_name".to_string(),
+            AndroidAttestationError::CertificateRevoked => "certificate_revoked".to_string(),
+            AndroidAttestationError::MissingCertificateDigest => {
+                "missing_certificate_digest".to_string()
+            }
+            AndroidAttestationError::BadCertificateDigestEncoding(_) => {
+                "bad_certificate_digest_encoding".to_string()
+            }
+        }
+    }
+
+    pub fn is_internal_error(&self) -> bool {
+        match self {
+            AndroidAttestationError::CaRegistry(e) => e.is_internal_error(),
+            AndroidAttestationError::RevocationList(e) => e.is_internal_error(),
+            AndroidAttestationError::CertChain(e) => e.is_internal_error(),
+            AndroidAttestationError::InvalidCaRoot => false,
+            AndroidAttestationError::InvalidChallenge => false,
+            AndroidAttestationError::LowSecurityLevel => false,
+            AndroidAttestationError::InconsistentSecurityLevels => false,
+            AndroidAttestationError::DeviceNotLocked => false,
+            AndroidAttestationError::BootNotVerified => false,
+            AndroidAttestationError::KeyNotGeneratedInSecureHardware => false,
+            AndroidAttestationError::MissingRootOfTrust => false,
+            AndroidAttestationError::MissingKeyOrigin => false,
+            AndroidAttestationError::MissingAttestationSignatureDigests => false,
+            AndroidAttestationError::InvalidAttestationSignatureDigest => false,
+            AndroidAttestationError::MissingPackageName => false,
+            AndroidAttestationError::InvalidPackageName => false,
+            AndroidAttestationError::CertificateRevoked => false,
+            AndroidAttestationError::MissingCertificateDigest => true,
+            AndroidAttestationError::BadCertificateDigestEncoding(_) => true,
+        }
     }
 }

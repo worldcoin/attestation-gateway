@@ -27,13 +27,16 @@ fn attestation_version_from_der(der: &[u8]) -> Result<u64, asn1::ParseError> {
 
 #[derive(Debug, Error)]
 pub enum KeyDescriptionError {
-    #[error("failed to read attestation version")]
+    #[error("parse_version")]
     ParseVersion(#[source] asn1::ParseError),
-    #[error("invalid attestation extension")]
-    ParseError(#[source] asn1::ParseError),
-    #[error("invalid attestation challenge UTF-8")]
+
+    #[error("parsing")]
+    Parsing(#[source] asn1::ParseError),
+
+    #[error("parse_challenge")]
     ParseChallenge(#[source] FromUtf8Error),
-    #[error("unsupported attestation version: {0}")]
+
+    #[error("invalid_version_{0}")]
     InvalidVersion(u64),
 }
 
@@ -69,7 +72,7 @@ impl KeyDescription {
 
     fn from_key_description_1(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
         let key_description = asn1::parse_single::<KeyDescription1>(&der)
-            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+            .map_err(|e| KeyDescriptionError::Parsing(e))?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
@@ -111,7 +114,7 @@ impl KeyDescription {
 
     fn from_key_description_2(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
         let key_description = asn1::parse_single::<KeyDescription2>(&der)
-            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+            .map_err(|e| KeyDescriptionError::Parsing(e))?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
@@ -167,7 +170,7 @@ impl KeyDescription {
 
     fn from_key_description_3(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
         let key_description = asn1::parse_single::<KeyDescription3>(&der)
-            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+            .map_err(|e| KeyDescriptionError::Parsing(e))?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
@@ -223,7 +226,7 @@ impl KeyDescription {
 
     fn from_key_description_4(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
         let key_description = asn1::parse_single::<KeyDescription4>(&der)
-            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+            .map_err(|e| KeyDescriptionError::Parsing(e))?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
@@ -279,7 +282,7 @@ impl KeyDescription {
 
     fn from_key_description_100(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
         let key_description = asn1::parse_single::<KeyDescription100>(&der)
-            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+            .map_err(|e| KeyDescriptionError::Parsing(e))?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
@@ -335,7 +338,7 @@ impl KeyDescription {
 
     fn from_key_description_200(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
         let key_description = asn1::parse_single::<KeyDescription200>(&der)
-            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+            .map_err(|e| KeyDescriptionError::Parsing(e))?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
@@ -391,7 +394,7 @@ impl KeyDescription {
 
     fn from_key_description_300(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
         let key_description = asn1::parse_single::<KeyDescription300>(&der)
-            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+            .map_err(|e| KeyDescriptionError::Parsing(e))?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
@@ -447,7 +450,7 @@ impl KeyDescription {
 
     fn from_key_description_400(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
         let key_description = asn1::parse_single::<KeyDescription400>(&der)
-            .map_err(|e| KeyDescriptionError::ParseError(e))?;
+            .map_err(|e| KeyDescriptionError::Parsing(e))?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
@@ -499,5 +502,25 @@ impl KeyDescription {
             package_name,
             attestation_signature_digests,
         })
+    }
+}
+
+impl KeyDescriptionError {
+    pub fn reason_tag(&self) -> String {
+        match self {
+            KeyDescriptionError::ParseVersion(_) => "attestation_version".to_string(),
+            KeyDescriptionError::Parsing(_) => "parsing".to_string(),
+            KeyDescriptionError::ParseChallenge(_) => "parse_challenge".to_string(),
+            KeyDescriptionError::InvalidVersion(v) => format!("invalid_version_{}", v),
+        }
+    }
+
+    pub fn is_internal_error(&self) -> bool {
+        match self {
+            KeyDescriptionError::ParseVersion(_) => false,
+            KeyDescriptionError::Parsing(_) => false,
+            KeyDescriptionError::ParseChallenge(_) => false,
+            KeyDescriptionError::InvalidVersion(_) => false,
+        }
     }
 }

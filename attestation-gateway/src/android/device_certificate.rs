@@ -8,20 +8,20 @@ use crate::android::key_description::{KeyDescription, KeyDescriptionError};
 
 #[derive(Debug, Error)]
 pub enum DeviceCertificateError {
-    #[error("DER encoding failed")]
+    #[error("attestation parsing: {0}")]
+    AttestationParsing(#[source] KeyDescriptionError),
+
+    #[error("der encoding: {0}")]
     DerEncoding(#[source] openssl::error::ErrorStack),
 
-    #[error("DER decoding failed")]
+    #[error("der decoding")]
     DerDecoding,
 
-    #[error("attestation extension extraction failed")]
+    #[error("attestation extraction")]
     AttestationExtraction,
 
-    #[error("missing attestation extension")]
+    #[error("missing attestation")]
     MissingAttestation,
-
-    #[error("attestation extension parsing failed")]
-    AttestationParsing(#[source] KeyDescriptionError),
 }
 
 pub struct DeviceCertificate {
@@ -100,9 +100,35 @@ impl DeviceCertificate {
     }
 }
 
+impl DeviceCertificateError {
+    pub fn reason_tag(&self) -> String {
+        match self {
+            DeviceCertificateError::DerEncoding(_) => "der_encoding".to_string(),
+            DeviceCertificateError::DerDecoding => "der_decoding".to_string(),
+            DeviceCertificateError::AttestationExtraction => "attestation_extraction".to_string(),
+            DeviceCertificateError::MissingAttestation => "missing_attestation".to_string(),
+            DeviceCertificateError::AttestationParsing(e) => {
+                format!("attestation_parsing_{}", e.reason_tag())
+            }
+        }
+    }
+
+    pub fn is_internal_error(&self) -> bool {
+        match self {
+            DeviceCertificateError::AttestationParsing(e) => e.is_internal_error(),
+            DeviceCertificateError::DerEncoding(_) => true,
+            DeviceCertificateError::DerDecoding => true,
+            DeviceCertificateError::AttestationExtraction => false,
+            DeviceCertificateError::MissingAttestation => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use base64::{Engine, engine::general_purpose::STANDARD as Base64};
+    use chrono::{DateTime, Datelike, Utc};
+    use std::time::{Duration, SystemTime};
 
     use super::*;
 
@@ -146,6 +172,11 @@ mod tests {
         assert!(cert.public_key().len() > 0);
         assert!(cert.attestation_security_level() == 1);
         assert_eq!(cert.device_locked(), Some(true));
+        assert_eq!(cert.os_patch_level(), Some(202503));
+
+        let year_ago = DateTime::<Utc>::from(SystemTime::now() - Duration::from_hours(24 * 365));
+        let min_os_patch_level = year_ago.year() as u64 * 100 + year_ago.month() as u64;
+        assert_eq!(min_os_patch_level, 202503);
     }
 
     #[test]
@@ -157,5 +188,23 @@ mod tests {
         assert!(cert.public_key().len() > 0);
         assert!(cert.attestation_security_level() == 1);
         assert_eq!(cert.device_locked(), Some(true));
+    }
+
+    #[test]
+    fn test_cert5() {
+        let cert = cert_from_test_b64(
+            "MIICzDCCAnCgAwIBAgIBATAMBggqhkjOPQQDAgUAMC8xGTAXBgNVBAUTEDkwZThkYTNjYWRmYzc4MjAxEjAQBgNVBAwMCVN0cm9uZ0JveDAiGA8yMDI2MDMzMTIyNTcyMloYDzIwMjYwMzMxMjMwMjIxWjAfMR0wGwYDVQQDDBRBbmRyb2lkIEtleXN0b3JlIEtleTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABDmi1ln2wwjVMcKGc16gOHEt4EcxWs05S8N3w9F2SpqcRelwptbs8tXFLcL7/F/SdDMJyyAjzit3s9QfnMWF0XyjggGFMIIBgTAOBgNVHQ8BAf8EBAMCB4AwggFtBgorBgEEAdZ5AgERBIIBXTCCAVkCAQQKAQICASkKAQIELm49YzA4ODUzOGRiZDI5MDY5MzVhMmJiZjdlZGZiYWI5ZDksYXY9NC4wLjE3MDAEADByv4MRCAIGAZ1GIjmzv4MSCAIGAZ1GIjmzv4N9AgUAv4U9CAIGAZ1GHamnv4VFRARCMEAxGjAYBBFjb20ud29ybGRjb2luLmRldgIDPQ+kMSIEIKNBbt/cqq7MXlkrnKoHu3jsxvMa7EQJ9Jym07Tf8dvgMIGkoQUxAwIBAqIDAgEDowQCAgEApQgxBgIBAAIBBKoDAgEBv4N3AgUAv4U+AwIBAL+FQEwwSgQgYf2hKzLthCFKnPE9Gv+3qoC9iiaKhh7Uu3oVFw8asAwBAf8KAQAEIMuBDKWKYbbA4RGjBGzOXFMM79ynwhOMxidq2r6VoXi6v4VBBQIDAdTAv4VCBQIDAxV+v4VOBgIEATRlPb+FTwYCBAE0ZT0wDAYIKoZIzj0EAwIFAANIADBFAiAJlkz/YHoZ57QXdrALWaYC6iDSFcmDQuUgLmak8tbPdQIhAP4u/IWmIUhU1bnaw9GSDJrzuANWQyVSdvM8J3e1dwTg",
+        );
+
+        assert_eq!(cert.os_patch_level(), Some(202110));
+    }
+
+    #[test]
+    fn test_cert6() {
+        let cert = cert_from_test_b64(
+            "MIIC3TCCAoOgAwIBAgIBATAKBggqhkjOPQQDAjA/MRIwEAYDVQQKEwlTdHJvbmdCb3gxKTAnBgNVBAMTIDM3ZTcyNWY4YmQyZjM3NDVlNGY4ZDQ5ZDI3YTA4NTY0MB4XDTcwMDEwMTAwMDAwMFoXDTQ4MDEwMTAwMDAwMFowHzEdMBsGA1UEAxMUQW5kcm9pZCBLZXlzdG9yZSBLZXkwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATV8cbFM6o8spqil2myOoZOcvsYH/21LPY3isNtdF+HlkaeK1wSegCbvZ6dbwqFImYzDVg0ytJ4CdJ8d4QPWhHEo4IBjjCCAYowDgYDVR0PAQH/BAQDAgeAMIIBdgYKKwYBBAHWeQIBEQSCAWYwggFiAgIBLAoBAgICASwKAQIELm49MDY5ZjQwM2E1YzdmMWRhZjA2NDk0M2RmNTRhYjZjNWYsYXY9NC4wLjE3MDAEADBzv4MRCAIGAZ1GQFm2v4MSCAIGAZ1GQFm2v4MVAwIBBb+FPQgCBgGdRjvNm7+FRUQEQjBAMRowGAQRY29tLndvcmxkY29pbi5kZXYCAz0PpDEiBCCjQW7f3KquzF5ZK5yqB7t47MbzGuxECfScptO03/Hb4DCBqqEFMQMCAQKiAwIBA6MEAgIBAKUIMQYCAQACAQSqAwIBAb+DdwIFAL+DfQIFAL+FPgMCAQC/hUBMMEoEICRLqveND+5VWlYv3T9w72EDZJL7p60ZK4O7jUJ+OAsXAQH/CgEABCAzPZyXG5X9sB5Q9g++McauXyjEMQyKBPGY9pFkdbL6rb+FQQUCAwJxAL+FQgUCAwMXa7+FTgYCBAE1JdG/hU8GAgQBNSXRMAoGCCqGSM49BAMCA0gAMEUCICwLmWvsIR6CDhssiJ6ONnYmejo7auLThnMAeeuGign0AiEAjt0WHgoPTdJPhpEHtbIjzcgziiciZGMPNn2KJ0k6Obo=",
+        );
+
+        assert_eq!(cert.os_patch_level(), Some(202603));
     }
 }
