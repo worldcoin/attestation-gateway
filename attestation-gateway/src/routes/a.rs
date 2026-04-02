@@ -150,7 +150,7 @@ pub async fn handler(
             let attestation_output = match attestation_result {
                 Ok(attestation_output) => Ok(attestation_output),
                 Err(e) => {
-                    metrics::counter!("android_attestation_error",  "reason" => e.reason_tag())
+                    metrics::counter!("attestation_gateway.android_error",  "reason" => e.reason_tag())
                         .increment(1);
 
                     if e.is_internal_error() {
@@ -170,16 +170,19 @@ pub async fn handler(
             }?;
 
             if let Some(os_patch_level) = attestation_output.os_patch_level {
-                metrics::gauge!("android_attestation_os_patch_level").set(os_patch_level as f64);
+                metrics::gauge!("attestation_gateway.android_os_patch_level")
+                    .set(os_patch_level as f64);
             } else {
-                metrics::counter!("android_attestation_missing_os_patch_level").increment(1);
+                metrics::counter!("attestation_gateway.android_missing_os_patch_level")
+                    .increment(1);
             }
 
             attestation_output.device_public_key
         }
     };
 
-    metrics::counter!("attestation_success", "platform" => platform.to_string()).increment(1);
+    metrics::counter!("attestation_gateway.attestation", "platform" => platform.to_string())
+        .increment(1);
 
     let token_details = nonce_db
         .consume_nonce(&request.nonce)
