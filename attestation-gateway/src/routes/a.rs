@@ -4,7 +4,7 @@ use aws_config::SdkConfig;
 
 use axum::{Extension, Json};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use josekit::jwt::JwtPayload;
 use openssl::{
     bn::BigNum,
@@ -169,9 +169,9 @@ pub async fn handler(
                 }
             }?;
 
-            if let Some(os_patch_level) = attestation_output.os_patch_level {
-                metrics::gauge!("attestation_gateway.android_os_patch_level")
-                    .set(f64::from(os_patch_level));
+            if let Some(os_patch_level_delta) = attestation_output.os_patch_level_delta {
+                metrics::gauge!("attestation_gateway.android_os_patch_level_delta")
+                    .set(f64::from(os_patch_level_delta));
             } else {
                 metrics::counter!("attestation_gateway.android_missing_os_patch_level")
                     .increment(1);

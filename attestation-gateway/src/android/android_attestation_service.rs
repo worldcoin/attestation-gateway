@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use crate::{
     android::{
         android_ca_registry::{AndroidCaRegistry, AndroidCaRegistryError},
@@ -7,6 +9,7 @@ use crate::{
     utils::BundleIdentifier,
 };
 use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
+use chrono::{DateTime, Datelike, Utc};
 use thiserror::Error;
 
 /// Android `KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT` — `KeyMint` / Keymaster in the TEE.
@@ -83,7 +86,7 @@ pub enum AndroidAttestationError {
 
 pub struct AndroidAttestationOutput {
     pub device_public_key: Vec<u8>,
-    pub os_patch_level: Option<u32>,
+    pub os_patch_level_delta: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -217,9 +220,19 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::InvalidPackageName);
         }
 
+        let os_patch_level_delta =
+            cert_chain
+                .device_certificate()
+                .os_patch_level()
+                .map(|os_patch_level| {
+                    let now = DateTime::<Utc>::from(SystemTime::now());
+                    let now = now.year_ce().1 * 100 + now.month();
+                    os_patch_level - now
+                });
+
         Ok(AndroidAttestationOutput {
             device_public_key: cert_chain.device_certificate().public_key(),
-            os_patch_level: cert_chain.device_certificate().os_patch_level(),
+            os_patch_level_delta,
         })
     }
 }
