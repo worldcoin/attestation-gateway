@@ -180,7 +180,10 @@ impl BundleIdentifier {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
             }
             Self::AndroidDevWorldApp => Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="),
-            Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
+            Self::IOSProdWorldApp
+            | Self::IOSStageWorldApp
+            | Self::IOSProdWorldID
+            | Self::IOSStageWorldID => None,
         }
     }
 
