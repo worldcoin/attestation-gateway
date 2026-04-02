@@ -135,6 +135,12 @@ pub enum BundleIdentifier {
     IOSProdWorldApp,
     #[serde(rename = "org.worldcoin.insight.staging")]
     IOSStageWorldApp,
+
+    // World ID
+    #[serde(rename = "org.world.id")]
+    IOSProdWorldID,
+    #[serde(rename = "org.world.staging.id")]
+    IOSStageWorldID,
 }
 
 impl BundleIdentifier {
@@ -144,7 +150,10 @@ impl BundleIdentifier {
             Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
                 Platform::Android
             }
-            Self::IOSProdWorldApp | Self::IOSStageWorldApp => Platform::AppleIOS,
+            Self::IOSProdWorldApp
+            | Self::IOSStageWorldApp
+            | Self::IOSProdWorldID
+            | Self::IOSStageWorldID => Platform::AppleIOS,
         }
     }
 
@@ -156,7 +165,10 @@ impl BundleIdentifier {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
             Self::AndroidDevWorldApp => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
-            Self::IOSProdWorldApp | Self::IOSStageWorldApp => None,
+            Self::IOSProdWorldApp
+            | Self::IOSStageWorldApp
+            | Self::IOSProdWorldID
+            | Self::IOSStageWorldID => None,
         }
     }
 
@@ -181,6 +193,8 @@ impl BundleIdentifier {
             // cspell:disable
             Self::IOSStageWorldApp => Some("35RXKB6738.org.worldcoin.insight.staging"),
             Self::IOSProdWorldApp => Some("35RXKB6738.org.worldcoin.insight"),
+            Self::IOSProdWorldID => Some("35RXKB6738.org.world.id"),
+            Self::IOSStageWorldID => Some("35RXKB6738.org.world.staging.id"),
             // cspell:enable
         }
     }
@@ -194,6 +208,8 @@ impl Display for BundleIdentifier {
             Self::AndroidDevWorldApp => write!(f, "com.worldcoin.dev"),
             Self::IOSProdWorldApp => write!(f, "org.worldcoin.insight"),
             Self::IOSStageWorldApp => write!(f, "org.worldcoin.insight.staging"),
+            Self::IOSProdWorldID => write!(f, "org.world.id"),
+            Self::IOSStageWorldID => write!(f, "org.world.staging.id"),
         }
     }
 }
