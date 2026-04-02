@@ -84,8 +84,7 @@ impl AndroidCaRegistryError {
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::PemParsing | Self::DerParsing => false,
-            Self::DerEncoding => true,
+            Self::PemParsing | Self::DerParsing | Self::DerEncoding => true,
         }
     }
 }
