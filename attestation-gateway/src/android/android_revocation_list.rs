@@ -70,6 +70,14 @@ fn build_http_client() -> Result<Client, reqwest::Error> {
 
 impl AndroidRevocationList {
     /// Fetches the revocation feed once and returns a list whose cache is populated.
+    ///
+    /// # Errors
+    ///
+    /// - [`AndroidRevocationListError::ReqwestError`] if the HTTP client cannot be constructed.
+    /// - [`AndroidRevocationListError::FetchRevocationsHttp`] if the GET fails or the response body
+    ///   cannot be read (network, timeout, transport).
+    /// - [`AndroidRevocationListError::FetchRevocationsJsonParsing`] if the body is not valid JSON
+    ///   or does not deserialize into the expected attestation status shape.
     pub async fn connect(url: impl Into<String>) -> Result<Self, AndroidRevocationListError> {
         let url = url.into();
         let client = build_http_client().map_err(AndroidRevocationListError::ReqwestError)?;
@@ -85,6 +93,10 @@ impl AndroidRevocationList {
     }
 
     /// Same as [`Self::connect`] with [`DEFAULT_ATTESTATION_STATUS_URL`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::connect`].
     pub async fn connect_google_default() -> Result<Self, AndroidRevocationListError> {
         Self::connect(DEFAULT_ATTESTATION_STATUS_URL).await
     }
@@ -116,6 +128,16 @@ impl AndroidRevocationList {
     /// Fetches and replaces the cache. Respects `Cache-Control` on the response.
     ///
     /// Must not be invoked concurrently with another refresh; see module documentation.
+    ///
+    /// # Errors
+    ///
+    /// - [`AndroidRevocationListError::FetchRevocationsHttp`] if the GET fails or the response body
+    ///   cannot be read.
+    /// - [`AndroidRevocationListError::FetchRevocationsJsonParsing`] if the body is not valid JSON
+    ///   or does not deserialize into the expected attestation status shape.
+    ///
+    /// The HTTP client is already built at connect time, so [`AndroidRevocationListError::ReqwestError`]
+    /// is not returned from this method.
     pub async fn refresh(&self) -> Result<(), AndroidRevocationListError> {
         let state = fetch_revocations(&self.inner.client, &self.inner.url).await?;
         self.inner.cache.store(Arc::new(state));
