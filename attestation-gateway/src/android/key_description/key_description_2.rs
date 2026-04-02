@@ -70,7 +70,7 @@ pub struct AuthorizationList<'a> {
     #[explicit(705)]
     pub _os_version: Option<u64>,
     #[explicit(706)]
-    pub os_patch_level: Option<u64>,
+    pub os_patch_level: Option<u32>,
     #[explicit(709)]
     pub attestation_application_id: Option<&'a [u8]>,
     #[explicit(710)]

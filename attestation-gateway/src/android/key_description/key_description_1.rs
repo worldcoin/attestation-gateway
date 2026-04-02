@@ -58,7 +58,7 @@ pub struct AuthorizationList<'a> {
     #[explicit(705)]
     pub _os_version: Option<u64>,
     #[explicit(706)]
-    pub os_patch_level: Option<u64>,
+    pub os_patch_level: Option<u32>,
 }
 
 /// Root of trust for attestation schema versions 1 and 2 (no `verified_boot_hash`).

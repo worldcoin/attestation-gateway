@@ -141,7 +141,7 @@ pub async fn handler(
             })?;
 
             let attestation_result = android_attestation.verify(
-                android_cert_chain,
+                &android_cert_chain,
                 &request.nonce,
                 &request.app_version,
                 &request.bundle_identifier,
@@ -171,7 +171,7 @@ pub async fn handler(
 
             if let Some(os_patch_level) = attestation_output.os_patch_level {
                 metrics::gauge!("attestation_gateway.android_os_patch_level")
-                    .set(os_patch_level as f64);
+                    .set(f64::from(os_patch_level));
             } else {
                 metrics::counter!("attestation_gateway.android_missing_os_patch_level")
                     .increment(1);
@@ -184,23 +184,21 @@ pub async fn handler(
     metrics::counter!("attestation_gateway.attestation", "platform" => platform.to_string())
         .increment(1);
 
-    let token_details = nonce_db
-        .consume_nonce(&request.nonce)
-        .await
-        .map_err(|e| match e {
-            NonceDbError::NonceNotFound => RequestError {
+    let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
+        if matches!(e, NonceDbError::NonceNotFound) {
+            RequestError {
                 code: ErrorCode::BadRequest,
                 details: Some("Nonce not found".to_string()),
-            },
-            _ => {
-                tracing::error!(error = ?e, "Error consuming token nonce");
-
-                RequestError {
-                    code: ErrorCode::InternalServerError,
-                    details: Some("Error consuming token nonce".to_string()),
-                }
             }
-        })?;
+        } else {
+            tracing::error!(error = ?e, "Error consuming token nonce");
+
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: Some("Error consuming token nonce".to_string()),
+            }
+        }
+    })?;
 
     let integrity_token = generate_integrity_token(
         &mut redis,
@@ -226,10 +224,12 @@ fn validate_apple_attestation_and_get_device_public_key(
     bundle_identifier: &BundleIdentifier,
     apple_attestation: String,
 ) -> Result<Vec<u8>, RequestError> {
-    let app_id = bundle_identifier.apple_app_id().ok_or(RequestError {
-        code: ErrorCode::BadRequest,
-        details: Some("Invalid bundle identifier".to_string()),
-    })?;
+    let app_id = bundle_identifier
+        .apple_app_id()
+        .ok_or_else(|| RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("Invalid bundle identifier".to_string()),
+        })?;
 
     let allowed_aaguid_vec = apple::AAGUID::allowed_for_bundle_identifier(bundle_identifier)
         .map_err(|_| RequestError {

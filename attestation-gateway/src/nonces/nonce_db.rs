@@ -46,7 +46,9 @@ impl NonceDb {
         let value =
             serde_json::to_string(token_details).map_err(NonceDbError::SerializationError)?;
         let options = SetOptions::default()
-            .with_expiration(SetExpiry::EX(Duration::minutes(5).num_seconds() as u64))
+            .with_expiration(SetExpiry::EX(
+                Duration::minutes(5).num_seconds().cast_unsigned(),
+            ))
             .conditional_set(ExistenceCheck::NX);
 
         self.redis

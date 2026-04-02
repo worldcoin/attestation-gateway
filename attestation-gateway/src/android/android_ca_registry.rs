@@ -7,14 +7,14 @@ use x509_parser::{
 
 #[derive(Debug, Error)]
 pub enum AndroidCaRegistryError {
-    #[error("pem parsing: {0}")]
-    PemParsing(#[source] openssl::error::ErrorStack),
+    #[error("pem parsing error")]
+    PemParsing,
 
-    #[error("der parsing")]
+    #[error("der parsing error")]
     DerParsing,
 
-    #[error("der encoding: {0}")]
-    DerEncoding(#[source] openssl::error::ErrorStack),
+    #[error("der encoding error")]
+    DerEncoding,
 }
 
 #[derive(Debug, Clone)]
@@ -24,33 +24,33 @@ pub struct AndroidCaRegistry {
 
 impl AndroidCaRegistry {
     pub fn from_default_pem() -> Result<Self, AndroidCaRegistryError> {
-        Self::from_pem(vec![
+        Self::from_pem(&vec![
             include_bytes!("attestation_root_ca1.pem").to_vec(),
             include_bytes!("attestation_root_ca2.pem").to_vec(),
         ])
     }
 
-    pub fn from_pem(pem_certs: Vec<Vec<u8>>) -> Result<Self, AndroidCaRegistryError> {
+    pub fn from_pem(pem_certs: &Vec<Vec<u8>>) -> Result<Self, AndroidCaRegistryError> {
         let ca_certs = pem_certs
             .iter()
             .map(|pem| X509::from_pem(pem))
             .collect::<Result<Vec<X509>, openssl::error::ErrorStack>>()
-            .map_err(|e| AndroidCaRegistryError::PemParsing(e))?;
+            .map_err(|_| AndroidCaRegistryError::PemParsing)?;
 
-        Self::from_x509(ca_certs)
+        Self::from_x509(&ca_certs)
     }
 
-    pub fn from_x509(x509_certs: Vec<X509>) -> Result<Self, AndroidCaRegistryError> {
+    pub fn from_x509(x509_certs: &Vec<X509>) -> Result<Self, AndroidCaRegistryError> {
         let der_ca_certs = x509_certs
             .iter()
             .map(|cert| cert.to_der())
             .collect::<Result<Vec<Vec<u8>>, openssl::error::ErrorStack>>()
-            .map_err(|e| AndroidCaRegistryError::DerEncoding(e))?;
+            .map_err(|_| AndroidCaRegistryError::DerEncoding)?;
 
-        Self::from_der(der_ca_certs)
+        Self::from_der(&der_ca_certs)
     }
 
-    pub fn from_der(der_certs: Vec<Vec<u8>>) -> Result<Self, AndroidCaRegistryError> {
+    pub fn from_der(der_certs: &Vec<Vec<u8>>) -> Result<Self, AndroidCaRegistryError> {
         let ca_public_keys = der_certs
             .iter()
             .map(|der| {
@@ -75,17 +75,16 @@ impl AndroidCaRegistry {
 impl AndroidCaRegistryError {
     pub fn reason_tag(&self) -> String {
         match self {
-            AndroidCaRegistryError::PemParsing(_) => "pem_parsing".to_string(),
-            AndroidCaRegistryError::DerParsing => "der_parsing".to_string(),
-            AndroidCaRegistryError::DerEncoding(_) => "der_encoding".to_string(),
+            Self::PemParsing => "pem_parsing".to_string(),
+            Self::DerParsing => "der_parsing".to_string(),
+            Self::DerEncoding => "der_encoding".to_string(),
         }
     }
 
-    pub fn is_internal_error(&self) -> bool {
+    pub const fn is_internal_error(&self) -> bool {
         match self {
-            AndroidCaRegistryError::PemParsing(_) => false,
-            AndroidCaRegistryError::DerParsing => false,
-            AndroidCaRegistryError::DerEncoding(_) => true,
+            Self::PemParsing | Self::DerParsing => false,
+            Self::DerEncoding => true,
         }
     }
 }

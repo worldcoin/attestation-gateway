@@ -9,16 +9,16 @@ use crate::{
 use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use thiserror::Error;
 
-/// Android `KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT` — KeyMint / Keymaster in the TEE.
+/// Android `KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT` — `KeyMint` / Keymaster in the TEE.
 const KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT: u32 = 1;
 
-/// Android `KM_SECURITY_LEVEL_STRONG_BOX` — KeyMint / Keymaster in StrongBox.
+/// Android `KM_SECURITY_LEVEL_STRONG_BOX` — `KeyMint` / Keymaster in `StrongBox`.
 const KM_SECURITY_LEVEL_STRONG_BOX: u32 = 2;
 
 /// Android `KM_VERIFIED_BOOT_VERIFIED` — verified boot succeeded (boot hash matches expected).
 const KM_VERIFIED_BOOT_VERIFIED: u32 = 0;
 
-/// Android `KM_ORIGIN_GENERATED` — key generated inside secure KeyMint / Keymaster (TEE / StrongBox), not imported.
+/// Android `KM_ORIGIN_GENERATED` — key generated inside secure `KeyMint` / Keymaster (TEE / `StrongBox`), not imported.
 const KM_ORIGIN_GENERATED: u64 = 0;
 
 #[derive(Debug, Error)]
@@ -83,7 +83,7 @@ pub enum AndroidAttestationError {
 
 pub struct AndroidAttestationOutput {
     pub device_public_key: Vec<u8>,
-    pub os_patch_level: Option<u64>,
+    pub os_patch_level: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -93,7 +93,11 @@ pub struct AndroidAttestationService {
 }
 
 impl AndroidAttestationService {
-    pub fn new(ca_registry: AndroidCaRegistry, revocation_list: AndroidRevocationList) -> Self {
+    #[must_use]
+    pub const fn new(
+        ca_registry: AndroidCaRegistry,
+        revocation_list: AndroidRevocationList,
+    ) -> Self {
         Self {
             ca_registry,
             revocation_list,
@@ -117,13 +121,13 @@ impl AndroidAttestationService {
 
     pub fn verify(
         &self,
-        base64_cert_chain: Vec<String>,
+        base64_cert_chain: &Vec<String>,
         nonce: &String,
         app_version: &String,
         bundle_identifier: &BundleIdentifier,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
-        let cert_chain = AndroidCertChain::from_base64(base64_cert_chain)
-            .map_err(|e| AndroidAttestationError::CertChain(e))?;
+        let cert_chain = AndroidCertChain::from_base64(&base64_cert_chain)
+            .map_err(AndroidAttestationError::CertChain)?;
 
         if cert_chain
             .serials()
@@ -141,7 +145,7 @@ impl AndroidAttestationService {
         }
 
         if cert_chain.device_certificate().attestation_challenge()
-            != format!("n={},av={}", nonce, app_version)
+            != format!("n={nonce},av={app_version}")
         {
             return Err(AndroidAttestationError::InvalidChallenge);
         }
@@ -222,67 +226,60 @@ impl AndroidAttestationService {
 impl AndroidAttestationError {
     pub fn reason_tag(&self) -> String {
         match self {
-            AndroidAttestationError::CaRegistry(e) => {
+            Self::CaRegistry(e) => {
                 format!("ca_registry_{}", e.reason_tag())
             }
-            AndroidAttestationError::RevocationList(e) => {
+            Self::RevocationList(e) => {
                 format!("revocation_list_{}", e.reason_tag())
             }
-            AndroidAttestationError::CertChain(e) => {
+            Self::CertChain(e) => {
                 format!("cert_chain_{}", e.reason_tag())
             }
-            AndroidAttestationError::InvalidCaRoot => "invalid_ca_root".to_string(),
-            AndroidAttestationError::InvalidChallenge => "invalid_challenge".to_string(),
-            AndroidAttestationError::LowSecurityLevel => "low_security_level".to_string(),
-            AndroidAttestationError::InconsistentSecurityLevels => {
-                "inconsistent_security_levels".to_string()
-            }
-            AndroidAttestationError::DeviceNotLocked => "device_not_locked".to_string(),
-            AndroidAttestationError::BootNotVerified => "boot_not_verified".to_string(),
-            AndroidAttestationError::KeyNotGeneratedInSecureHardware => {
+            Self::InvalidCaRoot => "invalid_ca_root".to_string(),
+            Self::InvalidChallenge => "invalid_challenge".to_string(),
+            Self::LowSecurityLevel => "low_security_level".to_string(),
+            Self::InconsistentSecurityLevels => "inconsistent_security_levels".to_string(),
+            Self::DeviceNotLocked => "device_not_locked".to_string(),
+            Self::BootNotVerified => "boot_not_verified".to_string(),
+            Self::KeyNotGeneratedInSecureHardware => {
                 "key_not_generated_in_secure_hardware".to_string()
             }
-            AndroidAttestationError::MissingRootOfTrust => "missing_root_of_trust".to_string(),
-            AndroidAttestationError::MissingKeyOrigin => "missing_key_origin".to_string(),
-            AndroidAttestationError::MissingAttestationSignatureDigests => {
+            Self::MissingRootOfTrust => "missing_root_of_trust".to_string(),
+            Self::MissingKeyOrigin => "missing_key_origin".to_string(),
+            Self::MissingAttestationSignatureDigests => {
                 "missing_attestation_signature_digests".to_string()
             }
-            AndroidAttestationError::InvalidAttestationSignatureDigest => {
+            Self::InvalidAttestationSignatureDigest => {
                 "invalid_attestation_signature_digest".to_string()
             }
-            AndroidAttestationError::MissingPackageName => "missing_package_name".to_string(),
-            AndroidAttestationError::InvalidPackageName => "invalid_package_name".to_string(),
-            AndroidAttestationError::CertificateRevoked => "certificate_revoked".to_string(),
-            AndroidAttestationError::MissingCertificateDigest => {
-                "missing_certificate_digest".to_string()
-            }
-            AndroidAttestationError::BadCertificateDigestEncoding(_) => {
-                "bad_certificate_digest_encoding".to_string()
-            }
+            Self::MissingPackageName => "missing_package_name".to_string(),
+            Self::InvalidPackageName => "invalid_package_name".to_string(),
+            Self::CertificateRevoked => "certificate_revoked".to_string(),
+            Self::MissingCertificateDigest => "missing_certificate_digest".to_string(),
+            Self::BadCertificateDigestEncoding(_) => "bad_certificate_digest_encoding".to_string(),
         }
     }
 
-    pub fn is_internal_error(&self) -> bool {
+    pub const fn is_internal_error(&self) -> bool {
         match self {
-            AndroidAttestationError::CaRegistry(e) => e.is_internal_error(),
-            AndroidAttestationError::RevocationList(e) => e.is_internal_error(),
-            AndroidAttestationError::CertChain(e) => e.is_internal_error(),
-            AndroidAttestationError::InvalidCaRoot => false,
-            AndroidAttestationError::InvalidChallenge => false,
-            AndroidAttestationError::LowSecurityLevel => false,
-            AndroidAttestationError::InconsistentSecurityLevels => false,
-            AndroidAttestationError::DeviceNotLocked => false,
-            AndroidAttestationError::BootNotVerified => false,
-            AndroidAttestationError::KeyNotGeneratedInSecureHardware => false,
-            AndroidAttestationError::MissingRootOfTrust => false,
-            AndroidAttestationError::MissingKeyOrigin => false,
-            AndroidAttestationError::MissingAttestationSignatureDigests => false,
-            AndroidAttestationError::InvalidAttestationSignatureDigest => false,
-            AndroidAttestationError::MissingPackageName => false,
-            AndroidAttestationError::InvalidPackageName => false,
-            AndroidAttestationError::CertificateRevoked => false,
-            AndroidAttestationError::MissingCertificateDigest => true,
-            AndroidAttestationError::BadCertificateDigestEncoding(_) => true,
+            Self::CaRegistry(e) => e.is_internal_error(),
+            Self::RevocationList(e) => e.is_internal_error(),
+            Self::CertChain(e) => e.is_internal_error(),
+            Self::InvalidCaRoot
+            | Self::InvalidChallenge
+            | Self::LowSecurityLevel
+            | Self::InconsistentSecurityLevels
+            | Self::DeviceNotLocked
+            | Self::BootNotVerified
+            | Self::KeyNotGeneratedInSecureHardware
+            | Self::MissingRootOfTrust
+            | Self::MissingKeyOrigin
+            | Self::MissingAttestationSignatureDigests
+            | Self::InvalidAttestationSignatureDigest
+            | Self::MissingPackageName
+            | Self::InvalidPackageName
+            | Self::CertificateRevoked => false,
+            Self::MissingCertificateDigest | Self::BadCertificateDigestEncoding(_) => true,
         }
     }
 }

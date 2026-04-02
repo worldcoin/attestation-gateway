@@ -44,7 +44,7 @@ pub struct KeyDescription {
     pub attestation_challenge: String,
     pub attestation_security_level: u32,
     pub key_mint_security_level: u32,
-    pub os_patch_level: Option<u64>,
+    pub os_patch_level: Option<u32>,
     pub device_locked: Option<bool>,
     pub verified_boot_state: Option<u32>,
     pub key_origin: Option<u64>,
@@ -53,30 +53,30 @@ pub struct KeyDescription {
 }
 
 impl KeyDescription {
-    pub fn from_der(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
+    pub fn from_der(der: &[u8]) -> Result<Self, KeyDescriptionError> {
         let version =
             attestation_version_from_der(&der).map_err(KeyDescriptionError::ParseVersion)?;
 
         match version {
-            1 => Self::from_key_description_1(der),
-            2 => Self::from_key_description_2(der),
-            3 => Self::from_key_description_3(der),
-            4 => Self::from_key_description_4(der),
-            100 => Self::from_key_description_100(der),
-            200 => Self::from_key_description_200(der),
-            300 => Self::from_key_description_300(der),
-            400 => Self::from_key_description_400(der),
+            1 => Self::from_key_description_1(&der),
+            2 => Self::from_key_description_2(&der),
+            3 => Self::from_key_description_3(&der),
+            4 => Self::from_key_description_4(&der),
+            100 => Self::from_key_description_100(&der),
+            200 => Self::from_key_description_200(&der),
+            300 => Self::from_key_description_300(&der),
+            400 => Self::from_key_description_400(&der),
             _ => Err(KeyDescriptionError::InvalidVersion(version)),
         }
     }
 
-    fn from_key_description_1(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
-        let key_description = asn1::parse_single::<KeyDescription1>(&der)
-            .map_err(|e| KeyDescriptionError::Parsing(e))?;
+    fn from_key_description_1(der: &[u8]) -> Result<Self, KeyDescriptionError> {
+        let key_description =
+            asn1::parse_single::<KeyDescription1>(&der).map_err(KeyDescriptionError::Parsing)?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
-                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+                .map_err(KeyDescriptionError::ParseChallenge)?;
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
@@ -112,13 +112,13 @@ impl KeyDescription {
         })
     }
 
-    fn from_key_description_2(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
-        let key_description = asn1::parse_single::<KeyDescription2>(&der)
-            .map_err(|e| KeyDescriptionError::Parsing(e))?;
+    fn from_key_description_2(der: &[u8]) -> Result<Self, KeyDescriptionError> {
+        let key_description =
+            asn1::parse_single::<KeyDescription2>(&der).map_err(KeyDescriptionError::Parsing)?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
-                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+                .map_err(KeyDescriptionError::ParseChallenge)?;
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
@@ -148,12 +148,8 @@ impl KeyDescription {
                 .next()
                 .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
         });
-        let attestation_signature_digests = app_id.map(|aid| {
-            aid.signature_digests
-                .into_iter()
-                .map(|d| d.to_vec())
-                .collect()
-        });
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
 
         Ok(Self {
             attestation_challenge,
@@ -168,13 +164,13 @@ impl KeyDescription {
         })
     }
 
-    fn from_key_description_3(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
-        let key_description = asn1::parse_single::<KeyDescription3>(&der)
-            .map_err(|e| KeyDescriptionError::Parsing(e))?;
+    fn from_key_description_3(der: &[u8]) -> Result<Self, KeyDescriptionError> {
+        let key_description =
+            asn1::parse_single::<KeyDescription3>(&der).map_err(KeyDescriptionError::Parsing)?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
-                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+                .map_err(KeyDescriptionError::ParseChallenge)?;
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
@@ -204,12 +200,8 @@ impl KeyDescription {
                 .next()
                 .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
         });
-        let attestation_signature_digests = app_id.map(|aid| {
-            aid.signature_digests
-                .into_iter()
-                .map(|d| d.to_vec())
-                .collect()
-        });
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
 
         Ok(Self {
             attestation_challenge,
@@ -224,13 +216,13 @@ impl KeyDescription {
         })
     }
 
-    fn from_key_description_4(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
-        let key_description = asn1::parse_single::<KeyDescription4>(&der)
-            .map_err(|e| KeyDescriptionError::Parsing(e))?;
+    fn from_key_description_4(der: &[u8]) -> Result<Self, KeyDescriptionError> {
+        let key_description =
+            asn1::parse_single::<KeyDescription4>(&der).map_err(KeyDescriptionError::Parsing)?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
-                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+                .map_err(KeyDescriptionError::ParseChallenge)?;
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.keymaster_security_level.value();
@@ -260,12 +252,8 @@ impl KeyDescription {
                 .next()
                 .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
         });
-        let attestation_signature_digests = app_id.map(|aid| {
-            aid.signature_digests
-                .into_iter()
-                .map(|d| d.to_vec())
-                .collect()
-        });
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
 
         Ok(Self {
             attestation_challenge,
@@ -280,13 +268,13 @@ impl KeyDescription {
         })
     }
 
-    fn from_key_description_100(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
-        let key_description = asn1::parse_single::<KeyDescription100>(&der)
-            .map_err(|e| KeyDescriptionError::Parsing(e))?;
+    fn from_key_description_100(der: &[u8]) -> Result<Self, KeyDescriptionError> {
+        let key_description =
+            asn1::parse_single::<KeyDescription100>(&der).map_err(KeyDescriptionError::Parsing)?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
-                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+                .map_err(KeyDescriptionError::ParseChallenge)?;
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
@@ -316,12 +304,8 @@ impl KeyDescription {
                 .next()
                 .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
         });
-        let attestation_signature_digests = app_id.map(|aid| {
-            aid.signature_digests
-                .into_iter()
-                .map(|d| d.to_vec())
-                .collect()
-        });
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
 
         Ok(Self {
             attestation_challenge,
@@ -336,13 +320,13 @@ impl KeyDescription {
         })
     }
 
-    fn from_key_description_200(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
-        let key_description = asn1::parse_single::<KeyDescription200>(&der)
-            .map_err(|e| KeyDescriptionError::Parsing(e))?;
+    fn from_key_description_200(der: &[u8]) -> Result<Self, KeyDescriptionError> {
+        let key_description =
+            asn1::parse_single::<KeyDescription200>(&der).map_err(KeyDescriptionError::Parsing)?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
-                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+                .map_err(KeyDescriptionError::ParseChallenge)?;
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
@@ -372,12 +356,8 @@ impl KeyDescription {
                 .next()
                 .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
         });
-        let attestation_signature_digests = app_id.map(|aid| {
-            aid.signature_digests
-                .into_iter()
-                .map(|d| d.to_vec())
-                .collect()
-        });
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
 
         Ok(Self {
             attestation_challenge,
@@ -392,13 +372,13 @@ impl KeyDescription {
         })
     }
 
-    fn from_key_description_300(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
-        let key_description = asn1::parse_single::<KeyDescription300>(&der)
-            .map_err(|e| KeyDescriptionError::Parsing(e))?;
+    fn from_key_description_300(der: &[u8]) -> Result<Self, KeyDescriptionError> {
+        let key_description =
+            asn1::parse_single::<KeyDescription300>(&der).map_err(KeyDescriptionError::Parsing)?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
-                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+                .map_err(KeyDescriptionError::ParseChallenge)?;
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
@@ -428,12 +408,8 @@ impl KeyDescription {
                 .next()
                 .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
         });
-        let attestation_signature_digests = app_id.map(|aid| {
-            aid.signature_digests
-                .into_iter()
-                .map(|d| d.to_vec())
-                .collect()
-        });
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
 
         Ok(Self {
             attestation_challenge,
@@ -448,13 +424,13 @@ impl KeyDescription {
         })
     }
 
-    fn from_key_description_400(der: Vec<u8>) -> Result<Self, KeyDescriptionError> {
-        let key_description = asn1::parse_single::<KeyDescription400>(&der)
-            .map_err(|e| KeyDescriptionError::Parsing(e))?;
+    fn from_key_description_400(der: &[u8]) -> Result<Self, KeyDescriptionError> {
+        let key_description =
+            asn1::parse_single::<KeyDescription400>(&der).map_err(KeyDescriptionError::Parsing)?;
 
         let attestation_challenge =
             String::from_utf8(key_description.attestation_challenge.to_vec())
-                .map_err(|e| KeyDescriptionError::ParseChallenge(e))?;
+                .map_err(KeyDescriptionError::ParseChallenge)?;
 
         let attestation_security_level = key_description.attestation_security_level.value();
         let key_mint_security_level = key_description.key_mint_security_level.value();
@@ -484,12 +460,8 @@ impl KeyDescription {
                 .next()
                 .and_then(|pkg| std::str::from_utf8(pkg.package_name).ok().map(String::from))
         });
-        let attestation_signature_digests = app_id.map(|aid| {
-            aid.signature_digests
-                .into_iter()
-                .map(|d| d.to_vec())
-                .collect()
-        });
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
 
         Ok(Self {
             attestation_challenge,
@@ -508,19 +480,19 @@ impl KeyDescription {
 impl KeyDescriptionError {
     pub fn reason_tag(&self) -> String {
         match self {
-            KeyDescriptionError::ParseVersion(_) => "attestation_version".to_string(),
-            KeyDescriptionError::Parsing(_) => "parsing".to_string(),
-            KeyDescriptionError::ParseChallenge(_) => "parse_challenge".to_string(),
-            KeyDescriptionError::InvalidVersion(v) => format!("invalid_version_{}", v),
+            Self::ParseVersion(_) => "attestation_version".to_string(),
+            Self::Parsing(_) => "parsing".to_string(),
+            Self::ParseChallenge(_) => "parse_challenge".to_string(),
+            Self::InvalidVersion(v) => format!("invalid_version_{v}"),
         }
     }
 
-    pub fn is_internal_error(&self) -> bool {
+    pub const fn is_internal_error(&self) -> bool {
         match self {
-            KeyDescriptionError::ParseVersion(_) => false,
-            KeyDescriptionError::Parsing(_) => false,
-            KeyDescriptionError::ParseChallenge(_) => false,
-            KeyDescriptionError::InvalidVersion(_) => false,
+            Self::ParseVersion(_)
+            | Self::Parsing(_)
+            | Self::ParseChallenge(_)
+            | Self::InvalidVersion(_) => false,
         }
     }
 }

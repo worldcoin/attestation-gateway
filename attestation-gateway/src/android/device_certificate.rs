@@ -11,8 +11,8 @@ pub enum DeviceCertificateError {
     #[error("attestation parsing: {0}")]
     AttestationParsing(#[source] KeyDescriptionError),
 
-    #[error("der encoding: {0}")]
-    DerEncoding(#[source] openssl::error::ErrorStack),
+    #[error("der encoding error")]
+    DerEncoding,
 
     #[error("der decoding")]
     DerDecoding,
@@ -30,15 +30,15 @@ pub struct DeviceCertificate {
 }
 
 impl DeviceCertificate {
-    pub fn from_x509(x509: X509) -> Result<Self, DeviceCertificateError> {
+    pub fn from_x509(x509: &X509) -> Result<Self, DeviceCertificateError> {
         let der = x509
             .to_der()
-            .map_err(|e| DeviceCertificateError::DerEncoding(e))?;
+            .map_err(|_| DeviceCertificateError::DerEncoding)?;
 
-        Self::from_der(der)
+        Self::from_der(&der)
     }
 
-    pub fn from_der(der: Vec<u8>) -> Result<Self, DeviceCertificateError> {
+    pub fn from_der(der: &Vec<u8>) -> Result<Self, DeviceCertificateError> {
         let (_, cert) =
             X509Certificate::from_der(&der).map_err(|_| DeviceCertificateError::DerDecoding)?;
 
@@ -48,8 +48,8 @@ impl DeviceCertificate {
             .ok_or(DeviceCertificateError::MissingAttestation)?;
 
         let public_key = Vec::from(cert.public_key().subject_public_key.data.clone());
-        let key_description = KeyDescription::from_der(key_description.value.to_vec())
-            .map_err(|e| DeviceCertificateError::AttestationParsing(e))?;
+        let key_description = KeyDescription::from_der(&key_description.value)
+            .map_err(DeviceCertificateError::AttestationParsing)?;
 
         Ok(Self {
             public_key,
@@ -65,27 +65,27 @@ impl DeviceCertificate {
         self.key_description.attestation_challenge.clone()
     }
 
-    pub fn attestation_security_level(&self) -> u32 {
+    pub const fn attestation_security_level(&self) -> u32 {
         self.key_description.attestation_security_level
     }
 
-    pub fn key_mint_security_level(&self) -> u32 {
+    pub const fn key_mint_security_level(&self) -> u32 {
         self.key_description.key_mint_security_level
     }
 
-    pub fn os_patch_level(&self) -> Option<u64> {
+    pub const fn os_patch_level(&self) -> Option<u32> {
         self.key_description.os_patch_level
     }
 
-    pub fn device_locked(&self) -> Option<bool> {
+    pub const fn device_locked(&self) -> Option<bool> {
         self.key_description.device_locked
     }
 
-    pub fn verified_boot_state(&self) -> Option<u32> {
+    pub const fn verified_boot_state(&self) -> Option<u32> {
         self.key_description.verified_boot_state
     }
 
-    pub fn key_origin(&self) -> Option<u64> {
+    pub const fn key_origin(&self) -> Option<u64> {
         self.key_description.key_origin
     }
 
@@ -103,23 +103,21 @@ impl DeviceCertificate {
 impl DeviceCertificateError {
     pub fn reason_tag(&self) -> String {
         match self {
-            DeviceCertificateError::DerEncoding(_) => "der_encoding".to_string(),
-            DeviceCertificateError::DerDecoding => "der_decoding".to_string(),
-            DeviceCertificateError::AttestationExtraction => "attestation_extraction".to_string(),
-            DeviceCertificateError::MissingAttestation => "missing_attestation".to_string(),
-            DeviceCertificateError::AttestationParsing(e) => {
+            Self::DerEncoding => "der_encoding".to_string(),
+            Self::DerDecoding => "der_decoding".to_string(),
+            Self::AttestationExtraction => "attestation_extraction".to_string(),
+            Self::MissingAttestation => "missing_attestation".to_string(),
+            Self::AttestationParsing(e) => {
                 format!("attestation_parsing_{}", e.reason_tag())
             }
         }
     }
 
-    pub fn is_internal_error(&self) -> bool {
+    pub const fn is_internal_error(&self) -> bool {
         match self {
-            DeviceCertificateError::AttestationParsing(e) => e.is_internal_error(),
-            DeviceCertificateError::DerEncoding(_) => true,
-            DeviceCertificateError::DerDecoding => true,
-            DeviceCertificateError::AttestationExtraction => false,
-            DeviceCertificateError::MissingAttestation => false,
+            Self::AttestationParsing(e) => e.is_internal_error(),
+            Self::DerEncoding | Self::DerDecoding => true,
+            Self::AttestationExtraction | Self::MissingAttestation => false,
         }
     }
 }
@@ -134,7 +132,7 @@ mod tests {
 
     fn cert_from_test_b64(b64: &str) -> DeviceCertificate {
         let der = Base64.decode(b64).expect("test fixture base64");
-        DeviceCertificate::from_der(der).expect("test fixture cert DER")
+        DeviceCertificate::from_der(&der).expect("test fixture cert DER")
     }
 
     #[test]

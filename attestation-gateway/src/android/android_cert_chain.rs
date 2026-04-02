@@ -27,8 +27,8 @@ pub enum AndroidCertChainError {
     #[error("invalid base64 encoding: {0}")]
     Base64Encoding(#[source] DecodeError),
 
-    #[error("invalid der encoding: {0}")]
-    DerEncoding(#[source] openssl::error::ErrorStack),
+    #[error("invalid der encoding")]
+    DerEncoding,
 
     #[error("invalid chain length")]
     ChainLength,
@@ -36,26 +36,26 @@ pub enum AndroidCertChainError {
     #[error("invalid chain: {0}")]
     ChainVerification(#[source] X509VerifyResult),
 
-    #[error("stack builder: {0}")]
-    StackBuilder(#[source] openssl::error::ErrorStack),
+    #[error("stack builder error")]
+    StackBuilder,
 
-    #[error("stack push: {0}")]
-    StackPush(#[source] openssl::error::ErrorStack),
+    #[error("stack push error")]
+    StackPush,
 
-    #[error("param builder: {0}")]
-    ParamBuilder(#[source] openssl::error::ErrorStack),
+    #[error("param builder error")]
+    ParamBuilder,
 
-    #[error("store builder: {0}")]
-    StoreBuilder(#[source] openssl::error::ErrorStack),
+    #[error("store builder error")]
+    StoreBuilder,
 
-    #[error("store add: {0}")]
-    StoreAdd(#[source] openssl::error::ErrorStack),
+    #[error("store add error")]
+    StoreAdd,
 
-    #[error("context builder: {0}")]
-    ContextBuilder(#[source] openssl::error::ErrorStack),
+    #[error("context builder error")]
+    ContextBuilder,
 
-    #[error("context verify: {0}")]
-    ContextVerify(#[source] openssl::error::ErrorStack),
+    #[error("context verify error")]
+    ContextVerify,
 }
 
 /// ASN.1 serial number in the two string forms used as keys in Google's attestation status JSON.
@@ -83,27 +83,27 @@ pub struct AndroidCertChain {
 }
 
 impl AndroidCertChain {
-    pub fn from_base64(base64_cert_chain: Vec<String>) -> Result<Self, AndroidCertChainError> {
+    pub fn from_base64(base64_cert_chain: &Vec<String>) -> Result<Self, AndroidCertChainError> {
         let der_cert_chain = base64_cert_chain
             .iter()
             .map(|c| Base64.decode(c))
             .collect::<Result<Vec<Vec<u8>>, DecodeError>>()
             .map_err(AndroidCertChainError::Base64Encoding)?;
 
-        return Self::from_der(der_cert_chain);
+        Self::from_der(&der_cert_chain)
     }
 
-    pub fn from_der(der_cert_chain: Vec<Vec<u8>>) -> Result<Self, AndroidCertChainError> {
+    pub fn from_der(der_cert_chain: &Vec<Vec<u8>>) -> Result<Self, AndroidCertChainError> {
         let cert_chain = der_cert_chain
             .iter()
             .map(|c| X509::from_der(c))
             .collect::<Result<Vec<X509>, openssl::error::ErrorStack>>()
-            .map_err(AndroidCertChainError::DerEncoding)?;
+            .map_err(|_| AndroidCertChainError::DerEncoding)?;
 
-        return Self::from_x509(cert_chain);
+        Self::from_x509(&cert_chain)
     }
 
-    pub fn from_x509(cert_chain: Vec<X509>) -> Result<Self, AndroidCertChainError> {
+    pub fn from_x509(cert_chain: &Vec<X509>) -> Result<Self, AndroidCertChainError> {
         if cert_chain.len() < 2 {
             return Err(AndroidCertChainError::ChainLength);
         }
@@ -111,38 +111,40 @@ impl AndroidCertChain {
         let device_cert = cert_chain.first().unwrap();
         let root_ca_cert = cert_chain.last().unwrap();
 
-        let mut cert_stack = Stack::new().map_err(AndroidCertChainError::StackBuilder)?;
+        let mut cert_stack = Stack::new().map_err(|_| AndroidCertChainError::StackBuilder)?;
         for cert in cert_chain.iter().rev().skip(1) {
             cert_stack
                 .push(cert.to_owned())
-                .map_err(AndroidCertChainError::StackPush)?;
+                .map_err(|_| AndroidCertChainError::StackPush)?;
         }
 
         let mut store_param =
-            X509VerifyParam::new().map_err(AndroidCertChainError::ParamBuilder)?;
+            X509VerifyParam::new().map_err(|_| AndroidCertChainError::ParamBuilder)?;
 
         // Account for clock drift
         store_param.set_time(
             60 + SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_secs() as i64,
+                .as_secs()
+                .cast_signed(),
         );
 
         let mut store_builder =
-            X509StoreBuilder::new().map_err(AndroidCertChainError::StoreBuilder)?;
+            X509StoreBuilder::new().map_err(|_| AndroidCertChainError::StoreBuilder)?;
 
         store_builder
             .set_param(&store_param)
-            .map_err(AndroidCertChainError::StoreBuilder)?;
+            .map_err(|_| AndroidCertChainError::StoreBuilder)?;
 
         store_builder
             .add_cert(root_ca_cert.to_owned())
-            .map_err(AndroidCertChainError::StoreAdd)?;
+            .map_err(|_| AndroidCertChainError::StoreAdd)?;
 
         let store = store_builder.build();
 
-        let mut context = X509StoreContext::new().map_err(AndroidCertChainError::ContextBuilder)?;
+        let mut context =
+            X509StoreContext::new().map_err(|_| AndroidCertChainError::ContextBuilder)?;
 
         let valid = context
             .init(
@@ -151,21 +153,21 @@ impl AndroidCertChain {
                 &cert_stack,
                 openssl::x509::X509StoreContextRef::verify_cert,
             )
-            .map_err(AndroidCertChainError::ContextVerify)?;
+            .map_err(|_| AndroidCertChainError::ContextVerify)?;
 
         if !valid {
             return Err(AndroidCertChainError::ChainVerification(context.error()));
         }
 
-        let device_certificate = DeviceCertificate::from_x509(device_cert.to_owned())
+        let device_certificate = DeviceCertificate::from_x509(&device_cert)
             .map_err(AndroidCertChainError::DeviceCertificate)?;
 
-        let root_certificate = RootCertificate::new(root_ca_cert.to_owned())
-            .map_err(AndroidCertChainError::RootCertificate)?;
+        let root_certificate =
+            RootCertificate::new(root_ca_cert).map_err(AndroidCertChainError::RootCertificate)?;
 
         let serials = cert_chain
             .iter()
-            .map(|c| certificate_serial(c))
+            .map(certificate_serial)
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
@@ -182,11 +184,11 @@ impl AndroidCertChain {
         &self.serials
     }
 
-    pub fn device_certificate(&self) -> &DeviceCertificate {
+    pub const fn device_certificate(&self) -> &DeviceCertificate {
         &self.device_certificate
     }
 
-    pub fn root_certificate(&self) -> &RootCertificate {
+    pub const fn root_certificate(&self) -> &RootCertificate {
         &self.root_certificate
     }
 }
@@ -195,16 +197,16 @@ fn certificate_serial(cert: &X509) -> Result<CertificateSerial, AndroidCertChain
     let bn = cert
         .serial_number()
         .to_bn()
-        .map_err(|e| AndroidCertChainError::StackPush(e))?;
+        .map_err(|_| AndroidCertChainError::StackPush)?;
 
     let decimal = bn
         .to_dec_str()
-        .map_err(|e| AndroidCertChainError::StackPush(e))?
+        .map_err(|_| AndroidCertChainError::StackPush)?
         .to_string();
 
     let hex = bn
         .to_hex_str()
-        .map_err(|e| AndroidCertChainError::StackPush(e))?
+        .map_err(|_| AndroidCertChainError::StackPush)?
         .to_string()
         .to_lowercase();
 
@@ -214,43 +216,43 @@ fn certificate_serial(cert: &X509) -> Result<CertificateSerial, AndroidCertChain
 impl AndroidCertChainError {
     pub fn reason_tag(&self) -> String {
         match self {
-            AndroidCertChainError::DeviceCertificate(e) => {
+            Self::DeviceCertificate(e) => {
                 format!("device_certificate_{}", e.reason_tag())
             }
-            AndroidCertChainError::RootCertificate(e) => {
+            Self::RootCertificate(e) => {
                 format!("root_certificate_{}", e.reason_tag())
             }
-            AndroidCertChainError::Base64Encoding(_) => "base64_encoding".to_string(),
-            AndroidCertChainError::DerEncoding(_) => "der_encoding".to_string(),
-            AndroidCertChainError::ChainLength => "chain_length".to_string(),
-            AndroidCertChainError::ChainVerification(e) => {
+            Self::Base64Encoding(_) => "base64_encoding".to_string(),
+            Self::DerEncoding => "der_encoding".to_string(),
+            Self::ChainLength => "chain_length".to_string(),
+            Self::ChainVerification(e) => {
                 format!("chain_verification_{}", e.as_raw())
             }
-            AndroidCertChainError::StackBuilder(_) => "stack_builder".to_string(),
-            AndroidCertChainError::StackPush(_) => "stack_push".to_string(),
-            AndroidCertChainError::ParamBuilder(_) => "param_builder".to_string(),
-            AndroidCertChainError::StoreBuilder(_) => "store_builder".to_string(),
-            AndroidCertChainError::StoreAdd(_) => "store_add".to_string(),
-            AndroidCertChainError::ContextBuilder(_) => "context_builder".to_string(),
-            AndroidCertChainError::ContextVerify(_) => "context_verify".to_string(),
+            Self::StackBuilder => "stack_builder".to_string(),
+            Self::StackPush => "stack_push".to_string(),
+            Self::ParamBuilder => "param_builder".to_string(),
+            Self::StoreBuilder => "store_builder".to_string(),
+            Self::StoreAdd => "store_add".to_string(),
+            Self::ContextBuilder => "context_builder".to_string(),
+            Self::ContextVerify => "context_verify".to_string(),
         }
     }
 
-    pub fn is_internal_error(&self) -> bool {
+    pub const fn is_internal_error(&self) -> bool {
         match self {
-            AndroidCertChainError::DeviceCertificate(e) => e.is_internal_error(),
-            AndroidCertChainError::RootCertificate(e) => e.is_internal_error(),
-            AndroidCertChainError::Base64Encoding(_) => true,
-            AndroidCertChainError::DerEncoding(_) => true,
-            AndroidCertChainError::ChainLength => true,
-            AndroidCertChainError::ChainVerification(_) => true,
-            AndroidCertChainError::StackBuilder(_) => false,
-            AndroidCertChainError::StackPush(_) => false,
-            AndroidCertChainError::ParamBuilder(_) => false,
-            AndroidCertChainError::StoreBuilder(_) => false,
-            AndroidCertChainError::StoreAdd(_) => false,
-            AndroidCertChainError::ContextBuilder(_) => false,
-            AndroidCertChainError::ContextVerify(_) => false,
+            Self::DeviceCertificate(e) => e.is_internal_error(),
+            Self::RootCertificate(e) => e.is_internal_error(),
+            Self::Base64Encoding(_)
+            | Self::DerEncoding
+            | Self::ChainLength
+            | Self::ChainVerification(_) => false,
+            Self::StackBuilder
+            | Self::StackPush
+            | Self::ParamBuilder
+            | Self::StoreBuilder
+            | Self::StoreAdd
+            | Self::ContextBuilder
+            | Self::ContextVerify => true,
         }
     }
 }

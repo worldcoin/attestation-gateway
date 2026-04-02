@@ -93,6 +93,7 @@ impl AndroidRevocationList {
     /// lowercase hex string, as published by Google).
     ///
     /// Never performs I/O. Stale data is still returned until [`Self::refresh`] runs successfully.
+    #[must_use]
     pub fn is_revoked(&self, certificate_id: &str) -> bool {
         self.inner.cache.load().revoked_ids.contains(certificate_id)
     }
@@ -124,6 +125,7 @@ impl AndroidRevocationList {
     /// Runs until the task is cancelled: sleeps ~[`Self::duration_until_stale`], then
     /// [`Self::refresh`], repeating. On refresh failure, waits [`REFRESH_FAILURE_BACKOFF`] before
     /// retrying.
+    #[must_use]
     pub fn spawn_refresh_loop(&self) -> tokio::task::JoinHandle<()> {
         let list = self.clone();
 
@@ -191,18 +193,18 @@ async fn fetch_revocations(
 impl AndroidRevocationListError {
     pub fn reason_tag(&self) -> String {
         match self {
-            AndroidRevocationListError::ReqwestError(_) => "reqwest_error".to_string(),
-            AndroidRevocationListError::FetchRevocationsHttpError(_) => {
-                "fetch_revocations_http_error".to_string()
-            }
-            AndroidRevocationListError::FetchRevocationsJsonError(_) => {
-                "fetch_revocations_json_error".to_string()
-            }
+            Self::ReqwestError(_) => "reqwest_error".to_string(),
+            Self::FetchRevocationsHttpError(_) => "fetch_revocations_http_error".to_string(),
+            Self::FetchRevocationsJsonError(_) => "fetch_revocations_json_error".to_string(),
         }
     }
 
-    pub fn is_internal_error(&self) -> bool {
-        true
+    pub const fn is_internal_error(&self) -> bool {
+        match self {
+            Self::ReqwestError(_)
+            | Self::FetchRevocationsHttpError(_)
+            | Self::FetchRevocationsJsonError(_) => false,
+        }
     }
 }
 

@@ -4,10 +4,10 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 
 #[derive(Debug, Error)]
 pub enum RootCertificateError {
-    #[error("der encoding: {0}")]
-    DerEncoding(#[source] openssl::error::ErrorStack),
+    #[error("der encoding error")]
+    DerEncoding,
 
-    #[error("der decoding")]
+    #[error("der decoding error")]
     DerDecoding,
 }
 
@@ -17,10 +17,10 @@ pub struct RootCertificate {
 }
 
 impl RootCertificate {
-    pub fn new(cert: X509) -> Result<Self, RootCertificateError> {
+    pub fn new(cert: &X509) -> Result<Self, RootCertificateError> {
         let cert = cert
             .to_der()
-            .map_err(|e| RootCertificateError::DerEncoding(e))?;
+            .map_err(|_| RootCertificateError::DerEncoding)?;
 
         let (_, cert) =
             X509Certificate::from_der(&cert).map_err(|_| RootCertificateError::DerDecoding)?;
@@ -34,15 +34,14 @@ impl RootCertificate {
 impl RootCertificateError {
     pub fn reason_tag(&self) -> String {
         match self {
-            RootCertificateError::DerEncoding(_) => "der_encoding".to_string(),
-            RootCertificateError::DerDecoding => "der_decoding".to_string(),
+            Self::DerEncoding => "der_encoding".to_string(),
+            Self::DerDecoding => "der_decoding".to_string(),
         }
     }
 
-    pub fn is_internal_error(&self) -> bool {
+    pub const fn is_internal_error(&self) -> bool {
         match self {
-            RootCertificateError::DerEncoding(_) => true,
-            RootCertificateError::DerDecoding => true,
+            Self::DerEncoding | Self::DerDecoding => true,
         }
     }
 }

@@ -6,7 +6,7 @@ use crate::android::key_description::unordered_set_of_u64::UnorderedSetOfU64;
 pub struct KeyDescription100<'a> {
     pub _attestation_version: u64,
     pub attestation_security_level: asn1::Enumerated,
-    /// KeyMint 1.0 reports `100` here (see Android docs).
+    /// `KeyMint` 1.0 reports `100` here (see Android docs).
     pub _key_mint_version: u64,
     pub key_mint_security_level: asn1::Enumerated,
     pub attestation_challenge: &'a [u8],
@@ -85,7 +85,7 @@ pub struct AuthorizationList<'a> {
     #[explicit(705)]
     pub _os_version: Option<u64>,
     #[explicit(706)]
-    pub os_patch_level: Option<u64>,
+    pub os_patch_level: Option<u32>,
     #[explicit(709)]
     pub attestation_application_id: Option<&'a [u8]>,
     #[explicit(710)]

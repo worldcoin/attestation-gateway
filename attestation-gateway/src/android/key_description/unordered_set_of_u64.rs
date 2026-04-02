@@ -1,4 +1,4 @@
-/// `SET OF` where elements are not guaranteed to be in DER order. Some KeyMint builds
+/// `SET OF` where elements are not guaranteed to be in DER order. Some `KeyMint` builds
 /// encode digest algorithm integers (e.g. `4` then `0`) in an order `asn1::SetOf` rejects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnorderedSetOfU64(pub Vec<u64>);
@@ -17,7 +17,7 @@ impl<'a> asn1::Asn1Readable<'a> for UnorderedSetOfU64 {
             while !p.is_empty() {
                 v.push(p.read_element::<u64>()?);
             }
-            Ok(UnorderedSetOfU64(v))
+            Ok(Self(v))
         })
     }
 
