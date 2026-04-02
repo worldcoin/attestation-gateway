@@ -38,10 +38,10 @@ pub enum AndroidRevocationListError {
     ReqwestError(#[source] reqwest::Error),
 
     #[error("fetch revocations http error: {0}")]
-    FetchRevocationsHttpError(#[source] reqwest::Error),
+    FetchRevocationsHttp(#[source] reqwest::Error),
 
     #[error("fetch revocations json error: {0}")]
-    FetchRevocationsJsonError(#[source] serde_json::Error),
+    FetchRevocationsJsonParsing(#[source] serde_json::Error),
 }
 
 /// Shared handle to Google's attestation revocation JSON (thread-safe, cheap to clone).
@@ -160,7 +160,7 @@ async fn fetch_revocations(
         .get(url)
         .send()
         .await
-        .map_err(AndroidRevocationListError::FetchRevocationsHttpError)?;
+        .map_err(AndroidRevocationListError::FetchRevocationsHttp)?;
 
     let max_age = response
         .headers()
@@ -172,10 +172,10 @@ async fn fetch_revocations(
     let body = response
         .bytes()
         .await
-        .map_err(AndroidRevocationListError::FetchRevocationsHttpError)?;
+        .map_err(AndroidRevocationListError::FetchRevocationsHttp)?;
 
     let parsed: StatusResponse = serde_json::from_slice(&body)
-        .map_err(AndroidRevocationListError::FetchRevocationsJsonError)?;
+        .map_err(AndroidRevocationListError::FetchRevocationsJsonParsing)?;
 
     let mut revoked = HashSet::with_capacity(parsed.entries.len());
     for (key, entry) in parsed.entries {
@@ -194,16 +194,16 @@ impl AndroidRevocationListError {
     pub fn reason_tag(&self) -> String {
         match self {
             Self::ReqwestError(_) => "reqwest_error".to_string(),
-            Self::FetchRevocationsHttpError(_) => "fetch_revocations_http_error".to_string(),
-            Self::FetchRevocationsJsonError(_) => "fetch_revocations_json_error".to_string(),
+            Self::FetchRevocationsHttp(_) => "fetch_revocations_http_error".to_string(),
+            Self::FetchRevocationsJsonParsing(_) => "fetch_revocations_json_error".to_string(),
         }
     }
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
             Self::ReqwestError(_)
-            | Self::FetchRevocationsHttpError(_)
-            | Self::FetchRevocationsJsonError(_) => false,
+            | Self::FetchRevocationsHttp(_)
+            | Self::FetchRevocationsJsonParsing(_) => false,
         }
     }
 }

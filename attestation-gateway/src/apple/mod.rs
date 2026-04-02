@@ -148,7 +148,7 @@ pub struct Assertion {
 }
 
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AAGUID {
     AppAttest,
     AppAttestDevelop,
@@ -196,6 +196,7 @@ pub struct InitialAttestationOutput {
 }
 
 /// Implements the verification of `DeviceCheck` *attestations* for iOS.
+///
 /// Attestations are sent the first time to attest to the validity of a specific public key.
 /// <https://developer.apple.com/documentation/devicecheck/validating_apps_that_connect_to_your_server#3576643>
 pub fn decode_and_validate_initial_attestation(

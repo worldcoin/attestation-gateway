@@ -38,9 +38,9 @@ impl DeviceCertificate {
         Self::from_der(&der)
     }
 
-    pub fn from_der(der: &Vec<u8>) -> Result<Self, DeviceCertificateError> {
+    pub fn from_der(der: &[u8]) -> Result<Self, DeviceCertificateError> {
         let (_, cert) =
-            X509Certificate::from_der(&der).map_err(|_| DeviceCertificateError::DerDecoding)?;
+            X509Certificate::from_der(der).map_err(|_| DeviceCertificateError::DerDecoding)?;
 
         let key_description = cert
             .get_extension_unique(&oid!(1.3.6.1.4.1.11129.2.1.17))
@@ -48,7 +48,7 @@ impl DeviceCertificate {
             .ok_or(DeviceCertificateError::MissingAttestation)?;
 
         let public_key = Vec::from(cert.public_key().subject_public_key.data.clone());
-        let key_description = KeyDescription::from_der(&key_description.value)
+        let key_description = KeyDescription::from_der(key_description.value)
             .map_err(DeviceCertificateError::AttestationParsing)?;
 
         Ok(Self {

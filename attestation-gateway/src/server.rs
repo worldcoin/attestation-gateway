@@ -39,7 +39,8 @@ pub async fn start(
         .await
         .expect("failed to construct Android attestation service");
 
-    android_attestation_service.spawn_refresh_loop();
+    #[expect(clippy::let_underscore_future)] // do not await, it's a handler for background tasks
+    let _ = android_attestation_service.spawn_refresh_loop();
 
     let app = routes::handler()
         .finish_api(&mut openapi)

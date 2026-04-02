@@ -24,13 +24,13 @@ pub struct AndroidCaRegistry {
 
 impl AndroidCaRegistry {
     pub fn from_default_pem() -> Result<Self, AndroidCaRegistryError> {
-        Self::from_pem(&vec![
+        Self::from_pem(&[
             include_bytes!("attestation_root_ca1.pem").to_vec(),
             include_bytes!("attestation_root_ca2.pem").to_vec(),
         ])
     }
 
-    pub fn from_pem(pem_certs: &Vec<Vec<u8>>) -> Result<Self, AndroidCaRegistryError> {
+    pub fn from_pem(pem_certs: &[Vec<u8>]) -> Result<Self, AndroidCaRegistryError> {
         let ca_certs = pem_certs
             .iter()
             .map(|pem| X509::from_pem(pem))
@@ -40,7 +40,7 @@ impl AndroidCaRegistry {
         Self::from_x509(&ca_certs)
     }
 
-    pub fn from_x509(x509_certs: &Vec<X509>) -> Result<Self, AndroidCaRegistryError> {
+    pub fn from_x509(x509_certs: &[X509]) -> Result<Self, AndroidCaRegistryError> {
         let der_ca_certs = x509_certs
             .iter()
             .map(|cert| cert.to_der())
@@ -50,7 +50,7 @@ impl AndroidCaRegistry {
         Self::from_der(&der_ca_certs)
     }
 
-    pub fn from_der(der_certs: &Vec<Vec<u8>>) -> Result<Self, AndroidCaRegistryError> {
+    pub fn from_der(der_certs: &[Vec<u8>]) -> Result<Self, AndroidCaRegistryError> {
         let ca_public_keys = der_certs
             .iter()
             .map(|der| {
@@ -65,6 +65,7 @@ impl AndroidCaRegistry {
         })
     }
 
+    #[must_use]
     pub fn has_public_key(&self, public_key: &[u8]) -> bool {
         self.public_keys
             .iter()

@@ -115,18 +115,19 @@ impl AndroidAttestationService {
     }
 
     /// Background refresh for the revocation list; see [`AndroidRevocationList::spawn_refresh_loop`].
+    #[must_use]
     pub fn spawn_refresh_loop(&self) -> tokio::task::JoinHandle<()> {
         self.revocation_list.spawn_refresh_loop()
     }
 
     pub fn verify(
         &self,
-        base64_cert_chain: &Vec<String>,
+        base64_cert_chain: &[String],
         nonce: &String,
         app_version: &String,
         bundle_identifier: &BundleIdentifier,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
-        let cert_chain = AndroidCertChain::from_base64(&base64_cert_chain)
+        let cert_chain = AndroidCertChain::from_base64(base64_cert_chain)
             .map_err(AndroidAttestationError::CertChain)?;
 
         if cert_chain

@@ -83,7 +83,7 @@ pub struct AndroidCertChain {
 }
 
 impl AndroidCertChain {
-    pub fn from_base64(base64_cert_chain: &Vec<String>) -> Result<Self, AndroidCertChainError> {
+    pub fn from_base64(base64_cert_chain: &[String]) -> Result<Self, AndroidCertChainError> {
         let der_cert_chain = base64_cert_chain
             .iter()
             .map(|c| Base64.decode(c))
@@ -93,7 +93,7 @@ impl AndroidCertChain {
         Self::from_der(&der_cert_chain)
     }
 
-    pub fn from_der(der_cert_chain: &Vec<Vec<u8>>) -> Result<Self, AndroidCertChainError> {
+    pub fn from_der(der_cert_chain: &[Vec<u8>]) -> Result<Self, AndroidCertChainError> {
         let cert_chain = der_cert_chain
             .iter()
             .map(|c| X509::from_der(c))
@@ -103,7 +103,7 @@ impl AndroidCertChain {
         Self::from_x509(&cert_chain)
     }
 
-    pub fn from_x509(cert_chain: &Vec<X509>) -> Result<Self, AndroidCertChainError> {
+    pub fn from_x509(cert_chain: &[X509]) -> Result<Self, AndroidCertChainError> {
         if cert_chain.len() < 2 {
             return Err(AndroidCertChainError::ChainLength);
         }
@@ -159,7 +159,7 @@ impl AndroidCertChain {
             return Err(AndroidCertChainError::ChainVerification(context.error()));
         }
 
-        let device_certificate = DeviceCertificate::from_x509(&device_cert)
+        let device_certificate = DeviceCertificate::from_x509(device_cert)
             .map_err(AndroidCertChainError::DeviceCertificate)?;
 
         let root_certificate =
