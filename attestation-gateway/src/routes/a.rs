@@ -4,7 +4,7 @@ use aws_config::SdkConfig;
 
 use axum::{Extension, Json};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{DateTime, Utc};
 use josekit::jwt::JwtPayload;
 use openssl::{
     bn::BigNum,
