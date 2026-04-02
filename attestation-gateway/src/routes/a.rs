@@ -169,7 +169,6 @@ pub async fn handler(
                 }
             }?;
 
-            metrics::counter!("android_attestation_success").increment(1);
             if let Some(os_patch_level) = attestation_output.os_patch_level {
                 metrics::gauge!("android_attestation_os_patch_level").set(os_patch_level as f64);
             } else {
@@ -179,6 +178,8 @@ pub async fn handler(
             attestation_output.device_public_key
         }
     };
+
+    metrics::counter!("attestation_success", "platform" => platform.to_string()).increment(1);
 
     let token_details = nonce_db
         .consume_nonce(&request.nonce)
