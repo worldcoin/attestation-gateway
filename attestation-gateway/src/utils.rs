@@ -139,7 +139,7 @@ pub enum BundleIdentifier {
     // World ID
     #[serde(rename = "org.world.id")]
     IOSProdWorldID,
-    #[serde(rename = "org.world.staging.id")]
+    #[serde(rename = "org.world.id.staging")]
     IOSStageWorldID,
 }
 
@@ -182,7 +182,7 @@ impl BundleIdentifier {
             Self::IOSStageWorldApp => Some("35RXKB6738.org.worldcoin.insight.staging"),
             Self::IOSProdWorldApp => Some("35RXKB6738.org.worldcoin.insight"),
             Self::IOSProdWorldID => Some("35RXKB6738.org.world.id"),
-            Self::IOSStageWorldID => Some("35RXKB6738.org.world.staging.id"),
+            Self::IOSStageWorldID => Some("35RXKB6738.org.world.id.staging"),
             // cspell:enable
         }
     }
@@ -197,7 +197,7 @@ impl Display for BundleIdentifier {
             Self::IOSProdWorldApp => write!(f, "org.worldcoin.insight"),
             Self::IOSStageWorldApp => write!(f, "org.worldcoin.insight.staging"),
             Self::IOSProdWorldID => write!(f, "org.world.id"),
-            Self::IOSStageWorldID => write!(f, "org.world.staging.id"),
+            Self::IOSStageWorldID => write!(f, "org.world.id.staging"),
         }
     }
 }
