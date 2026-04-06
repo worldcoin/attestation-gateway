@@ -299,6 +299,7 @@ async fn process_and_finalize_report(
     // Generate output attestation token
     let output_token_payload = OutputTokenPayload {
         aud,
+        bundle_identifier: report.bundle_identifier.clone(),
         request_hash: request_hash.clone(),
         pass: report.pass,
         out: report.out,
