@@ -5,7 +5,7 @@ use josekit::{
     jwt,
 };
 
-use crate::utils::{CheckType, OutEnum, OutputTokenPayload};
+use crate::utils::{BundleIdentifier, CheckType, OutEnum, OutputTokenPayload};
 
 use super::*;
 
@@ -89,6 +89,7 @@ async fn test_generate_output_token() {
     let output_token_payload = OutputTokenPayload {
         aud: "example.worldcoin.org".to_string(),
         request_hash: "a_sample_request_hash".to_string(),
+        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
         pass: true,
         out: OutEnum::Pass,
         error: None,
