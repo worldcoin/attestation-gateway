@@ -1,5 +1,6 @@
 //! Google Android Key Attestation revocation feed (`android.googleapis.com/attestation/status`).
-//! Cache lifetime follows the response `Cache-Control` header (typically `max-age`).
+//! Cache lifetime follows `Cache-Control` (typically `max-age`) minus the response `Age` header when
+//! present (time already spent in upstream caches per RFC 7234).
 //!
 //! Construct with [`AndroidRevocationList::connect`] (async) so the first snapshot is loaded before
 //! use. The live cache is an [`Arc`] swapped atomically ([`arc_swap::ArcSwap`]) — no mutexes.
@@ -110,8 +111,8 @@ impl AndroidRevocationList {
         self.inner.cache.load().revoked_ids.contains(certificate_id)
     }
 
-    /// Remaining validity implied by the last response `max-age` (approximately): time until the
-    /// current snapshot should be refreshed.
+    /// Remaining validity implied by the last response `max-age` minus `Age` when sent (approximately):
+    /// time until the current snapshot should be refreshed.
     ///
     /// Returns [`Duration::ZERO`] if already stale or if no expiry was recorded.
     #[must_use]
@@ -125,7 +126,7 @@ impl AndroidRevocationList {
             .unwrap_or(Duration::ZERO)
     }
 
-    /// Fetches and replaces the cache. Respects `Cache-Control` on the response.
+    /// Fetches and replaces the cache. Respects `Cache-Control` and `Age` on the response.
     ///
     /// Must not be invoked concurrently with another refresh; see module documentation.
     ///
@@ -193,6 +194,15 @@ async fn fetch_revocations(
         .and_then(parse_cache_control_max_age)
         .unwrap_or(DEFAULT_FALLBACK_MAX_AGE);
 
+    let age = response
+        .headers()
+        .get(reqwest::header::AGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_age_header)
+        .unwrap_or(Duration::ZERO);
+
+    let remaining_freshness = max_age.saturating_sub(age);
+
     let body = response
         .bytes()
         .await
@@ -210,7 +220,7 @@ async fn fetch_revocations(
 
     Ok(CacheState {
         revoked_ids: revoked,
-        valid_until: Some(Instant::now() + max_age),
+        valid_until: Some(Instant::now() + remaining_freshness),
     })
 }
 
@@ -242,6 +252,16 @@ struct StatusEntry {
     status: String,
 }
 
+/// Parses the `Age` header value (seconds, RFC 7234).
+fn parse_age_header(value: &str) -> Option<Duration> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let secs = value.parse::<u64>().ok()?;
+    Some(Duration::from_secs(secs))
+}
+
 /// Parses `max-age` from a `Cache-Control` header value (e.g. `public, max-age=3600`).
 fn parse_cache_control_max_age(cache_control: &str) -> Option<Duration> {
     for part in cache_control.split(',') {
@@ -259,6 +279,17 @@ fn parse_cache_control_max_age(cache_control: &str) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_age_header_extracts_seconds() {
+        assert_eq!(
+            parse_age_header("120"),
+            Some(Duration::from_secs(120))
+        );
+        assert_eq!(parse_age_header("0"), Some(Duration::ZERO));
+        assert_eq!(parse_age_header(""), None);
+        assert_eq!(parse_age_header("not-a-number"), None);
+    }
 
     #[test]
     fn parse_cache_control_max_age_extracts_seconds() {
@@ -297,5 +328,45 @@ mod tests {
         let until = list.duration_until_stale();
         assert!(!until.is_zero());
         assert!(until <= Duration::from_secs(60));
+    }
+
+    #[tokio::test]
+    async fn connect_subtracts_age_from_max_age() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/status")
+            .with_status(200)
+            .with_header("Cache-Control", "max-age=60")
+            .with_header("Age", "25")
+            .with_body(r#"{"entries":{}}"#)
+            .create();
+
+        let url = format!("{}/status", server.url());
+        let list = AndroidRevocationList::connect(url).await.unwrap();
+        let until = list.duration_until_stale();
+        assert!(
+            until <= Duration::from_secs(36),
+            "expected ~35s remaining (60-25), got {until:?}"
+        );
+        assert!(
+            until >= Duration::from_secs(30),
+            "expected ~35s remaining, got {until:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_age_not_below_zero_when_age_exceeds_max_age() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/status")
+            .with_status(200)
+            .with_header("Cache-Control", "max-age=60")
+            .with_header("Age", "3600")
+            .with_body(r#"{"entries":{}}"#)
+            .create();
+
+        let url = format!("{}/status", server.url());
+        let list = AndroidRevocationList::connect(url).await.unwrap();
+        assert_eq!(list.duration_until_stale(), Duration::ZERO);
     }
 }
