@@ -161,6 +161,8 @@ pub async fn handler(
                             details: None,
                         })
                     } else {
+                        tracing::debug!(error = ?e, "Error validating Android attestation");
+
                         Err(RequestError {
                             code: ErrorCode::BadRequest,
                             details: Some(e.to_string()),
