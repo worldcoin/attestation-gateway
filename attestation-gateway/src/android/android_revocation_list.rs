@@ -282,10 +282,7 @@ mod tests {
 
     #[test]
     fn parse_age_header_extracts_seconds() {
-        assert_eq!(
-            parse_age_header("120"),
-            Some(Duration::from_secs(120))
-        );
+        assert_eq!(parse_age_header("120"), Some(Duration::from_secs(120)));
         assert_eq!(parse_age_header("0"), Some(Duration::ZERO));
         assert_eq!(parse_age_header(""), None);
         assert_eq!(parse_age_header("not-a-number"), None);
