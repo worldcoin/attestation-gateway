@@ -95,8 +95,8 @@ impl DeviceCertificate {
             .as_deref()
     }
 
-    pub fn package_name(&self) -> Option<&str> {
-        self.key_description.package_name.as_deref()
+    pub fn package_names(&self) -> &[String] {
+        &self.key_description.package_names
     }
 }
 
@@ -142,7 +142,7 @@ mod tests {
         );
 
         assert!(cert.public_key().len() > 0);
-        assert_eq!(cert.package_name(), Some("com.worldcoin.dev"));
+        assert_eq!(cert.package_names(), ["com.worldcoin.dev"]);
     }
 
     #[test]

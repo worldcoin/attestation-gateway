@@ -211,12 +211,13 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::InvalidAttestationSignatureDigest);
         }
 
-        let attestation_package_name = cert_chain
-            .device_certificate()
-            .package_name()
-            .ok_or(AndroidAttestationError::MissingPackageName)?;
+        let package_names = cert_chain.device_certificate().package_names();
+        if package_names.is_empty() {
+            return Err(AndroidAttestationError::MissingPackageName);
+        }
 
-        if attestation_package_name != bundle_identifier.to_string() {
+        let expected = bundle_identifier.to_string();
+        if !package_names.iter().any(|name| name == &expected) {
             return Err(AndroidAttestationError::InvalidPackageName);
         }
 
