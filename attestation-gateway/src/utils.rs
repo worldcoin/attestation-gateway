@@ -594,6 +594,7 @@ impl DataReport {
 pub struct OutputTokenPayload {
     pub aud: String,
     pub request_hash: String,
+    pub bundle_identifier: BundleIdentifier,
     pub pass: bool,
     pub out: OutEnum,
     pub error: Option<String>,
@@ -642,6 +643,12 @@ impl OutputTokenPayload {
             .set_claim(
                 "jti",
                 Some(josekit::Value::String(self.request_hash.clone())),
+            )
+            .map_err(handle_jose_error)?;
+        payload
+            .set_claim(
+                "bundle_identifier",
+                Some(josekit::Value::String(self.bundle_identifier.to_string())),
             )
             .map_err(handle_jose_error)?;
         payload
@@ -714,6 +721,7 @@ mod tests {
         let payload = OutputTokenPayload {
             aud: "my-aud.com".to_string(),
             request_hash: "this_is_not_a_hash_with_enough_entropy".to_string(),
+            bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
             pass: true,
             out: OutEnum::Pass,
             error: None,
