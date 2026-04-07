@@ -46,10 +46,10 @@ impl DeviceCertificate {
             .get_extension_unique(&oid!(1.3.6.1.4.1.11129.2.1.17))
             .map_err(|_| DeviceCertificateError::AttestationExtraction)?
             .ok_or(DeviceCertificateError::MissingAttestation)?;
-
-        let public_key = Vec::from(cert.public_key().subject_public_key.data.clone());
         let key_description = KeyDescription::from_der(key_description.value)
             .map_err(DeviceCertificateError::AttestationParsing)?;
+
+        let public_key = Vec::from(cert.public_key().subject_public_key.data.clone());
 
         Ok(Self {
             public_key,

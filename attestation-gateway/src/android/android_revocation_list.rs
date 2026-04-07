@@ -182,6 +182,8 @@ async fn fetch_revocations(
         .get(url)
         .send()
         .await
+        .map_err(AndroidRevocationListError::FetchRevocationsHttp)?
+        .error_for_status()
         .map_err(AndroidRevocationListError::FetchRevocationsHttp)?;
 
     let max_age = response
@@ -216,8 +218,8 @@ impl AndroidRevocationListError {
     pub fn reason_tag(&self) -> String {
         match self {
             Self::ReqwestError(_) => "reqwest_error".to_string(),
-            Self::FetchRevocationsHttp(_) => "fetch_revocations_http_error".to_string(),
-            Self::FetchRevocationsJsonParsing(_) => "fetch_revocations_json_error".to_string(),
+            Self::FetchRevocationsHttp(_) => "fetch_revocations_http".to_string(),
+            Self::FetchRevocationsJsonParsing(_) => "fetch_revocations_json".to_string(),
         }
     }
 
