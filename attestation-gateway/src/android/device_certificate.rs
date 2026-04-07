@@ -125,8 +125,6 @@ impl DeviceCertificateError {
 #[cfg(test)]
 mod tests {
     use base64::{Engine, engine::general_purpose::STANDARD as Base64};
-    use chrono::{DateTime, Datelike, Utc};
-    use std::time::{Duration, SystemTime};
 
     use super::*;
 
