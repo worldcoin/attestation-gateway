@@ -1,6 +1,6 @@
 use std::{env, net::SocketAddr, time::Duration};
 
-use crate::nonces::NonceDb;
+use crate::{android::AndroidAttestationService, nonces::NonceDb};
 use aide::openapi::{Info, OpenApi};
 use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
@@ -35,6 +35,12 @@ pub async fn start(
     };
 
     let nonce_db = NonceDb::new(redis.clone());
+    let android_attestation_service = AndroidAttestationService::from_defaults()
+        .await
+        .expect("failed to construct Android attestation service");
+
+    #[expect(clippy::let_underscore_future)] // do not await, it's a handler for background tasks
+    let _ = android_attestation_service.spawn_refresh_loop();
 
     let app = routes::handler()
         .finish_api(&mut openapi)
@@ -45,6 +51,7 @@ pub async fn start(
         .layer(Extension(global_config))
         .layer(CompressionLayer::new())
         .layer(Extension(kinesis_client))
+        .layer(Extension(android_attestation_service))
         .layer(
             TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::new().include_headers(true)),
         )

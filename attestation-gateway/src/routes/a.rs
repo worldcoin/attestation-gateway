@@ -17,8 +17,9 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
+    android::AndroidAttestationService,
     apple, keys, kms_jws,
-    nonces::NonceDb,
+    nonces::{NonceDb, NonceDbError},
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
 };
 
@@ -99,6 +100,7 @@ pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(mut nonce_db): Extension<NonceDb>,
+    Extension(android_attestation): Extension<AndroidAttestationService>,
     Extension(aws_config): Extension<SdkConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
@@ -133,18 +135,70 @@ pub async fn handler(
             )?
         }
         Platform::Android => {
-            return Err(RequestError {
+            let android_cert_chain = request.android_attestation.ok_or_else(|| RequestError {
                 code: ErrorCode::BadRequest,
-                details: Some("Android attestation is not supported on this endpoint.".to_string()),
-            });
+                details: Some("Android attestation is required".to_string()),
+            })?;
+
+            let attestation_result = android_attestation.verify(
+                &android_cert_chain,
+                &request.nonce,
+                &request.app_version,
+                &request.bundle_identifier,
+            );
+
+            let attestation_output = match attestation_result {
+                Ok(attestation_output) => Ok(attestation_output),
+                Err(e) => {
+                    metrics::counter!("attestation_gateway.android_error",  "reason" => e.reason_tag())
+                        .increment(1);
+
+                    if e.is_internal_error() {
+                        tracing::error!(error = ?e, "Error validating Android attestation");
+
+                        Err(RequestError {
+                            code: ErrorCode::InternalServerError,
+                            details: None,
+                        })
+                    } else {
+                        tracing::debug!(error = ?e, "Error validating Android attestation");
+
+                        Err(RequestError {
+                            code: ErrorCode::BadRequest,
+                            details: Some(e.to_string()),
+                        })
+                    }
+                }
+            }?;
+
+            if let Some(os_patch_level_delta) = attestation_output.os_patch_level_delta {
+                metrics::gauge!("attestation_gateway.android_os_patch_level_delta")
+                    .set(f64::from(os_patch_level_delta));
+            } else {
+                metrics::counter!("attestation_gateway.android_missing_os_patch_level")
+                    .increment(1);
+            }
+
+            attestation_output.device_public_key
         }
     };
 
+    metrics::counter!("attestation_gateway.attestation", "platform" => platform.to_string())
+        .increment(1);
+
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
-        tracing::error!(error = ?e, "Error consuming token nonce");
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: None,
+        if matches!(e, NonceDbError::NonceNotFound) {
+            RequestError {
+                code: ErrorCode::BadRequest,
+                details: Some("Nonce not found".to_string()),
+            }
+        } else {
+            tracing::error!(error = ?e, "Error consuming token nonce");
+
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: Some("Error consuming token nonce".to_string()),
+            }
         }
     })?;
 
@@ -172,10 +226,12 @@ fn validate_apple_attestation_and_get_device_public_key(
     bundle_identifier: &BundleIdentifier,
     apple_attestation: String,
 ) -> Result<Vec<u8>, RequestError> {
-    let app_id = bundle_identifier.apple_app_id().ok_or(RequestError {
-        code: ErrorCode::BadRequest,
-        details: Some("Invalid bundle identifier".to_string()),
-    })?;
+    let app_id = bundle_identifier
+        .apple_app_id()
+        .ok_or_else(|| RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("Invalid bundle identifier".to_string()),
+        })?;
 
     let allowed_aaguid_vec = apple::AAGUID::allowed_for_bundle_identifier(bundle_identifier)
         .map_err(|_| RequestError {

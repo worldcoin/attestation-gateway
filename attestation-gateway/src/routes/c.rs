@@ -62,7 +62,7 @@ pub async fn handler(
         }
     })?;
 
-    let device_key_expires_at: chrono::DateTime<Utc> = token_details.exp.into();
+    let device_key_expires_at: chrono::DateTime<Utc> = token_details.exp;
     let device_key_expires_at =
         device_key_expires_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 

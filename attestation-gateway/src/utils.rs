@@ -172,6 +172,21 @@ impl BundleIdentifier {
         }
     }
 
+    /// Expected app signing-certificate digest for **hardware attestation** (`POST /a`), base64-encoded.
+    #[must_use]
+    pub const fn certificate_sha256_digest_base64(&self) -> Option<&'static str> {
+        match self {
+            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp => {
+                Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
+            }
+            Self::AndroidDevWorldApp => Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="),
+            Self::IOSProdWorldApp
+            | Self::IOSStageWorldApp
+            | Self::IOSProdWorldID
+            | Self::IOSStageWorldID => None,
+        }
+    }
+
     #[must_use]
     pub const fn apple_app_id(&self) -> Option<&str> {
         match self {

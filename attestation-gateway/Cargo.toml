@@ -15,6 +15,8 @@ test-helpers = []
 [dependencies]
 aide = { version = "0.13.5", features = ["axum", "macros", "scalar"] }
 anyhow = "1.0.102"
+arc-swap = "1.7"
+asn1 = "0.24.1"
 aws-config = "1.8.14"
 aws-sdk-dynamodb = "1.107.0"
 aws-sdk-kinesis = "1.101.0"
@@ -36,10 +38,12 @@ openssl = { version = "0.10.75", features = ["vendored"] }
 rand = "0.10.0"
 redis = { version = "1.0.4", features = ["tokio-comp", "connection-manager", "tokio-native-tls-comp"] }
 regex = "1.12.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 schemars = "0.8.22"
 serde.workspace = true
 serde_bytes = "0.11.19"
 serde_json = "1.0.149"
+thiserror.workspace = true
 tokio = { version = "1.50.0", features = ["full"] }
 tower-http = { version = "0.6.8", features = ["compression-br", "trace", "timeout"] }
 tracing = { version = "0.1.44", features = ["log"] }
