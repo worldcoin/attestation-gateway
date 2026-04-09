@@ -1,5 +1,5 @@
 use axum::{Extension, Json};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 
 use crate::nonces::{NonceDb, TokenDetails};
@@ -13,6 +13,7 @@ pub struct Request {
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct Response {
     pub nonce: String,
+    pub token_exp_max: i64,
     pub device_key_expires_at: String,
 }
 
@@ -62,12 +63,18 @@ pub async fn handler(
         }
     })?;
 
-    let device_key_expires_at: chrono::DateTime<Utc> = token_details.exp;
+    let device_key_expires_at =
+        DateTime::<Utc>::from_timestamp(token_details.exp_max, 0).ok_or(RequestError {
+            code: ErrorCode::InternalServerError,
+            details: Some("Failed to generate device key expires at.".to_string()),
+        })?;
+
     let device_key_expires_at =
         device_key_expires_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     Ok(Json(Response {
         nonce,
+        token_exp_max: token_details.exp_max,
         device_key_expires_at,
     }))
 }
