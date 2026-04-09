@@ -5,25 +5,22 @@ use std::time::{Duration, SystemTime};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TokenDetails {
     pub aud: String,
-
-    #[serde(with = "chrono::serde::ts_milliseconds")]
-    pub exp: DateTime<Utc>,
+    pub exp_max: i64,
 }
 
 impl TokenDetails {
     #[must_use]
     pub fn from_aud(aud: String) -> Self {
+        let now = DateTime::<Utc>::from(SystemTime::now());
         let ttl = Duration::from_mins(5);
-        let exp = DateTime::<Utc>::from(SystemTime::now()) + ttl;
+        let exp_max = (now + ttl).timestamp();
 
-        Self { aud, exp }
+        Self { aud, exp_max }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::SubsecRound;
-
     use super::*;
 
     #[test]
@@ -31,7 +28,7 @@ mod tests {
         let token_details = TokenDetails::from_aud("android".to_string());
 
         assert_eq!(token_details.aud, "android");
-        assert!(token_details.exp > DateTime::<Utc>::from(SystemTime::now()));
+        assert!(token_details.exp_max > DateTime::<Utc>::from(SystemTime::now()).timestamp());
     }
 
     #[test]
@@ -40,19 +37,16 @@ mod tests {
         let json = serde_json::to_string(&token_details).unwrap();
 
         assert!(json.contains("\"aud\":\"android\""));
-        assert!(json.contains("\"exp\":"));
+        assert!(json.contains("\"exp_max\":"));
     }
 
     #[test]
     fn test_deserialize_from_json() {
-        let json = r#"{"aud":"test-audience","exp":1000000000000}"#;
+        let json = r#"{"aud":"test-audience","exp_max":1000000000}"#;
         let token_details: TokenDetails = serde_json::from_str(json).unwrap();
 
         assert_eq!(token_details.aud, "test-audience");
-        assert_eq!(
-            token_details.exp,
-            DateTime::parse_from_rfc3339("2001-09-09T01:46:40.000Z").unwrap()
-        );
+        assert_eq!(token_details.exp_max, 1000000000);
     }
 
     #[test]
@@ -62,6 +56,6 @@ mod tests {
         let deserialized: TokenDetails = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.aud, original.aud);
-        assert_eq!(deserialized.exp, original.exp.trunc_subsecs(3));
+        assert_eq!(deserialized.exp_max, original.exp_max);
     }
 }

@@ -26,6 +26,7 @@ use crate::{
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct Request {
     pub nonce: String,
+    pub exp: Option<i64>,
     pub app_version: String,
     pub bundle_identifier: BundleIdentifier,
     pub apple_attestation: Option<String>,
@@ -45,7 +46,7 @@ pub struct IntegrityTokenPayload {
     pub aud: String,
     pub cnf: Vec<u8>,
     pub pass: bool,
-    pub exp: DateTime<Utc>,
+    pub exp: i64,
 }
 
 impl IntegrityTokenPayload {
@@ -78,7 +79,11 @@ impl IntegrityTokenPayload {
         let mut payload = JwtPayload::new();
         payload.set_issued_at(&SystemTime::now());
         payload.set_issuer("attestation.worldcoin.org"); // TODO: what about attestation.worldcoin.dev?
-        payload.set_expires_at(&self.exp.into());
+        payload.set_expires_at(
+            &DateTime::<Utc>::from_timestamp(self.exp, 0)
+                .ok_or(eyre::Error::msg("Unreachable exp conversion"))?
+                .into(),
+        );
         payload.set_claim("v", Some(josekit::Value::String(self.v.clone())))?;
         payload.set_claim(
             "app_version",
@@ -202,6 +207,20 @@ pub async fn handler(
         }
     })?;
 
+    let exp = match request.exp {
+        Some(exp) => {
+            if exp > token_details.exp_max {
+                return Err(RequestError {
+                    code: ErrorCode::BadRequest,
+                    details: Some("Exp is greater than token exp max".to_string()),
+                });
+            } else {
+                Ok(exp)
+            }
+        }
+        None => Ok(token_details.exp_max),
+    }?;
+
     let integrity_token = generate_integrity_token(
         &mut redis,
         &aws_config,
@@ -212,7 +231,7 @@ pub async fn handler(
             aud: token_details.aud,
             cnf: device_public_key,
             pass: true,
-            exp: token_details.exp,
+            exp,
         },
     )
     .await?;
