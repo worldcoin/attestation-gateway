@@ -98,6 +98,50 @@ impl DeviceCertificate {
     pub fn package_names(&self) -> &[String] {
         &self.key_description.package_names
     }
+
+    pub fn verified_boot_key(&self) -> Option<&[u8]> {
+        self.key_description.verified_boot_key.as_deref()
+    }
+
+    pub fn verified_boot_hash(&self) -> Option<&[u8]> {
+        self.key_description.verified_boot_hash.as_deref()
+    }
+
+    pub const fn device_unique_attestation(&self) -> bool {
+        self.key_description.device_unique_attestation
+    }
+
+    pub fn attestation_id_brand(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_brand.as_deref()
+    }
+
+    pub fn attestation_id_device(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_device.as_deref()
+    }
+
+    pub fn attestation_id_product(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_product.as_deref()
+    }
+
+    pub fn attestation_id_manufacturer(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_manufacturer.as_deref()
+    }
+
+    pub fn attestation_id_model(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_model.as_deref()
+    }
+
+    pub fn module_hash(&self) -> Option<&[u8]> {
+        self.key_description.module_hash.as_deref()
+    }
+
+    pub fn purpose(&self) -> &[u64] {
+        &self.key_description.purpose
+    }
+
+    pub const fn creation_date_time(&self) -> Option<u64> {
+        self.key_description.creation_date_time
+    }
 }
 
 impl DeviceCertificateError {
