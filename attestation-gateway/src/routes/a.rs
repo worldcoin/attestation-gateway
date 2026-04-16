@@ -17,7 +17,11 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    android::AndroidAttestationService,
+    android::{
+        AndroidAttestationService,
+        android_attestation_service::IntegrityConfidence,
+        keybox_defense::{KeyboxDefense, RiskLevel},
+    },
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
@@ -47,6 +51,7 @@ pub struct IntegrityTokenPayload {
     pub cnf: Vec<u8>,
     pub pass: bool,
     pub exp: i64,
+    pub integrity_confidence: Option<IntegrityConfidence>,
 }
 
 impl IntegrityTokenPayload {
@@ -97,6 +102,12 @@ impl IntegrityTokenPayload {
         payload.set_claim("cnf", Some(josekit::Value::Object(cfn)))?;
         payload.set_claim("pass", Some(josekit::Value::Bool(self.pass)))?;
 
+        if let Some(ref ic) = self.integrity_confidence {
+            let ic_json = serde_json::to_value(ic)
+                .map_err(|e| eyre::eyre!("failed to serialize integrity_confidence: {e}"))?;
+            payload.set_claim("integrity_confidence", Some(ic_json))?;
+        }
+
         Ok(payload)
     }
 }
@@ -124,6 +135,8 @@ pub async fn handler(
 
     let challenge = format!("n={},av={}", request.nonce, request.app_version);
     let platform = request.bundle_identifier.platform();
+
+    let mut android_confidence: Option<IntegrityConfidence> = None;
 
     let device_public_key = match platform {
         Platform::AppleIOS => {
@@ -184,6 +197,48 @@ pub async fn handler(
                     .increment(1);
             }
 
+            // --- Keybox defense: rate limiting + blocklist ---
+            if let Some(ref fp) = attestation_output.batch_cert_fingerprint {
+                let keybox_defense = KeyboxDefense::new(
+                    crate::android::keybox_defense::KeyboxDefenseConfig::from_env(),
+                );
+                match keybox_defense.evaluate(&mut redis, fp).await {
+                    Ok(verdict) => {
+                        if verdict.risk_level == RiskLevel::Blocked {
+                            return Err(RequestError {
+                                code: ErrorCode::BadRequest,
+                                details: Some("certificate blocklisted".to_string()),
+                            });
+                        }
+                        if verdict.risk_level == RiskLevel::High {
+                            tracing::warn!(
+                                fingerprint = %fp,
+                                count = verdict.request_count,
+                                "batch cert exceeds block threshold -- rejecting"
+                            );
+                            return Err(RequestError {
+                                code: ErrorCode::BadRequest,
+                                details: Some("rate limit exceeded for attestation certificate".to_string()),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = ?e, "keybox defense evaluation failed (non-blocking)");
+                    }
+                }
+            }
+
+            // --- osPatchLevel: log-only signal ---
+            if let Some(delta) = attestation_output.os_patch_level_delta {
+                if delta > 6 {
+                    tracing::warn!(
+                        os_patch_level_delta = delta,
+                        "device os patch level is stale"
+                    );
+                }
+            }
+
+            android_confidence = Some(attestation_output.integrity_confidence);
             attestation_output.device_public_key
         }
     };
@@ -232,6 +287,7 @@ pub async fn handler(
             cnf: device_public_key,
             pass: true,
             exp,
+            integrity_confidence: android_confidence,
         },
     )
     .await?;
