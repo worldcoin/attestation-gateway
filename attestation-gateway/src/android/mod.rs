@@ -4,13 +4,14 @@ pub use integrity_token_data::PlayIntegrityToken;
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
-mod android_attestation_service;
+pub mod android_attestation_service;
 mod android_ca_registry;
 mod android_cert_chain;
 mod android_revocation_list;
 mod device_certificate;
 mod integrity_token_data;
-mod key_description;
+pub mod key_description;
+pub mod keybox_defense;
 mod root_certificate;
 
 pub use android_attestation_service::AndroidAttestationService;
