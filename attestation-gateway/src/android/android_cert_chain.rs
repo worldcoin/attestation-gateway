@@ -16,6 +16,8 @@ use crate::android::{
     root_certificate::{RootCertificate, RootCertificateError},
 };
 
+const NID_SERIAL_NUMBER: i32 = 105;
+
 #[derive(Debug, Error)]
 pub enum AndroidCertChainError {
     #[error("device certificate: {0}")]
@@ -56,11 +58,16 @@ pub enum AndroidCertChainError {
 
     #[error("context verify error")]
     ContextVerify,
+
+    #[error("issued to decoding error")]
+    IssuedToDecoding,
 }
 
 /// ASN.1 serial number in the two string forms used as keys in Google's attestation status JSON.
 #[derive(Debug, Clone)]
 pub struct CertificateSerial {
+    /// Certificate issued to contains serial number too
+    pub issued_to: Vec<String>,
     /// Decimal digits (e.g. `"6681152659205225093"`).
     pub decimal: String,
     /// Lowercase hex without `0x` (e.g. `"c35747a084470c3135aeefe2b8d40cd6"`).
@@ -71,7 +78,21 @@ impl CertificateSerial {
     /// `true` if either representation appears in [`AndroidRevocationList`].
     #[must_use]
     pub fn is_revoked(&self, list: &AndroidRevocationList) -> bool {
-        list.is_revoked(&self.decimal) || list.is_revoked(&self.hex)
+        if list.is_revoked(&self.decimal) {
+            return true;
+        }
+
+        if list.is_revoked(&self.hex) {
+            return true;
+        }
+
+        for issued_to in self.issued_to.iter() {
+            if list.is_revoked(issued_to) {
+                return true;
+            }
+        }
+
+        false
     }
 }
 
@@ -210,7 +231,19 @@ fn certificate_serial(cert: &X509) -> Result<CertificateSerial, AndroidCertChain
         .to_string()
         .to_lowercase();
 
-    Ok(CertificateSerial { decimal, hex })
+    let issued_to = cert
+        .subject_name()
+        .entries()
+        .filter(|e| e.object().nid().as_raw() == NID_SERIAL_NUMBER)
+        .map(|e| e.data().as_utf8().map(|v| String::from(&**v)))
+        .collect::<Result<Vec<String>, openssl::error::ErrorStack>>()
+        .map_err(|_| AndroidCertChainError::IssuedToDecoding)?;
+
+    Ok(CertificateSerial {
+        issued_to,
+        decimal,
+        hex,
+    })
 }
 
 impl AndroidCertChainError {
@@ -235,6 +268,7 @@ impl AndroidCertChainError {
             Self::StoreAdd => "store_add".to_string(),
             Self::ContextBuilder => "context_builder".to_string(),
             Self::ContextVerify => "context_verify".to_string(),
+            Self::IssuedToDecoding => "issued_to_decoding".to_string(),
         }
     }
 
@@ -245,7 +279,8 @@ impl AndroidCertChainError {
             Self::Base64Encoding(_)
             | Self::DerEncoding
             | Self::ChainLength
-            | Self::ChainVerification(_) => false,
+            | Self::ChainVerification(_)
+            | Self::IssuedToDecoding => false,
             Self::StackBuilder
             | Self::StackPush
             | Self::ParamBuilder
