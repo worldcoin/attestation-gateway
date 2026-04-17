@@ -538,10 +538,20 @@ impl AndroidAttestationService {
 
         tracing::info!("android verify: verification complete, all checks passed");
 
-        let batch_cert_fingerprint = cert_chain.intermediate_cert_der().map(|der| {
-            use super::keybox_defense::KeyboxDefense;
-            KeyboxDefense::fingerprint(der)
-        });
+        // Keybox-bypass rate limiting and blocklisting target legacy batch attestation keys,
+        // which can leak. Chains rooted in a Remote-Key-Provisioning (RKP) root are issued
+        // by Google per-device and cannot have been produced from a leaked keybox, so we
+        // intentionally skip the keybox-defense fingerprint (and therefore both the rate
+        // limiter and the blocklist lookup) for those chains.
+        let batch_cert_fingerprint = if is_rkp {
+            tracing::info!("android verify: RKP-rooted chain, skipping keybox-defense fingerprint");
+            None
+        } else {
+            cert_chain.intermediate_cert_der().map(|der| {
+                use super::keybox_defense::KeyboxDefense;
+                KeyboxDefense::fingerprint(der)
+            })
+        };
 
         Ok(AndroidAttestationOutput {
             device_public_key: cert_chain.device_certificate().public_key(),
