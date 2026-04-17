@@ -17,7 +17,7 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    android::{AndroidAttestationService, android_attestation_service::IntegrityConfidence},
+    android::AndroidAttestationService,
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
@@ -57,7 +57,6 @@ pub struct IntegrityTokenPayload {
     pub cnf: Vec<u8>,
     pub pass: bool,
     pub exp: i64,
-    pub integrity_confidence: Option<IntegrityConfidence>,
 }
 
 impl IntegrityTokenPayload {
@@ -107,12 +106,6 @@ impl IntegrityTokenPayload {
         payload.set_claim("aud", Some(josekit::Value::String(self.aud.clone())))?;
         payload.set_claim("cnf", Some(josekit::Value::Object(cfn)))?;
         payload.set_claim("pass", Some(josekit::Value::Bool(self.pass)))?;
-
-        if let Some(ref ic) = self.integrity_confidence {
-            let ic_json = serde_json::to_value(ic)
-                .map_err(|e| eyre::eyre!("failed to serialize integrity_confidence: {e}"))?;
-            payload.set_claim("integrity_confidence", Some(ic_json))?;
-        }
 
         Ok(payload)
     }
@@ -165,8 +158,6 @@ pub async fn handler(
 
     let challenge = format!("n={},av={}", request.nonce, request.app_version);
     let platform = request.bundle_identifier.platform();
-
-    let mut android_confidence: Option<IntegrityConfidence> = None;
 
     let device_public_key = match platform {
         Platform::AppleIOS => {
@@ -252,7 +243,6 @@ pub async fn handler(
                 }
             }
 
-            android_confidence = Some(attestation_output.integrity_confidence);
             attestation_output.device_public_key
         }
     };
@@ -318,7 +308,6 @@ pub async fn handler(
             cnf: device_public_key,
             pass: true,
             exp,
-            integrity_confidence: android_confidence,
         },
     )
     .await?;
