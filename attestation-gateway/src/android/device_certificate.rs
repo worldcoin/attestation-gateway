@@ -98,6 +98,102 @@ impl DeviceCertificate {
     pub fn package_names(&self) -> &[String] {
         &self.key_description.package_names
     }
+
+    pub fn purpose(&self) -> &[u64] {
+        &self.key_description.purpose
+    }
+
+    pub fn verified_boot_key(&self) -> Option<&[u8]> {
+        self.key_description.verified_boot_key.as_deref()
+    }
+
+    pub fn verified_boot_hash(&self) -> Option<&[u8]> {
+        self.key_description.verified_boot_hash.as_deref()
+    }
+
+    pub const fn creation_date_time(&self) -> Option<u64> {
+        self.key_description.creation_date_time
+    }
+
+    pub fn unique_id(&self) -> Option<&[u8]> {
+        self.key_description.unique_id.as_deref()
+    }
+
+    pub fn attestation_id_brand(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_brand.as_deref()
+    }
+
+    pub fn attestation_id_device(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_device.as_deref()
+    }
+
+    pub fn attestation_id_product(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_product.as_deref()
+    }
+
+    pub fn attestation_id_serial(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_serial.as_deref()
+    }
+
+    pub fn attestation_id_imei(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_imei.as_deref()
+    }
+
+    pub fn attestation_id_meid(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_meid.as_deref()
+    }
+
+    pub fn attestation_id_manufacturer(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_manufacturer.as_deref()
+    }
+
+    pub fn attestation_id_model(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_model.as_deref()
+    }
+
+    pub fn attestation_id_second_imei(&self) -> Option<&[u8]> {
+        self.key_description.attestation_id_second_imei.as_deref()
+    }
+
+    pub const fn device_unique_attestation(&self) -> bool {
+        self.key_description.device_unique_attestation
+    }
+
+    pub fn module_hash(&self) -> Option<&[u8]> {
+        self.key_description.module_hash.as_deref()
+    }
+
+    pub const fn attestation_version(&self) -> u64 {
+        self.key_description.attestation_version
+    }
+
+    pub const fn vendor_patch_level(&self) -> Option<u64> {
+        self.key_description.vendor_patch_level
+    }
+
+    pub const fn boot_patch_level(&self) -> Option<u64> {
+        self.key_description.boot_patch_level
+    }
+
+    pub const fn os_version(&self) -> Option<u64> {
+        self.key_description.os_version
+    }
+
+    pub const fn usage_count_limit(&self) -> Option<u64> {
+        self.key_description.usage_count_limit
+    }
+
+    pub const fn algorithm(&self) -> Option<u64> {
+        self.key_description.algorithm
+    }
+
+    pub const fn key_size(&self) -> Option<u64> {
+        self.key_description.key_size
+    }
+
+    pub const fn ec_curve(&self) -> Option<u64> {
+        self.key_description.ec_curve
+    }
 }
 
 impl DeviceCertificateError {

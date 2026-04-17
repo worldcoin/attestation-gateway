@@ -11,7 +11,7 @@ pub struct KeyDescription2<'a> {
     pub _keymaster_version: u64,
     pub keymaster_security_level: asn1::Enumerated,
     pub attestation_challenge: &'a [u8],
-    pub _unique_id: &'a [u8],
+    pub unique_id: &'a [u8],
     pub software_enforced: AuthorizationList<'a>,
     pub hardware_enforced: AuthorizationList<'a>,
 }
@@ -30,17 +30,17 @@ impl<'a> KeyDescription2<'a> {
 #[derive(asn1::Asn1Read)]
 pub struct AuthorizationList<'a> {
     #[explicit(1)]
-    pub _purpose: Option<asn1::SetOf<'a, u64>>,
+    pub purpose: Option<asn1::SetOf<'a, u64>>,
     #[explicit(2)]
-    pub _algorithm: Option<u64>,
+    pub algorithm: Option<u64>,
     #[explicit(3)]
-    pub _key_size: Option<u64>,
+    pub key_size: Option<u64>,
     #[explicit(5)]
     pub _digest: Option<UnorderedSetOfU64>,
     #[explicit(6)]
     pub _padding: Option<asn1::SetOf<'a, u64>>,
     #[explicit(10)]
-    pub _ec_curve: Option<u64>,
+    pub ec_curve: Option<u64>,
     #[explicit(200)]
     pub _rsa_public_exponent: Option<u64>,
     #[explicit(400)]
@@ -60,7 +60,7 @@ pub struct AuthorizationList<'a> {
     #[explicit(600)]
     pub _all_applications: Option<asn1::Null>,
     #[explicit(701)]
-    pub _creation_date_time: Option<u64>,
+    pub creation_date_time: Option<u64>,
     #[explicit(702)]
     pub origin: Option<u64>,
     #[explicit(703)]
@@ -68,27 +68,27 @@ pub struct AuthorizationList<'a> {
     #[explicit(704)]
     pub root_of_trust: Option<RootOfTrust<'a>>,
     #[explicit(705)]
-    pub _os_version: Option<u64>,
+    pub os_version: Option<u64>,
     #[explicit(706)]
     pub os_patch_level: Option<u32>,
     #[explicit(709)]
     pub attestation_application_id: Option<&'a [u8]>,
     #[explicit(710)]
-    pub _attestation_id_brand: Option<&'a [u8]>,
+    pub attestation_id_brand: Option<&'a [u8]>,
     #[explicit(711)]
-    pub _attestation_id_device: Option<&'a [u8]>,
+    pub attestation_id_device: Option<&'a [u8]>,
     #[explicit(712)]
-    pub _attestation_id_product: Option<&'a [u8]>,
+    pub attestation_id_product: Option<&'a [u8]>,
     #[explicit(713)]
-    pub _attestation_id_serial: Option<&'a [u8]>,
+    pub attestation_id_serial: Option<&'a [u8]>,
     #[explicit(714)]
-    pub _attestation_id_imei: Option<&'a [u8]>,
+    pub attestation_id_imei: Option<&'a [u8]>,
     #[explicit(715)]
-    pub _attestation_id_meid: Option<&'a [u8]>,
+    pub attestation_id_meid: Option<&'a [u8]>,
     #[explicit(716)]
-    pub _attestation_id_manufacturer: Option<&'a [u8]>,
+    pub attestation_id_manufacturer: Option<&'a [u8]>,
     #[explicit(717)]
-    pub _attestation_id_model: Option<&'a [u8]>,
+    pub attestation_id_model: Option<&'a [u8]>,
 }
 
 /// Contents of authorization tag `709` (`attestation_application_id`). See

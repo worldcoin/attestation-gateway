@@ -7,6 +7,7 @@ use metrics_exporter_statsd::StatsdBuilder;
 use redis::aio::ConnectionManager;
 use regex::Regex;
 use std::{env, fmt};
+use tracing_subscriber::EnvFilter;
 
 mod android;
 mod apple;
@@ -26,6 +27,9 @@ async fn main() {
         .json()
         .with_target(false)
         .flatten_event(true)
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     tracing::info!("Starting attestation gateway...");

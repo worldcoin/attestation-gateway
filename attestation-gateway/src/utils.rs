@@ -187,6 +187,20 @@ impl BundleIdentifier {
         }
     }
 
+    /// Optional alternate signing-certificate digest accepted only when the
+    /// gateway runs with `ATTESTATION_GATEWAY_ACCEPT_ALT_SIGNING_CERT=1`.
+    /// Lets debug/test builds of the World App attest against the **staging**
+    /// gateway without re-signing. Always `None` for production bundles, and
+    /// always `None` regardless of the environment variable for any bundle
+    /// that isn't `AndroidStageWorldApp`.
+    #[must_use]
+    pub const fn certificate_sha256_digest_base64_alt(&self) -> Option<&'static str> {
+        match self {
+            Self::AndroidStageWorldApp => Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub const fn apple_app_id(&self) -> Option<&str> {
         match self {
