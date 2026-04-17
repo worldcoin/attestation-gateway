@@ -20,6 +20,10 @@ pub enum AndroidCaRegistryError {
 #[derive(Debug, Clone)]
 pub struct AndroidCaRegistry {
     public_keys: Vec<Vec<u8>>,
+    /// DER-encoded trusted root certificates. Used to seed the OpenSSL X509
+    /// trust store during chain verification so the trust anchor cannot be
+    /// influenced by what the client sends.
+    trusted_root_certs_der: Vec<Vec<u8>>,
 }
 
 impl AndroidCaRegistry {
@@ -62,6 +66,7 @@ impl AndroidCaRegistry {
 
         Ok(Self {
             public_keys: ca_public_keys,
+            trusted_root_certs_der: der_certs.to_vec(),
         })
     }
 
@@ -70,6 +75,14 @@ impl AndroidCaRegistry {
         self.public_keys
             .iter()
             .any(|key| key.as_slice() == public_key)
+    }
+
+    /// DER-encoded trusted root certificates. Pass these into the OpenSSL
+    /// `X509Store` so chain verification anchors only on roots we explicitly
+    /// trust, regardless of what the client supplies as the last cert.
+    #[must_use]
+    pub fn trusted_root_certs_der(&self) -> &[Vec<u8>] {
+        &self.trusted_root_certs_der
     }
 }
 

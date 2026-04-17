@@ -130,7 +130,7 @@ impl AndroidAttestationService {
         app_version: &String,
         bundle_identifier: &BundleIdentifier,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
-        let cert_chain = AndroidCertChain::from_base64(base64_cert_chain)
+        let cert_chain = AndroidCertChain::from_base64(base64_cert_chain, &self.ca_registry)
             .map_err(AndroidAttestationError::CertChain)?;
 
         if cert_chain

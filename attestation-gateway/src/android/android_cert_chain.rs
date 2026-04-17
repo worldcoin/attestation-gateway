@@ -11,12 +11,17 @@ use openssl::{
 use thiserror::Error;
 
 use crate::android::{
+    android_ca_registry::AndroidCaRegistry,
     android_revocation_list::AndroidRevocationList,
     device_certificate::{DeviceCertificate, DeviceCertificateError},
     root_certificate::{RootCertificate, RootCertificateError},
 };
 
 const NID_SERIAL_NUMBER: i32 = 105;
+
+/// `X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT` -- returned when no trusted root in
+/// the registry signed the last certificate of the client-supplied chain.
+const X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT: i32 = 20;
 
 #[derive(Debug, Error)]
 pub enum AndroidCertChainError {
@@ -101,39 +106,61 @@ pub struct AndroidCertChain {
     root_certificate: RootCertificate,
     /// Per-certificate serials (leaf → root) for Android attestation status lookup.
     serials: Vec<CertificateSerial>,
+    /// DER bytes of the intermediate (batch) certificate at index 1 of the
+    /// client-supplied chain, used downstream for batch-cert fingerprinting.
+    #[allow(dead_code)]
+    intermediate_cert_der: Option<Vec<u8>>,
 }
 
 impl AndroidCertChain {
-    pub fn from_base64(base64_cert_chain: &[String]) -> Result<Self, AndroidCertChainError> {
+    pub fn from_base64(
+        base64_cert_chain: &[String],
+        ca_registry: &AndroidCaRegistry,
+    ) -> Result<Self, AndroidCertChainError> {
         let der_cert_chain = base64_cert_chain
             .iter()
             .map(|c| Base64.decode(c))
             .collect::<Result<Vec<Vec<u8>>, DecodeError>>()
             .map_err(AndroidCertChainError::Base64Encoding)?;
 
-        Self::from_der(&der_cert_chain)
+        Self::from_der(&der_cert_chain, ca_registry)
     }
 
-    pub fn from_der(der_cert_chain: &[Vec<u8>]) -> Result<Self, AndroidCertChainError> {
+    pub fn from_der(
+        der_cert_chain: &[Vec<u8>],
+        ca_registry: &AndroidCaRegistry,
+    ) -> Result<Self, AndroidCertChainError> {
         let cert_chain = der_cert_chain
             .iter()
             .map(|c| X509::from_der(c))
             .collect::<Result<Vec<X509>, openssl::error::ErrorStack>>()
             .map_err(|_| AndroidCertChainError::DerEncoding)?;
 
-        Self::from_x509(&cert_chain)
+        Self::from_x509(&cert_chain, ca_registry)
     }
 
-    pub fn from_x509(cert_chain: &[X509]) -> Result<Self, AndroidCertChainError> {
+    /// Verifies the client-supplied chain against the trust anchors in
+    /// [`AndroidCaRegistry`].
+    ///
+    /// Trust-anchor enforcement: only roots loaded into the registry are
+    /// trusted by the OpenSSL store, regardless of what the client supplies
+    /// as the last certificate of the chain. This closes a class of bypasses
+    /// where a forged self-signed root injected at the bottom of the chain
+    /// would otherwise be honored by `X509StoreContext::verify_cert`.
+    pub fn from_x509(
+        cert_chain: &[X509],
+        ca_registry: &AndroidCaRegistry,
+    ) -> Result<Self, AndroidCertChainError> {
         if cert_chain.len() < 2 {
             return Err(AndroidCertChainError::ChainLength);
         }
 
         let device_cert = cert_chain.first().unwrap();
-        let root_ca_cert = cert_chain.last().unwrap();
 
+        // All chain certs except the leaf go into the untrusted intermediate
+        // stack; the trust anchor comes from the registry, never from the chain.
         let mut cert_stack = Stack::new().map_err(|_| AndroidCertChainError::StackBuilder)?;
-        for cert in cert_chain.iter().rev().skip(1) {
+        for cert in cert_chain.iter().skip(1) {
             cert_stack
                 .push(cert.to_owned())
                 .map_err(|_| AndroidCertChainError::StackPush)?;
@@ -158,9 +185,13 @@ impl AndroidCertChain {
             .set_param(&store_param)
             .map_err(|_| AndroidCertChainError::StoreBuilder)?;
 
-        store_builder
-            .add_cert(root_ca_cert.to_owned())
-            .map_err(|_| AndroidCertChainError::StoreAdd)?;
+        for root_der in ca_registry.trusted_root_certs_der() {
+            let root_cert =
+                X509::from_der(root_der).map_err(|_| AndroidCertChainError::DerEncoding)?;
+            store_builder
+                .add_cert(root_cert)
+                .map_err(|_| AndroidCertChainError::StoreAdd)?;
+        }
 
         let store = store_builder.build();
 
@@ -183,19 +214,57 @@ impl AndroidCertChain {
         let device_certificate = DeviceCertificate::from_x509(device_cert)
             .map_err(AndroidCertChainError::DeviceCertificate)?;
 
-        let root_certificate =
-            RootCertificate::new(root_ca_cert).map_err(AndroidCertChainError::RootCertificate)?;
+        // Resolve the actual root that anchored verification.
+        // Two cases: the chain ends with a self-signed root (legacy chains),
+        // or the chain ends with an intermediate signed by a registry root
+        // that was not included in the chain (modern RKP-style chains).
+        let last_cert = cert_chain.last().unwrap();
+        let root_certificate = if last_cert
+            .subject_name()
+            .try_cmp(last_cert.issuer_name())
+            .is_ok_and(|o| o == std::cmp::Ordering::Equal)
+        {
+            RootCertificate::new(last_cert).map_err(AndroidCertChainError::RootCertificate)?
+        } else {
+            Self::find_issuing_root(last_cert, ca_registry)?
+        };
 
         let serials = cert_chain
             .iter()
             .map(certificate_serial)
             .collect::<Result<Vec<_>, _>>()?;
 
+        let intermediate_cert_der = cert_chain.get(1).and_then(|c| c.to_der().ok());
+
         Ok(Self {
             device_certificate,
             root_certificate,
             serials,
+            intermediate_cert_der,
         })
+    }
+
+    /// Finds which trusted root in the registry signed `last_cert`. Used when
+    /// the client-supplied chain stops at an intermediate.
+    fn find_issuing_root(
+        last_cert: &X509,
+        ca_registry: &AndroidCaRegistry,
+    ) -> Result<RootCertificate, AndroidCertChainError> {
+        for root_der in ca_registry.trusted_root_certs_der() {
+            let root = X509::from_der(root_der).map_err(|_| AndroidCertChainError::DerEncoding)?;
+            let pubkey = root
+                .public_key()
+                .map_err(|_| AndroidCertChainError::DerEncoding)?;
+            if last_cert.verify(pubkey.as_ref()).unwrap_or(false) {
+                return RootCertificate::new(&root).map_err(AndroidCertChainError::RootCertificate);
+            }
+        }
+        // SAFETY: X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT is a documented OpenSSL
+        // verify-result code (20). `from_raw` is `unsafe` because the function
+        // takes any i32; passing a known-valid constant is sound.
+        Err(AndroidCertChainError::ChainVerification(unsafe {
+            X509VerifyResult::from_raw(X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT)
+        }))
     }
 
     /// Serial numbers for each certificate in the validated chain, **leaf first, root last** (same
@@ -211,6 +280,14 @@ impl AndroidCertChain {
 
     pub const fn root_certificate(&self) -> &RootCertificate {
         &self.root_certificate
+    }
+
+    /// DER bytes of the intermediate (batch) certificate, when present.
+    /// Used downstream by the keybox-defense layer to fingerprint batch certs.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn intermediate_cert_der(&self) -> Option<&[u8]> {
+        self.intermediate_cert_der.as_deref()
     }
 }
 
