@@ -17,11 +17,7 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    android::{
-        AndroidAttestationService,
-        android_attestation_service::IntegrityConfidence,
-        keybox_defense::{KeyboxDefense, RiskLevel},
-    },
+    android::{AndroidAttestationService, android_attestation_service::IntegrityConfidence},
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
@@ -35,6 +31,16 @@ pub struct Request {
     pub bundle_identifier: BundleIdentifier,
     pub apple_attestation: Option<String>,
     pub android_attestation: Option<Vec<String>>,
+    #[serde(default)]
+    pub security_level: Option<String>,
+    #[serde(default)]
+    pub os_api_level: Option<u32>,
+    #[serde(default)]
+    pub device_properties_included: Option<bool>,
+    #[serde(default)]
+    pub integrity_signature: Option<String>,
+    #[serde(default)]
+    pub device_key_expires_at: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
@@ -120,18 +126,42 @@ pub async fn handler(
     Extension(aws_config): Extension<SdkConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
-    let tracing_span = tracing::span!(tracing::Level::DEBUG, "a", endpoint = "/a");
+    let tracing_span = tracing::span!(tracing::Level::INFO, "a", endpoint = "/a");
     let _enter = tracing_span.enter();
+
+    tracing::info!(
+        nonce = %request.nonce,
+        app_version = %request.app_version,
+        bundle_identifier = %request.bundle_identifier,
+        has_apple_attestation = request.apple_attestation.is_some(),
+        has_android_attestation = request.android_attestation.is_some(),
+        android_cert_chain_len = request.android_attestation.as_ref().map_or(0, |v| v.len()),
+        security_level = ?request.security_level,
+        os_api_level = ?request.os_api_level,
+        device_properties_included = ?request.device_properties_included,
+        has_integrity_signature = request.integrity_signature.is_some(),
+        device_key_expires_at = ?request.device_key_expires_at,
+        "/a handler: incoming request"
+    );
 
     if !global_config
         .enabled_bundle_identifiers
         .contains(&request.bundle_identifier)
     {
+        tracing::info!(
+            bundle_identifier = %request.bundle_identifier,
+            "/a handler: bundle identifier not enabled, rejecting"
+        );
         return Err(RequestError {
             code: ErrorCode::BadRequest,
             details: Some("This bundle identifier is currently unavailable.".to_string()),
         });
     }
+
+    tracing::info!(
+        bundle_identifier = %request.bundle_identifier,
+        "/a handler: bundle identifier check passed"
+    );
 
     let challenge = format!("n={},av={}", request.nonce, request.app_version);
     let platform = request.bundle_identifier.platform();
@@ -158,6 +188,12 @@ pub async fn handler(
                 details: Some("Android attestation is required".to_string()),
             })?;
 
+            tracing::info!(
+                cert_chain_len = android_cert_chain.len(),
+                bundle_identifier = %request.bundle_identifier,
+                "/a handler: starting Android attestation verify"
+            );
+
             let attestation_result = android_attestation.verify(
                 &android_cert_chain,
                 &request.nonce,
@@ -166,7 +202,16 @@ pub async fn handler(
             );
 
             let attestation_output = match attestation_result {
-                Ok(attestation_output) => Ok(attestation_output),
+                Ok(output) => {
+                    tracing::info!(
+                        os_patch_level_delta = ?output.os_patch_level_delta,
+                        rkp_rooted = output.integrity_confidence.rkp_rooted,
+                        device_unique = output.integrity_confidence.device_unique_attestation,
+                        has_id_attestation = output.integrity_confidence.has_id_attestation,
+                        "/a handler: Android attestation verify succeeded"
+                    );
+                    Ok(output)
+                }
                 Err(e) => {
                     metrics::counter!("attestation_gateway.android_error",  "reason" => e.reason_tag())
                         .increment(1);
@@ -179,7 +224,7 @@ pub async fn handler(
                             details: None,
                         })
                     } else {
-                        tracing::debug!(error = ?e, "Error validating Android attestation");
+                        tracing::warn!(error = ?e, "/a handler: Android attestation client error");
 
                         Err(RequestError {
                             code: ErrorCode::BadRequest,
@@ -195,37 +240,6 @@ pub async fn handler(
             } else {
                 metrics::counter!("attestation_gateway.android_missing_os_patch_level")
                     .increment(1);
-            }
-
-            // --- Keybox defense: rate limiting + blocklist ---
-            if let Some(ref fp) = attestation_output.batch_cert_fingerprint {
-                let keybox_defense = KeyboxDefense::new(
-                    crate::android::keybox_defense::KeyboxDefenseConfig::from_env(),
-                );
-                match keybox_defense.evaluate(&mut redis, fp).await {
-                    Ok(verdict) => {
-                        if verdict.risk_level == RiskLevel::Blocked {
-                            return Err(RequestError {
-                                code: ErrorCode::BadRequest,
-                                details: Some("certificate blocklisted".to_string()),
-                            });
-                        }
-                        if verdict.risk_level == RiskLevel::High {
-                            tracing::warn!(
-                                fingerprint = %fp,
-                                count = verdict.request_count,
-                                "batch cert exceeds block threshold -- rejecting"
-                            );
-                            return Err(RequestError {
-                                code: ErrorCode::BadRequest,
-                                details: Some("rate limit exceeded for attestation certificate".to_string()),
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(error = ?e, "keybox defense evaluation failed (non-blocking)");
-                    }
-                }
             }
 
             // --- osPatchLevel: log-only signal ---
@@ -246,6 +260,11 @@ pub async fn handler(
     metrics::counter!("attestation_gateway.attestation", "platform" => platform.to_string())
         .increment(1);
 
+    tracing::info!(
+        nonce = %request.nonce,
+        "/a handler: consuming nonce"
+    );
+
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
         if matches!(e, NonceDbError::NonceNotFound) {
             RequestError {
@@ -262,6 +281,12 @@ pub async fn handler(
         }
     })?;
 
+    tracing::info!(
+        aud = %token_details.aud,
+        exp_max = token_details.exp_max,
+        "/a handler: nonce consumed successfully"
+    );
+
     let exp = match request.exp {
         Some(exp) => {
             if exp > token_details.exp_max {
@@ -275,6 +300,12 @@ pub async fn handler(
         }
         None => Ok(token_details.exp_max),
     }?;
+
+    tracing::info!(
+        exp = exp,
+        platform = %platform,
+        "/a handler: generating integrity token"
+    );
 
     let integrity_token = generate_integrity_token(
         &mut redis,
@@ -291,6 +322,8 @@ pub async fn handler(
         },
     )
     .await?;
+
+    tracing::info!("/a handler: integrity token generated successfully");
 
     Ok(Json(Response { integrity_token }))
 }

@@ -21,6 +21,29 @@ use crate::android::key_description::key_description_200::KeyDescription200;
 use crate::android::key_description::key_description_300::KeyDescription300;
 use crate::android::key_description::key_description_400::KeyDescription400;
 
+/// Converts the raw `_unique_id` bytes into an `Option<Vec<u8>>` (None when empty).
+fn unique_id_from_raw(raw: &[u8]) -> Option<Vec<u8>> {
+    if raw.is_empty() {
+        None
+    } else {
+        Some(raw.to_vec())
+    }
+}
+
+/// Populates the common new fields from a parsed key description's hardware_enforced auth list.
+/// Use `$kd` for the parsed key description, `$hw` for `$kd.hardware_enforced`, and `$sw` for
+/// `$kd.software_enforced`. Fields not present in a given schema version should be set to None
+/// before this macro is invoked.
+macro_rules! extract_common_fields {
+    ($hw:expr, $sw:expr) => {{
+        let os_version = $hw._os_version.or($sw._os_version);
+        let algorithm = $hw._algorithm.or($sw._algorithm);
+        let key_size = $hw._key_size.or($sw._key_size);
+        let ec_curve = $hw._ec_curve.or($sw._ec_curve);
+        (os_version, algorithm, key_size, ec_curve)
+    }};
+}
+
 /// Reads the leading `attestation_version` INTEGER without parsing the rest of the SEQUENCE.
 ///
 /// `asn1::parse` / [`asn1::Sequence::parse`] require the entire SEQUENCE body to be consumed;
@@ -68,6 +91,7 @@ pub enum KeyDescriptionError {
 }
 
 pub struct KeyDescription {
+    pub unique_id: Option<Vec<u8>>,
     pub attestation_challenge: String,
     pub attestation_security_level: u32,
     pub key_mint_security_level: u32,
@@ -77,94 +101,29 @@ pub struct KeyDescription {
     pub key_origin: Option<u64>,
     pub package_names: Vec<String>,
     pub attestation_signature_digests: Option<Vec<Vec<u8>>>,
+    pub attestation_version: u64,
+    pub purpose: Vec<u64>,
     pub verified_boot_key: Option<Vec<u8>>,
     pub verified_boot_hash: Option<Vec<u8>>,
-    pub device_unique_attestation: bool,
+    pub creation_date_time: Option<u64>,
     pub attestation_id_brand: Option<Vec<u8>>,
     pub attestation_id_device: Option<Vec<u8>>,
     pub attestation_id_product: Option<Vec<u8>>,
+    pub attestation_id_serial: Option<Vec<u8>>,
+    pub attestation_id_imei: Option<Vec<u8>>,
+    pub attestation_id_meid: Option<Vec<u8>>,
     pub attestation_id_manufacturer: Option<Vec<u8>>,
     pub attestation_id_model: Option<Vec<u8>>,
+    pub attestation_id_second_imei: Option<Vec<u8>>,
+    pub device_unique_attestation: bool,
     pub module_hash: Option<Vec<u8>>,
-    pub purpose: Vec<u64>,
-    pub creation_date_time: Option<u64>,
-    pub batch_cert_serial_hex: Option<String>,
-}
-
-/// Default values for the new integrity-analysis fields, used by older attestation
-/// versions that do not carry these tags.
-impl KeyDescription {
-    fn integrity_defaults() -> IntegrityFieldDefaults {
-        IntegrityFieldDefaults {
-            verified_boot_key: None,
-            verified_boot_hash: None,
-            device_unique_attestation: false,
-            attestation_id_brand: None,
-            attestation_id_device: None,
-            attestation_id_product: None,
-            attestation_id_manufacturer: None,
-            attestation_id_model: None,
-            module_hash: None,
-            purpose: vec![],
-            creation_date_time: None,
-        }
-    }
-}
-
-struct IntegrityFieldDefaults {
-    verified_boot_key: Option<Vec<u8>>,
-    verified_boot_hash: Option<Vec<u8>>,
-    device_unique_attestation: bool,
-    attestation_id_brand: Option<Vec<u8>>,
-    attestation_id_device: Option<Vec<u8>>,
-    attestation_id_product: Option<Vec<u8>>,
-    attestation_id_manufacturer: Option<Vec<u8>>,
-    attestation_id_model: Option<Vec<u8>>,
-    module_hash: Option<Vec<u8>>,
-    purpose: Vec<u64>,
-    creation_date_time: Option<u64>,
-}
-
-macro_rules! extract_root_of_trust_fields {
-    ($hw:expr) => {{
-        let verified_boot_key = $hw.root_of_trust.as_ref().map(|r| r._verified_boot_key.to_vec());
-        let verified_boot_hash = $hw.root_of_trust.as_ref().map(|r| r._verified_boot_hash.to_vec());
-        (verified_boot_key, verified_boot_hash)
-    }};
-}
-
-macro_rules! extract_root_of_trust_fields_no_hash {
-    ($hw:expr) => {{
-        let verified_boot_key = $hw.root_of_trust.as_ref().map(|r| r._verified_boot_key.to_vec());
-        (verified_boot_key, None::<Vec<u8>>)
-    }};
-}
-
-macro_rules! extract_id_attestation {
-    ($hw:expr) => {{
-        let brand = $hw._attestation_id_brand.map(<[u8]>::to_vec);
-        let device = $hw._attestation_id_device.map(<[u8]>::to_vec);
-        let product = $hw._attestation_id_product.map(<[u8]>::to_vec);
-        let manufacturer = $hw._attestation_id_manufacturer.map(<[u8]>::to_vec);
-        let model = $hw._attestation_id_model.map(<[u8]>::to_vec);
-        (brand, device, product, manufacturer, model)
-    }};
-}
-
-macro_rules! extract_purpose {
-    ($hw:expr, $sw:expr) => {{
-        $hw._purpose
-            .as_ref()
-            .map(|s| s.clone().collect::<Vec<_>>())
-            .or_else(|| $sw._purpose.as_ref().map(|s| s.clone().collect::<Vec<_>>()))
-            .unwrap_or_default()
-    }};
-}
-
-macro_rules! extract_creation_date_time {
-    ($hw:expr, $sw:expr) => {
-        $hw._creation_date_time.or($sw._creation_date_time)
-    };
+    pub vendor_patch_level: Option<u64>,
+    pub boot_patch_level: Option<u64>,
+    pub os_version: Option<u64>,
+    pub usage_count_limit: Option<u64>,
+    pub algorithm: Option<u64>,
+    pub key_size: Option<u64>,
+    pub ec_curve: Option<u64>,
 }
 
 impl KeyDescription {
@@ -214,11 +173,30 @@ impl KeyDescription {
 
         let key_origin = key_description.hardware_enforced.origin;
 
-        let (verified_boot_key, verified_boot_hash) =
-            extract_root_of_trust_fields_no_hash!(key_description.hardware_enforced);
-        let defaults = Self::integrity_defaults();
+        let purpose = key_description
+            .hardware_enforced
+            ._purpose
+            .map(|s| s.collect())
+            .unwrap_or_default();
+
+        let verified_boot_key = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_key.to_vec());
+
+        let creation_date_time = key_description
+            .hardware_enforced
+            ._creation_date_time
+            .or(key_description.software_enforced._creation_date_time);
+
+        let (os_version, algorithm, key_size, ec_curve) = extract_common_fields!(
+            key_description.hardware_enforced,
+            key_description.software_enforced
+        );
 
         Ok(Self {
+            unique_id: unique_id_from_raw(key_description._unique_id),
             attestation_challenge,
             attestation_security_level,
             key_mint_security_level,
@@ -228,248 +206,969 @@ impl KeyDescription {
             key_origin,
             package_names: vec![],
             attestation_signature_digests: None,
+            attestation_version: 1,
+            purpose,
             verified_boot_key,
-            verified_boot_hash,
-            device_unique_attestation: defaults.device_unique_attestation,
-            attestation_id_brand: defaults.attestation_id_brand,
-            attestation_id_device: defaults.attestation_id_device,
-            attestation_id_product: defaults.attestation_id_product,
-            attestation_id_manufacturer: defaults.attestation_id_manufacturer,
-            attestation_id_model: defaults.attestation_id_model,
-            module_hash: defaults.module_hash,
-            purpose: extract_purpose!(key_description.hardware_enforced, key_description.software_enforced),
-            creation_date_time: extract_creation_date_time!(key_description.hardware_enforced, key_description.software_enforced),
-            batch_cert_serial_hex: None,
+            verified_boot_hash: None,
+            creation_date_time,
+            attestation_id_brand: None,
+            attestation_id_device: None,
+            attestation_id_product: None,
+            attestation_id_serial: None,
+            attestation_id_imei: None,
+            attestation_id_meid: None,
+            attestation_id_manufacturer: None,
+            attestation_id_model: None,
+            attestation_id_second_imei: None,
+            device_unique_attestation: false,
+            module_hash: None,
+            vendor_patch_level: None,
+            boot_patch_level: None,
+            os_version,
+            usage_count_limit: None,
+            algorithm,
+            key_size,
+            ec_curve,
         })
     }
 
     fn from_key_description_2(der: &[u8]) -> Result<Self, KeyDescriptionError> {
-        let kd = asn1::parse_single::<KeyDescription2>(der)
+        let key_description = asn1::parse_single::<KeyDescription2>(der)
             .map_err(|e| KeyDescriptionError::Parsing(Box::new(e)))?;
-        let attestation_challenge = String::from_utf8(kd.attestation_challenge.to_vec())
-            .map_err(KeyDescriptionError::ParseChallenge)?;
-        let os_patch_level = kd.hardware_enforced.os_patch_level.or(kd.software_enforced.os_patch_level);
-        let device_locked = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.device_locked);
-        let verified_boot_state = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.verified_boot_state.value());
-        let app_id = kd.try_parse_attestation_application_id();
+
+        let attestation_challenge =
+            String::from_utf8(key_description.attestation_challenge.to_vec())
+                .map_err(KeyDescriptionError::ParseChallenge)?;
+
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.keymaster_security_level.value();
+        let os_patch_level = key_description
+            .hardware_enforced
+            .os_patch_level
+            .or(key_description.software_enforced.os_patch_level);
+
+        let device_locked = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.device_locked);
+
+        let verified_boot_state = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.verified_boot_state.value());
+
+        let key_origin = key_description.hardware_enforced.origin;
+
+        let app_id = key_description.try_parse_attestation_application_id();
         let package_names = package_names_from_app_id!(app_id);
-        let attestation_signature_digests = app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
-        let (verified_boot_key, verified_boot_hash) = extract_root_of_trust_fields_no_hash!(kd.hardware_enforced);
-        let (brand, device, product, manufacturer, model) = extract_id_attestation!(kd.hardware_enforced);
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
+
+        let purpose = key_description
+            .hardware_enforced
+            ._purpose
+            .map(|s| s.collect())
+            .unwrap_or_default();
+
+        let verified_boot_key = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_key.to_vec());
+
+        let creation_date_time = key_description
+            .hardware_enforced
+            ._creation_date_time
+            .or(key_description.software_enforced._creation_date_time);
 
         Ok(Self {
+            unique_id: unique_id_from_raw(key_description._unique_id),
             attestation_challenge,
-            attestation_security_level: kd.attestation_security_level.value(),
-            key_mint_security_level: kd.keymaster_security_level.value(),
-            os_patch_level, device_locked, verified_boot_state,
-            key_origin: kd.hardware_enforced.origin,
-            package_names, attestation_signature_digests,
-            verified_boot_key, verified_boot_hash,
+            attestation_security_level,
+            key_mint_security_level,
+            os_patch_level,
+            device_locked,
+            verified_boot_state,
+            key_origin,
+            package_names,
+            attestation_signature_digests,
+            attestation_version: 2,
+            purpose,
+            verified_boot_key,
+            verified_boot_hash: None,
+            creation_date_time,
+            attestation_id_brand: key_description
+                .hardware_enforced
+                ._attestation_id_brand
+                .map(<[u8]>::to_vec),
+            attestation_id_device: key_description
+                .hardware_enforced
+                ._attestation_id_device
+                .map(<[u8]>::to_vec),
+            attestation_id_product: key_description
+                .hardware_enforced
+                ._attestation_id_product
+                .map(<[u8]>::to_vec),
+            attestation_id_serial: key_description
+                .hardware_enforced
+                ._attestation_id_serial
+                .map(<[u8]>::to_vec),
+            attestation_id_imei: key_description
+                .hardware_enforced
+                ._attestation_id_imei
+                .map(<[u8]>::to_vec),
+            attestation_id_meid: key_description
+                .hardware_enforced
+                ._attestation_id_meid
+                .map(<[u8]>::to_vec),
+            attestation_id_manufacturer: key_description
+                .hardware_enforced
+                ._attestation_id_manufacturer
+                .map(<[u8]>::to_vec),
+            attestation_id_model: key_description
+                .hardware_enforced
+                ._attestation_id_model
+                .map(<[u8]>::to_vec),
+            attestation_id_second_imei: None,
             device_unique_attestation: false,
-            attestation_id_brand: brand, attestation_id_device: device,
-            attestation_id_product: product, attestation_id_manufacturer: manufacturer,
-            attestation_id_model: model, module_hash: None,
-            purpose: extract_purpose!(kd.hardware_enforced, kd.software_enforced),
-            creation_date_time: extract_creation_date_time!(kd.hardware_enforced, kd.software_enforced),
-            batch_cert_serial_hex: None,
+            module_hash: None,
+            vendor_patch_level: None,
+            boot_patch_level: None,
+            os_version: key_description
+                .hardware_enforced
+                ._os_version
+                .or(key_description.software_enforced._os_version),
+            usage_count_limit: None,
+            algorithm: key_description
+                .hardware_enforced
+                ._algorithm
+                .or(key_description.software_enforced._algorithm),
+            key_size: key_description
+                .hardware_enforced
+                ._key_size
+                .or(key_description.software_enforced._key_size),
+            ec_curve: key_description
+                .hardware_enforced
+                ._ec_curve
+                .or(key_description.software_enforced._ec_curve),
         })
     }
 
     fn from_key_description_3(der: &[u8]) -> Result<Self, KeyDescriptionError> {
-        let kd = asn1::parse_single::<KeyDescription3>(der)
+        let key_description = asn1::parse_single::<KeyDescription3>(der)
             .map_err(|e| KeyDescriptionError::Parsing(Box::new(e)))?;
-        let attestation_challenge = String::from_utf8(kd.attestation_challenge.to_vec())
-            .map_err(KeyDescriptionError::ParseChallenge)?;
-        let os_patch_level = kd.hardware_enforced.os_patch_level.or(kd.software_enforced.os_patch_level);
-        let device_locked = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.device_locked);
-        let verified_boot_state = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.verified_boot_state.value());
-        let app_id = kd.try_parse_attestation_application_id();
+
+        let attestation_challenge =
+            String::from_utf8(key_description.attestation_challenge.to_vec())
+                .map_err(KeyDescriptionError::ParseChallenge)?;
+
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.keymaster_security_level.value();
+        let os_patch_level = key_description
+            .hardware_enforced
+            .os_patch_level
+            .or(key_description.software_enforced.os_patch_level);
+
+        let device_locked = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.device_locked);
+
+        let verified_boot_state = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.verified_boot_state.value());
+
+        let key_origin = key_description.hardware_enforced.origin;
+
+        let app_id = key_description.try_parse_attestation_application_id();
         let package_names = package_names_from_app_id!(app_id);
-        let attestation_signature_digests = app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
-        let (verified_boot_key, verified_boot_hash) = extract_root_of_trust_fields!(kd.hardware_enforced);
-        let (brand, device, product, manufacturer, model) = extract_id_attestation!(kd.hardware_enforced);
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
+
+        let purpose = key_description
+            .hardware_enforced
+            ._purpose
+            .map(|s| s.collect())
+            .unwrap_or_default();
+
+        let verified_boot_key = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_key.to_vec());
+
+        let verified_boot_hash = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_hash.to_vec());
+
+        let creation_date_time = key_description
+            .hardware_enforced
+            ._creation_date_time
+            .or(key_description.software_enforced._creation_date_time);
 
         Ok(Self {
             attestation_challenge,
-            attestation_security_level: kd.attestation_security_level.value(),
-            key_mint_security_level: kd.keymaster_security_level.value(),
-            os_patch_level, device_locked, verified_boot_state,
-            key_origin: kd.hardware_enforced.origin,
-            package_names, attestation_signature_digests,
-            verified_boot_key, verified_boot_hash,
+            attestation_security_level,
+            key_mint_security_level,
+            os_patch_level,
+            device_locked,
+            verified_boot_state,
+            key_origin,
+            package_names,
+            attestation_signature_digests,
+            unique_id: unique_id_from_raw(key_description._unique_id),
+            attestation_version: 3,
+            purpose,
+            verified_boot_key,
+            verified_boot_hash,
+            creation_date_time,
+            attestation_id_brand: key_description
+                .hardware_enforced
+                ._attestation_id_brand
+                .map(<[u8]>::to_vec),
+            attestation_id_device: key_description
+                .hardware_enforced
+                ._attestation_id_device
+                .map(<[u8]>::to_vec),
+            attestation_id_product: key_description
+                .hardware_enforced
+                ._attestation_id_product
+                .map(<[u8]>::to_vec),
+            attestation_id_serial: key_description
+                .hardware_enforced
+                ._attestation_id_serial
+                .map(<[u8]>::to_vec),
+            attestation_id_imei: key_description
+                .hardware_enforced
+                ._attestation_id_imei
+                .map(<[u8]>::to_vec),
+            attestation_id_meid: key_description
+                .hardware_enforced
+                ._attestation_id_meid
+                .map(<[u8]>::to_vec),
+            attestation_id_manufacturer: key_description
+                .hardware_enforced
+                ._attestation_id_manufacturer
+                .map(<[u8]>::to_vec),
+            attestation_id_model: key_description
+                .hardware_enforced
+                ._attestation_id_model
+                .map(<[u8]>::to_vec),
+            attestation_id_second_imei: None,
             device_unique_attestation: false,
-            attestation_id_brand: brand, attestation_id_device: device,
-            attestation_id_product: product, attestation_id_manufacturer: manufacturer,
-            attestation_id_model: model, module_hash: None,
-            purpose: extract_purpose!(kd.hardware_enforced, kd.software_enforced),
-            creation_date_time: extract_creation_date_time!(kd.hardware_enforced, kd.software_enforced),
-            batch_cert_serial_hex: None,
+            module_hash: None,
+            vendor_patch_level: key_description.hardware_enforced._vendor_patch_level,
+            boot_patch_level: key_description.hardware_enforced._boot_patch_level,
+            os_version: key_description
+                .hardware_enforced
+                ._os_version
+                .or(key_description.software_enforced._os_version),
+            usage_count_limit: None,
+            algorithm: key_description
+                .hardware_enforced
+                ._algorithm
+                .or(key_description.software_enforced._algorithm),
+            key_size: key_description
+                .hardware_enforced
+                ._key_size
+                .or(key_description.software_enforced._key_size),
+            ec_curve: key_description
+                .hardware_enforced
+                ._ec_curve
+                .or(key_description.software_enforced._ec_curve),
         })
     }
 
     fn from_key_description_4(der: &[u8]) -> Result<Self, KeyDescriptionError> {
-        let kd = asn1::parse_single::<KeyDescription4>(der)
+        let key_description = asn1::parse_single::<KeyDescription4>(der)
             .map_err(|e| KeyDescriptionError::Parsing(Box::new(e)))?;
-        let attestation_challenge = String::from_utf8(kd.attestation_challenge.to_vec())
-            .map_err(KeyDescriptionError::ParseChallenge)?;
-        let os_patch_level = kd.hardware_enforced.os_patch_level.or(kd.software_enforced.os_patch_level);
-        let device_locked = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.device_locked);
-        let verified_boot_state = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.verified_boot_state.value());
-        let app_id = kd.try_parse_attestation_application_id();
+
+        let attestation_challenge =
+            String::from_utf8(key_description.attestation_challenge.to_vec())
+                .map_err(KeyDescriptionError::ParseChallenge)?;
+
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.keymaster_security_level.value();
+        let os_patch_level = key_description
+            .hardware_enforced
+            .os_patch_level
+            .or(key_description.software_enforced.os_patch_level);
+
+        let device_locked = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.device_locked);
+
+        let verified_boot_state = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.verified_boot_state.value());
+
+        let key_origin = key_description.hardware_enforced.origin;
+
+        let app_id = key_description.try_parse_attestation_application_id();
         let package_names = package_names_from_app_id!(app_id);
-        let attestation_signature_digests = app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
-        let (verified_boot_key, verified_boot_hash) = extract_root_of_trust_fields!(kd.hardware_enforced);
-        let (brand, device, product, manufacturer, model) = extract_id_attestation!(kd.hardware_enforced);
-        let device_unique = kd.hardware_enforced._device_unique_attestation.is_some();
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
+
+        let purpose = key_description
+            .hardware_enforced
+            ._purpose
+            .map(|s| s.collect())
+            .unwrap_or_default();
+
+        let verified_boot_key = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_key.to_vec());
+
+        let verified_boot_hash = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_hash.to_vec());
+
+        let creation_date_time = key_description
+            .hardware_enforced
+            ._creation_date_time
+            .or(key_description.software_enforced._creation_date_time);
 
         Ok(Self {
             attestation_challenge,
-            attestation_security_level: kd.attestation_security_level.value(),
-            key_mint_security_level: kd.keymaster_security_level.value(),
-            os_patch_level, device_locked, verified_boot_state,
-            key_origin: kd.hardware_enforced.origin,
-            package_names, attestation_signature_digests,
-            verified_boot_key, verified_boot_hash,
-            device_unique_attestation: device_unique,
-            attestation_id_brand: brand, attestation_id_device: device,
-            attestation_id_product: product, attestation_id_manufacturer: manufacturer,
-            attestation_id_model: model, module_hash: None,
-            purpose: extract_purpose!(kd.hardware_enforced, kd.software_enforced),
-            creation_date_time: extract_creation_date_time!(kd.hardware_enforced, kd.software_enforced),
-            batch_cert_serial_hex: None,
+            attestation_security_level,
+            key_mint_security_level,
+            os_patch_level,
+            device_locked,
+            verified_boot_state,
+            key_origin,
+            package_names,
+            attestation_signature_digests,
+            unique_id: unique_id_from_raw(key_description._unique_id),
+            attestation_version: 4,
+            purpose,
+            verified_boot_key,
+            verified_boot_hash,
+            creation_date_time,
+            attestation_id_brand: key_description
+                .hardware_enforced
+                ._attestation_id_brand
+                .map(<[u8]>::to_vec),
+            attestation_id_device: key_description
+                .hardware_enforced
+                ._attestation_id_device
+                .map(<[u8]>::to_vec),
+            attestation_id_product: key_description
+                .hardware_enforced
+                ._attestation_id_product
+                .map(<[u8]>::to_vec),
+            attestation_id_serial: key_description
+                .hardware_enforced
+                ._attestation_id_serial
+                .map(<[u8]>::to_vec),
+            attestation_id_imei: key_description
+                .hardware_enforced
+                ._attestation_id_imei
+                .map(<[u8]>::to_vec),
+            attestation_id_meid: key_description
+                .hardware_enforced
+                ._attestation_id_meid
+                .map(<[u8]>::to_vec),
+            attestation_id_manufacturer: key_description
+                .hardware_enforced
+                ._attestation_id_manufacturer
+                .map(<[u8]>::to_vec),
+            attestation_id_model: key_description
+                .hardware_enforced
+                ._attestation_id_model
+                .map(<[u8]>::to_vec),
+            attestation_id_second_imei: None,
+            device_unique_attestation: key_description
+                .hardware_enforced
+                ._device_unique_attestation
+                .is_some(),
+            module_hash: None,
+            vendor_patch_level: key_description.hardware_enforced._vendor_patch_level,
+            boot_patch_level: key_description.hardware_enforced._boot_patch_level,
+            os_version: key_description
+                .hardware_enforced
+                ._os_version
+                .or(key_description.software_enforced._os_version),
+            usage_count_limit: None,
+            algorithm: key_description
+                .hardware_enforced
+                ._algorithm
+                .or(key_description.software_enforced._algorithm),
+            key_size: key_description
+                .hardware_enforced
+                ._key_size
+                .or(key_description.software_enforced._key_size),
+            ec_curve: key_description
+                .hardware_enforced
+                ._ec_curve
+                .or(key_description.software_enforced._ec_curve),
         })
     }
 
     fn from_key_description_100(der: &[u8]) -> Result<Self, KeyDescriptionError> {
-        let kd = asn1::parse_single::<KeyDescription100>(der)
+        let key_description = asn1::parse_single::<KeyDescription100>(der)
             .map_err(|e| KeyDescriptionError::Parsing(Box::new(e)))?;
-        let attestation_challenge = String::from_utf8(kd.attestation_challenge.to_vec())
-            .map_err(KeyDescriptionError::ParseChallenge)?;
-        let os_patch_level = kd.hardware_enforced.os_patch_level.or(kd.software_enforced.os_patch_level);
-        let device_locked = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.device_locked);
-        let verified_boot_state = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.verified_boot_state.value());
-        let app_id = kd.try_parse_attestation_application_id();
+
+        let attestation_challenge =
+            String::from_utf8(key_description.attestation_challenge.to_vec())
+                .map_err(KeyDescriptionError::ParseChallenge)?;
+
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.key_mint_security_level.value();
+        let os_patch_level = key_description
+            .hardware_enforced
+            .os_patch_level
+            .or(key_description.software_enforced.os_patch_level);
+
+        let device_locked = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.device_locked);
+
+        let verified_boot_state = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.verified_boot_state.value());
+
+        let key_origin = key_description.hardware_enforced.origin;
+
+        let app_id = key_description.try_parse_attestation_application_id();
         let package_names = package_names_from_app_id!(app_id);
-        let attestation_signature_digests = app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
-        let (verified_boot_key, verified_boot_hash) = extract_root_of_trust_fields!(kd.hardware_enforced);
-        let (brand, device, product, manufacturer, model) = extract_id_attestation!(kd.hardware_enforced);
-        let device_unique = kd.hardware_enforced._device_unique_attestation.is_some();
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
+
+        let purpose = key_description
+            .hardware_enforced
+            ._purpose
+            .map(|s| s.collect())
+            .unwrap_or_default();
+
+        let verified_boot_key = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_key.to_vec());
+
+        let verified_boot_hash = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_hash.to_vec());
+
+        let creation_date_time = key_description
+            .hardware_enforced
+            ._creation_date_time
+            .or(key_description.software_enforced._creation_date_time);
 
         Ok(Self {
             attestation_challenge,
-            attestation_security_level: kd.attestation_security_level.value(),
-            key_mint_security_level: kd.key_mint_security_level.value(),
-            os_patch_level, device_locked, verified_boot_state,
-            key_origin: kd.hardware_enforced.origin,
-            package_names, attestation_signature_digests,
-            verified_boot_key, verified_boot_hash,
-            device_unique_attestation: device_unique,
-            attestation_id_brand: brand, attestation_id_device: device,
-            attestation_id_product: product, attestation_id_manufacturer: manufacturer,
-            attestation_id_model: model, module_hash: None,
-            purpose: extract_purpose!(kd.hardware_enforced, kd.software_enforced),
-            creation_date_time: extract_creation_date_time!(kd.hardware_enforced, kd.software_enforced),
-            batch_cert_serial_hex: None,
+            attestation_security_level,
+            key_mint_security_level,
+            os_patch_level,
+            device_locked,
+            verified_boot_state,
+            key_origin,
+            package_names,
+            attestation_signature_digests,
+            unique_id: unique_id_from_raw(key_description._unique_id),
+            attestation_version: 100,
+            purpose,
+            verified_boot_key,
+            verified_boot_hash,
+            creation_date_time,
+            attestation_id_brand: key_description
+                .hardware_enforced
+                ._attestation_id_brand
+                .map(<[u8]>::to_vec),
+            attestation_id_device: key_description
+                .hardware_enforced
+                ._attestation_id_device
+                .map(<[u8]>::to_vec),
+            attestation_id_product: key_description
+                .hardware_enforced
+                ._attestation_id_product
+                .map(<[u8]>::to_vec),
+            attestation_id_serial: key_description
+                .hardware_enforced
+                ._attestation_id_serial
+                .map(<[u8]>::to_vec),
+            attestation_id_imei: key_description
+                .hardware_enforced
+                ._attestation_id_imei
+                .map(<[u8]>::to_vec),
+            attestation_id_meid: key_description
+                .hardware_enforced
+                ._attestation_id_meid
+                .map(<[u8]>::to_vec),
+            attestation_id_manufacturer: key_description
+                .hardware_enforced
+                ._attestation_id_manufacturer
+                .map(<[u8]>::to_vec),
+            attestation_id_model: key_description
+                .hardware_enforced
+                ._attestation_id_model
+                .map(<[u8]>::to_vec),
+            attestation_id_second_imei: None,
+            device_unique_attestation: key_description
+                .hardware_enforced
+                ._device_unique_attestation
+                .is_some(),
+            module_hash: None,
+            vendor_patch_level: key_description.hardware_enforced._vendor_patch_level,
+            boot_patch_level: key_description.hardware_enforced._boot_patch_level,
+            os_version: key_description
+                .hardware_enforced
+                ._os_version
+                .or(key_description.software_enforced._os_version),
+            usage_count_limit: key_description
+                .hardware_enforced
+                ._usage_count_limit
+                .or(key_description.software_enforced._usage_count_limit),
+            algorithm: key_description
+                .hardware_enforced
+                ._algorithm
+                .or(key_description.software_enforced._algorithm),
+            key_size: key_description
+                .hardware_enforced
+                ._key_size
+                .or(key_description.software_enforced._key_size),
+            ec_curve: key_description
+                .hardware_enforced
+                ._ec_curve
+                .or(key_description.software_enforced._ec_curve),
         })
     }
 
     fn from_key_description_200(der: &[u8]) -> Result<Self, KeyDescriptionError> {
-        let kd = asn1::parse_single::<KeyDescription200>(der)
+        let key_description = asn1::parse_single::<KeyDescription200>(der)
             .map_err(|e| KeyDescriptionError::Parsing(Box::new(e)))?;
-        let attestation_challenge = String::from_utf8(kd.attestation_challenge.to_vec())
-            .map_err(KeyDescriptionError::ParseChallenge)?;
-        let os_patch_level = kd.hardware_enforced.os_patch_level.or(kd.software_enforced.os_patch_level);
-        let device_locked = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.device_locked);
-        let verified_boot_state = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.verified_boot_state.value());
-        let app_id = kd.try_parse_attestation_application_id();
+
+        let attestation_challenge =
+            String::from_utf8(key_description.attestation_challenge.to_vec())
+                .map_err(KeyDescriptionError::ParseChallenge)?;
+
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.key_mint_security_level.value();
+        let os_patch_level = key_description
+            .hardware_enforced
+            .os_patch_level
+            .or(key_description.software_enforced.os_patch_level);
+
+        let device_locked = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.device_locked);
+
+        let verified_boot_state = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.verified_boot_state.value());
+
+        let key_origin = key_description.hardware_enforced.origin;
+
+        let app_id = key_description.try_parse_attestation_application_id();
         let package_names = package_names_from_app_id!(app_id);
-        let attestation_signature_digests = app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
-        let (verified_boot_key, verified_boot_hash) = extract_root_of_trust_fields!(kd.hardware_enforced);
-        let (brand, device, product, manufacturer, model) = extract_id_attestation!(kd.hardware_enforced);
-        let device_unique = kd.hardware_enforced._device_unique_attestation.is_some();
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
+
+        let purpose = key_description
+            .hardware_enforced
+            ._purpose
+            .map(|s| s.collect())
+            .unwrap_or_default();
+
+        let verified_boot_key = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_key.to_vec());
+
+        let verified_boot_hash = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_hash.to_vec());
+
+        let creation_date_time = key_description
+            .hardware_enforced
+            ._creation_date_time
+            .or(key_description.software_enforced._creation_date_time);
 
         Ok(Self {
             attestation_challenge,
-            attestation_security_level: kd.attestation_security_level.value(),
-            key_mint_security_level: kd.key_mint_security_level.value(),
-            os_patch_level, device_locked, verified_boot_state,
-            key_origin: kd.hardware_enforced.origin,
-            package_names, attestation_signature_digests,
-            verified_boot_key, verified_boot_hash,
-            device_unique_attestation: device_unique,
-            attestation_id_brand: brand, attestation_id_device: device,
-            attestation_id_product: product, attestation_id_manufacturer: manufacturer,
-            attestation_id_model: model, module_hash: None,
-            purpose: extract_purpose!(kd.hardware_enforced, kd.software_enforced),
-            creation_date_time: extract_creation_date_time!(kd.hardware_enforced, kd.software_enforced),
-            batch_cert_serial_hex: None,
+            attestation_security_level,
+            key_mint_security_level,
+            os_patch_level,
+            device_locked,
+            verified_boot_state,
+            key_origin,
+            package_names,
+            attestation_signature_digests,
+            unique_id: unique_id_from_raw(key_description._unique_id),
+            attestation_version: 200,
+            purpose,
+            verified_boot_key,
+            verified_boot_hash,
+            creation_date_time,
+            attestation_id_brand: key_description
+                .hardware_enforced
+                ._attestation_id_brand
+                .map(<[u8]>::to_vec),
+            attestation_id_device: key_description
+                .hardware_enforced
+                ._attestation_id_device
+                .map(<[u8]>::to_vec),
+            attestation_id_product: key_description
+                .hardware_enforced
+                ._attestation_id_product
+                .map(<[u8]>::to_vec),
+            attestation_id_serial: key_description
+                .hardware_enforced
+                ._attestation_id_serial
+                .map(<[u8]>::to_vec),
+            attestation_id_imei: key_description
+                .hardware_enforced
+                ._attestation_id_imei
+                .map(<[u8]>::to_vec),
+            attestation_id_meid: key_description
+                .hardware_enforced
+                ._attestation_id_meid
+                .map(<[u8]>::to_vec),
+            attestation_id_manufacturer: key_description
+                .hardware_enforced
+                ._attestation_id_manufacturer
+                .map(<[u8]>::to_vec),
+            attestation_id_model: key_description
+                .hardware_enforced
+                ._attestation_id_model
+                .map(<[u8]>::to_vec),
+            attestation_id_second_imei: None,
+            device_unique_attestation: key_description
+                .hardware_enforced
+                ._device_unique_attestation
+                .is_some(),
+            module_hash: None,
+            vendor_patch_level: key_description.hardware_enforced._vendor_patch_level,
+            boot_patch_level: key_description.hardware_enforced._boot_patch_level,
+            os_version: key_description
+                .hardware_enforced
+                ._os_version
+                .or(key_description.software_enforced._os_version),
+            usage_count_limit: key_description
+                .hardware_enforced
+                ._usage_count_limit
+                .or(key_description.software_enforced._usage_count_limit),
+            algorithm: key_description
+                .hardware_enforced
+                ._algorithm
+                .or(key_description.software_enforced._algorithm),
+            key_size: key_description
+                .hardware_enforced
+                ._key_size
+                .or(key_description.software_enforced._key_size),
+            ec_curve: key_description
+                .hardware_enforced
+                ._ec_curve
+                .or(key_description.software_enforced._ec_curve),
         })
     }
 
     fn from_key_description_300(der: &[u8]) -> Result<Self, KeyDescriptionError> {
-        let kd = asn1::parse_single::<KeyDescription300>(der)
+        let key_description = asn1::parse_single::<KeyDescription300>(der)
             .map_err(|e| KeyDescriptionError::Parsing(Box::new(e)))?;
-        let attestation_challenge = String::from_utf8(kd.attestation_challenge.to_vec())
-            .map_err(KeyDescriptionError::ParseChallenge)?;
-        let os_patch_level = kd.hardware_enforced.os_patch_level.or(kd.software_enforced.os_patch_level);
-        let device_locked = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.device_locked);
-        let verified_boot_state = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.verified_boot_state.value());
-        let app_id = kd.try_parse_attestation_application_id();
+
+        let attestation_challenge =
+            String::from_utf8(key_description.attestation_challenge.to_vec())
+                .map_err(KeyDescriptionError::ParseChallenge)?;
+
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.key_mint_security_level.value();
+        let os_patch_level = key_description
+            .hardware_enforced
+            .os_patch_level
+            .or(key_description.software_enforced.os_patch_level);
+
+        let device_locked = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.device_locked);
+
+        let verified_boot_state = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.verified_boot_state.value());
+
+        let key_origin = key_description.hardware_enforced.origin;
+
+        let app_id = key_description.try_parse_attestation_application_id();
         let package_names = package_names_from_app_id!(app_id);
-        let attestation_signature_digests = app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
-        let (verified_boot_key, verified_boot_hash) = extract_root_of_trust_fields!(kd.hardware_enforced);
-        let (brand, device, product, manufacturer, model) = extract_id_attestation!(kd.hardware_enforced);
-        let device_unique = kd.hardware_enforced._device_unique_attestation.is_some();
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
+
+        let purpose = key_description
+            .hardware_enforced
+            ._purpose
+            .map(|s| s.collect())
+            .unwrap_or_default();
+
+        let verified_boot_key = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_key.to_vec());
+
+        let verified_boot_hash = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_hash.to_vec());
+
+        let creation_date_time = key_description
+            .hardware_enforced
+            ._creation_date_time
+            .or(key_description.software_enforced._creation_date_time);
 
         Ok(Self {
             attestation_challenge,
-            attestation_security_level: kd.attestation_security_level.value(),
-            key_mint_security_level: kd.key_mint_security_level.value(),
-            os_patch_level, device_locked, verified_boot_state,
-            key_origin: kd.hardware_enforced.origin,
-            package_names, attestation_signature_digests,
-            verified_boot_key, verified_boot_hash,
-            device_unique_attestation: device_unique,
-            attestation_id_brand: brand, attestation_id_device: device,
-            attestation_id_product: product, attestation_id_manufacturer: manufacturer,
-            attestation_id_model: model, module_hash: None,
-            purpose: extract_purpose!(kd.hardware_enforced, kd.software_enforced),
-            creation_date_time: extract_creation_date_time!(kd.hardware_enforced, kd.software_enforced),
-            batch_cert_serial_hex: None,
+            attestation_security_level,
+            key_mint_security_level,
+            os_patch_level,
+            device_locked,
+            verified_boot_state,
+            key_origin,
+            package_names,
+            attestation_signature_digests,
+            unique_id: unique_id_from_raw(key_description._unique_id),
+            attestation_version: 300,
+            purpose,
+            verified_boot_key,
+            verified_boot_hash,
+            creation_date_time,
+            attestation_id_brand: key_description
+                .hardware_enforced
+                ._attestation_id_brand
+                .map(<[u8]>::to_vec),
+            attestation_id_device: key_description
+                .hardware_enforced
+                ._attestation_id_device
+                .map(<[u8]>::to_vec),
+            attestation_id_product: key_description
+                .hardware_enforced
+                ._attestation_id_product
+                .map(<[u8]>::to_vec),
+            attestation_id_serial: key_description
+                .hardware_enforced
+                ._attestation_id_serial
+                .map(<[u8]>::to_vec),
+            attestation_id_imei: key_description
+                .hardware_enforced
+                ._attestation_id_imei
+                .map(<[u8]>::to_vec),
+            attestation_id_meid: key_description
+                .hardware_enforced
+                ._attestation_id_meid
+                .map(<[u8]>::to_vec),
+            attestation_id_manufacturer: key_description
+                .hardware_enforced
+                ._attestation_id_manufacturer
+                .map(<[u8]>::to_vec),
+            attestation_id_model: key_description
+                .hardware_enforced
+                ._attestation_id_model
+                .map(<[u8]>::to_vec),
+            attestation_id_second_imei: key_description
+                .hardware_enforced
+                ._attestation_id_second_imei
+                .map(<[u8]>::to_vec),
+            device_unique_attestation: key_description
+                .hardware_enforced
+                ._device_unique_attestation
+                .is_some(),
+            module_hash: None,
+            vendor_patch_level: key_description.hardware_enforced._vendor_patch_level,
+            boot_patch_level: key_description.hardware_enforced._boot_patch_level,
+            os_version: key_description
+                .hardware_enforced
+                ._os_version
+                .or(key_description.software_enforced._os_version),
+            usage_count_limit: key_description
+                .hardware_enforced
+                ._usage_count_limit
+                .or(key_description.software_enforced._usage_count_limit),
+            algorithm: key_description
+                .hardware_enforced
+                ._algorithm
+                .or(key_description.software_enforced._algorithm),
+            key_size: key_description
+                .hardware_enforced
+                ._key_size
+                .or(key_description.software_enforced._key_size),
+            ec_curve: key_description
+                .hardware_enforced
+                ._ec_curve
+                .or(key_description.software_enforced._ec_curve),
         })
     }
 
     fn from_key_description_400(der: &[u8]) -> Result<Self, KeyDescriptionError> {
-        let kd = asn1::parse_single::<KeyDescription400>(der)
+        let key_description = asn1::parse_single::<KeyDescription400>(der)
             .map_err(|e| KeyDescriptionError::Parsing(Box::new(e)))?;
-        let attestation_challenge = String::from_utf8(kd.attestation_challenge.to_vec())
-            .map_err(KeyDescriptionError::ParseChallenge)?;
-        let os_patch_level = kd.hardware_enforced.os_patch_level.or(kd.software_enforced.os_patch_level);
-        let device_locked = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.device_locked);
-        let verified_boot_state = kd.hardware_enforced.root_of_trust.as_ref().map(|r| r.verified_boot_state.value());
-        let app_id = kd.try_parse_attestation_application_id();
+
+        let attestation_challenge =
+            String::from_utf8(key_description.attestation_challenge.to_vec())
+                .map_err(KeyDescriptionError::ParseChallenge)?;
+
+        let attestation_security_level = key_description.attestation_security_level.value();
+        let key_mint_security_level = key_description.key_mint_security_level.value();
+        let os_patch_level = key_description
+            .hardware_enforced
+            .os_patch_level
+            .or(key_description.software_enforced.os_patch_level);
+
+        let device_locked = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.device_locked);
+
+        let verified_boot_state = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.verified_boot_state.value());
+
+        let key_origin = key_description.hardware_enforced.origin;
+
+        let app_id = key_description.try_parse_attestation_application_id();
         let package_names = package_names_from_app_id!(app_id);
-        let attestation_signature_digests = app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
-        let (verified_boot_key, verified_boot_hash) = extract_root_of_trust_fields!(kd.hardware_enforced);
-        let (brand, device, product, manufacturer, model) = extract_id_attestation!(kd.hardware_enforced);
-        let device_unique = kd.hardware_enforced._device_unique_attestation.is_some();
+        let attestation_signature_digests =
+            app_id.map(|aid| aid.signature_digests.map(<[u8]>::to_vec).collect());
+
+        let purpose = key_description
+            .hardware_enforced
+            ._purpose
+            .map(|s| s.collect())
+            .unwrap_or_default();
+
+        let verified_boot_key = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_key.to_vec());
+
+        let verified_boot_hash = key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r._verified_boot_hash.to_vec());
+
+        let creation_date_time = key_description
+            .hardware_enforced
+            ._creation_date_time
+            .or(key_description.software_enforced._creation_date_time);
 
         Ok(Self {
             attestation_challenge,
-            attestation_security_level: kd.attestation_security_level.value(),
-            key_mint_security_level: kd.key_mint_security_level.value(),
-            os_patch_level, device_locked, verified_boot_state,
-            key_origin: kd.hardware_enforced.origin,
-            package_names, attestation_signature_digests,
-            verified_boot_key, verified_boot_hash,
-            device_unique_attestation: device_unique,
-            attestation_id_brand: brand, attestation_id_device: device,
-            attestation_id_product: product, attestation_id_manufacturer: manufacturer,
-            attestation_id_model: model,
-            module_hash: kd.hardware_enforced._module_hash.map(<[u8]>::to_vec),
-            purpose: extract_purpose!(kd.hardware_enforced, kd.software_enforced),
-            creation_date_time: extract_creation_date_time!(kd.hardware_enforced, kd.software_enforced),
-            batch_cert_serial_hex: None,
+            attestation_security_level,
+            key_mint_security_level,
+            os_patch_level,
+            device_locked,
+            verified_boot_state,
+            key_origin,
+            package_names,
+            attestation_signature_digests,
+            unique_id: unique_id_from_raw(key_description._unique_id),
+            attestation_version: 400,
+            purpose,
+            verified_boot_key,
+            verified_boot_hash,
+            creation_date_time,
+            attestation_id_brand: key_description
+                .hardware_enforced
+                ._attestation_id_brand
+                .map(<[u8]>::to_vec),
+            attestation_id_device: key_description
+                .hardware_enforced
+                ._attestation_id_device
+                .map(<[u8]>::to_vec),
+            attestation_id_product: key_description
+                .hardware_enforced
+                ._attestation_id_product
+                .map(<[u8]>::to_vec),
+            attestation_id_serial: key_description
+                .hardware_enforced
+                ._attestation_id_serial
+                .map(<[u8]>::to_vec),
+            attestation_id_imei: key_description
+                .hardware_enforced
+                ._attestation_id_imei
+                .map(<[u8]>::to_vec),
+            attestation_id_meid: key_description
+                .hardware_enforced
+                ._attestation_id_meid
+                .map(<[u8]>::to_vec),
+            attestation_id_manufacturer: key_description
+                .hardware_enforced
+                ._attestation_id_manufacturer
+                .map(<[u8]>::to_vec),
+            attestation_id_model: key_description
+                .hardware_enforced
+                ._attestation_id_model
+                .map(<[u8]>::to_vec),
+            attestation_id_second_imei: key_description
+                .hardware_enforced
+                ._attestation_id_second_imei
+                .map(<[u8]>::to_vec),
+            device_unique_attestation: key_description
+                .hardware_enforced
+                ._device_unique_attestation
+                .is_some(),
+            module_hash: key_description
+                .hardware_enforced
+                ._module_hash
+                .map(<[u8]>::to_vec),
+            vendor_patch_level: key_description.hardware_enforced._vendor_patch_level,
+            boot_patch_level: key_description.hardware_enforced._boot_patch_level,
+            os_version: key_description
+                .hardware_enforced
+                ._os_version
+                .or(key_description.software_enforced._os_version),
+            usage_count_limit: key_description
+                .hardware_enforced
+                ._usage_count_limit
+                .or(key_description.software_enforced._usage_count_limit),
+            algorithm: key_description
+                .hardware_enforced
+                ._algorithm
+                .or(key_description.software_enforced._algorithm),
+            key_size: key_description
+                .hardware_enforced
+                ._key_size
+                .or(key_description.software_enforced._key_size),
+            ec_curve: key_description
+                .hardware_enforced
+                ._ec_curve
+                .or(key_description.software_enforced._ec_curve),
         })
     }
 }

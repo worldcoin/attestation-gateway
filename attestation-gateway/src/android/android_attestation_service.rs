@@ -112,18 +112,39 @@ pub struct IntegrityConfidence {
     /// creationDateTime delta in milliseconds (server_now - creation_date_time). Large
     /// negative values or exact-zero deltas may indicate a forged timestamp.
     pub creation_time_delta_ms: Option<i64>,
+    /// Hardware-bound unique ID (HMAC_SHA256 with device secret). 128-bit, rotates every 30 days.
+    /// Empty when the app doesn't request INCLUDE_UNIQUE_ID.
+    pub unique_id_hex: Option<String>,
     /// Device identity fields when present (UTF-8 best-effort).
     pub attestation_id_brand: Option<String>,
+    pub attestation_id_device: Option<String>,
+    pub attestation_id_product: Option<String>,
+    pub attestation_id_serial: Option<String>,
+    pub attestation_id_imei: Option<String>,
+    pub attestation_id_meid: Option<String>,
     pub attestation_id_manufacturer: Option<String>,
     pub attestation_id_model: Option<String>,
+    pub attestation_id_second_imei: Option<String>,
+    /// Android OS version as encoded integer (e.g. 160000 = Android 16.0.0).
+    pub os_version: Option<u64>,
+    /// Vendor-specific patch level (YYYYMMDD).
+    pub vendor_patch_level: Option<u64>,
+    /// Boot image patch level (YYYYMMDD).
+    pub boot_patch_level: Option<u64>,
+    /// Maximum number of times the key can be used.
+    pub usage_count_limit: Option<u64>,
+    /// Key algorithm (1=RSA, 3=EC).
+    pub algorithm: Option<u64>,
+    /// Key size in bits.
+    pub key_size: Option<u64>,
+    /// EC curve (0=P-224, 1=P-256, 2=P-384, 3=P-521).
+    pub ec_curve: Option<u64>,
 }
 
 pub struct AndroidAttestationOutput {
     pub device_public_key: Vec<u8>,
     pub os_patch_level_delta: Option<u32>,
     pub integrity_confidence: IntegrityConfidence,
-    /// SHA-256 fingerprint of the intermediate (batch) cert DER for rate limiting.
-    pub batch_cert_fingerprint: Option<String>,
 }
 
 #[derive(Clone)]
@@ -167,40 +188,72 @@ impl AndroidAttestationService {
         app_version: &String,
         bundle_identifier: &BundleIdentifier,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
+        tracing::info!(
+            cert_chain_len = base64_cert_chain.len(),
+            bundle_identifier = %bundle_identifier,
+            "android verify: starting verification"
+        );
+
         let cert_chain = AndroidCertChain::from_base64(base64_cert_chain, &self.ca_registry)
             .map_err(AndroidAttestationError::CertChain)?;
 
-        if cert_chain
+        let revoked = cert_chain
             .serials()
             .iter()
-            .any(|s| s.is_revoked(&self.revocation_list))
-        {
+            .any(|s| s.is_revoked(&self.revocation_list));
+        tracing::info!(
+            revoked = revoked,
+            serial_count = cert_chain.serials().len(),
+            "android verify: revocation check"
+        );
+        if revoked {
             return Err(AndroidAttestationError::CertificateRevoked);
         }
 
-        if !self
+        let has_valid_root = self
             .ca_registry
-            .has_public_key(&cert_chain.root_certificate().public_key)
-        {
+            .has_public_key(&cert_chain.root_certificate().public_key);
+        let is_rkp = self
+            .ca_registry
+            .is_rkp_root(&cert_chain.root_certificate().public_key);
+        tracing::info!(
+            has_valid_root = has_valid_root,
+            is_rkp_root = is_rkp,
+            "android verify: CA root check"
+        );
+        if !has_valid_root {
             return Err(AndroidAttestationError::InvalidCaRoot);
         }
 
-        if cert_chain.device_certificate().attestation_challenge()
-            != format!("n={nonce},av={app_version}")
-        {
+        let expected_challenge = format!("n={nonce},av={app_version}");
+        let actual_challenge = cert_chain.device_certificate().attestation_challenge();
+        tracing::info!(
+            expected_challenge = %expected_challenge,
+            actual_challenge = %actual_challenge,
+            "android verify: challenge comparison"
+        );
+        if actual_challenge != expected_challenge {
             return Err(AndroidAttestationError::InvalidChallenge);
         }
 
+        let attestation_security_level =
+            cert_chain.device_certificate().attestation_security_level();
+        let key_mint_security_level = cert_chain.device_certificate().key_mint_security_level();
+        tracing::info!(
+            attestation_security_level = attestation_security_level,
+            key_mint_security_level = key_mint_security_level,
+            levels_match = (attestation_security_level == key_mint_security_level),
+            "android verify: security levels"
+        );
+
         if !matches!(
-            cert_chain.device_certificate().attestation_security_level(),
+            attestation_security_level,
             KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT | KM_SECURITY_LEVEL_STRONG_BOX
         ) {
             return Err(AndroidAttestationError::LowSecurityLevel);
         }
 
-        if cert_chain.device_certificate().key_mint_security_level()
-            != cert_chain.device_certificate().attestation_security_level()
-        {
+        if key_mint_security_level != attestation_security_level {
             return Err(AndroidAttestationError::InconsistentSecurityLevels);
         }
 
@@ -209,14 +262,20 @@ impl AndroidAttestationService {
             .verified_boot_state()
             .ok_or(AndroidAttestationError::MissingRootOfTrust)?;
 
-        if verified_boot_state != KM_VERIFIED_BOOT_VERIFIED {
-            return Err(AndroidAttestationError::BootNotVerified);
-        }
-
         let device_locked = cert_chain
             .device_certificate()
             .device_locked()
             .ok_or(AndroidAttestationError::MissingRootOfTrust)?;
+
+        tracing::info!(
+            verified_boot_state = verified_boot_state,
+            device_locked = device_locked,
+            "android verify: boot state and device lock"
+        );
+
+        if verified_boot_state != KM_VERIFIED_BOOT_VERIFIED {
+            return Err(AndroidAttestationError::BootNotVerified);
+        }
 
         if !device_locked {
             return Err(AndroidAttestationError::DeviceNotLocked);
@@ -226,6 +285,12 @@ impl AndroidAttestationService {
             .device_certificate()
             .key_origin()
             .ok_or(AndroidAttestationError::MissingKeyOrigin)?;
+
+        tracing::info!(
+            key_origin = key_origin,
+            expected = KM_ORIGIN_GENERATED,
+            "android verify: key origin"
+        );
 
         if key_origin != KM_ORIGIN_GENERATED {
             return Err(AndroidAttestationError::KeyNotGeneratedInSecureHardware);
@@ -240,21 +305,67 @@ impl AndroidAttestationService {
             .certificate_sha256_digest_base64()
             .ok_or(AndroidAttestationError::MissingCertificateDigest)?;
 
-        let expected_attestation_signature_digest = Base64
+        let expected = Base64
             .decode(expected_attestation_signature_digest)
             .map_err(AndroidAttestationError::BadCertificateDigestEncoding)?;
 
-        if !attestation_signature_digests.contains(&expected_attestation_signature_digest) {
+        let digests_hex: Vec<String> = attestation_signature_digests
+            .iter()
+            .map(|d| Base64.encode(d))
+            .collect();
+        tracing::info!(
+            found_digests = ?digests_hex,
+            expected_digest = %expected_attestation_signature_digest,
+            "android verify: signature digest comparison"
+        );
+
+        let prod_match = attestation_signature_digests.contains(&expected);
+
+        // Optional staging affordance: when
+        // `ATTESTATION_GATEWAY_ACCEPT_ALT_SIGNING_CERT=1` is set on the
+        // staging gateway, also accept the debug/dev World App signing cert
+        // for the staging bundle. Disabled by default; bundles other than
+        // `AndroidStageWorldApp` are unaffected.
+        let alt_match = if std::env::var("ATTESTATION_GATEWAY_ACCEPT_ALT_SIGNING_CERT")
+            .ok()
+            .as_deref()
+            == Some("1")
+        {
+            bundle_identifier
+                .certificate_sha256_digest_base64_alt()
+                .and_then(|alt| Base64.decode(alt).ok())
+                .map_or(false, |alt_decoded| {
+                    attestation_signature_digests.contains(&alt_decoded)
+                })
+        } else {
+            false
+        };
+
+        if prod_match {
+            tracing::info!("android verify: production signature digest matched");
+        } else if alt_match {
+            tracing::info!("android verify: alt/debug signature digest matched");
+        } else {
+            tracing::warn!(
+                found_digests = ?digests_hex,
+                expected_digest = %expected_attestation_signature_digest,
+                alt_digest = ?bundle_identifier.certificate_sha256_digest_base64_alt(),
+                "android verify: no signature digest matched"
+            );
             return Err(AndroidAttestationError::InvalidAttestationSignatureDigest);
         }
 
         let package_names = cert_chain.device_certificate().package_names();
+        tracing::info!(
+            package_names = ?package_names,
+            "android verify: package names in cert"
+        );
         if package_names.is_empty() {
             return Err(AndroidAttestationError::MissingPackageName);
         }
 
-        let expected = bundle_identifier.to_string();
-        if !package_names.iter().any(|name| name == &expected) {
+        let expected_pkg = bundle_identifier.to_string();
+        if !package_names.iter().any(|name| name == &expected_pkg) {
             return Err(AndroidAttestationError::InvalidPackageName);
         }
 
@@ -270,11 +381,17 @@ impl AndroidAttestationService {
 
         let dev = cert_chain.device_certificate();
 
+        let attestation_version = dev.attestation_version();
+        tracing::info!(
+            attestation_version = attestation_version,
+            os_patch_level = ?dev.os_patch_level(),
+            os_patch_level_delta = ?os_patch_level_delta,
+            "android verify: attestation version and patch level"
+        );
+
         // --- Integrity confidence signals (informational, never blocking) ---
 
-        let rkp_rooted = self
-            .ca_registry
-            .is_rkp_root(&cert_chain.root_certificate().public_key);
+        let rkp_rooted = is_rkp;
 
         let device_unique_attestation = dev.device_unique_attestation();
 
@@ -288,10 +405,7 @@ impl AndroidAttestationService {
         let verified_boot_key_hex = dev.verified_boot_key().map(hex::encode);
         let verified_boot_hash_hex = dev.verified_boot_hash().map(hex::encode);
 
-        let batch_cert_serial_hex = cert_chain
-            .serials()
-            .get(1)
-            .map(|s| s.hex.clone());
+        let batch_cert_serial_hex = cert_chain.serials().get(1).map(|s| s.hex.clone());
 
         let module_hash_hex = dev.module_hash().map(hex::encode);
 
@@ -307,19 +421,106 @@ impl AndroidAttestationService {
             b.and_then(|v| std::str::from_utf8(v).ok().map(String::from))
         };
 
+        let unique_id_hex = dev.unique_id().map(hex::encode);
+
+        let attestation_id_brand = to_utf8(dev.attestation_id_brand());
+        let attestation_id_device = to_utf8(dev.attestation_id_device());
+        let attestation_id_product = to_utf8(dev.attestation_id_product());
+        let attestation_id_serial = to_utf8(dev.attestation_id_serial());
+        let attestation_id_imei = to_utf8(dev.attestation_id_imei());
+        let attestation_id_meid = to_utf8(dev.attestation_id_meid());
+        let attestation_id_manufacturer = to_utf8(dev.attestation_id_manufacturer());
+        let attestation_id_model = to_utf8(dev.attestation_id_model());
+        let attestation_id_second_imei = to_utf8(dev.attestation_id_second_imei());
+
+        tracing::info!(
+            rkp_rooted = rkp_rooted,
+            device_unique_attestation = device_unique_attestation,
+            has_id_attestation = has_id_attestation,
+            unexpected_purpose = unexpected_purpose,
+            unique_id = ?unique_id_hex,
+            purpose = ?dev.purpose(),
+            verified_boot_key = ?verified_boot_key_hex,
+            verified_boot_hash = ?verified_boot_hash_hex,
+            batch_cert_serial = ?batch_cert_serial_hex,
+            module_hash = ?module_hash_hex,
+            creation_time_delta_ms = ?creation_time_delta_ms,
+            attestation_id_brand = ?attestation_id_brand,
+            attestation_id_device = ?attestation_id_device,
+            attestation_id_product = ?attestation_id_product,
+            attestation_id_manufacturer = ?attestation_id_manufacturer,
+            attestation_id_model = ?attestation_id_model,
+            "android verify: integrity confidence signals"
+        );
+
+        // Compute vendor/boot patch level staleness (YYYYMMDD format -> months delta)
+        let vendor_patch_level_stale = dev
+            .vendor_patch_level()
+            .map(|vpl| {
+                let now = DateTime::<Utc>::from(SystemTime::now());
+                let now_yyyymm = now.year_ce().1 * 100 + now.month();
+                let vpl_yyyymm = (vpl / 100) as u32; // YYYYMMDD -> YYYYMM
+                now_yyyymm.saturating_sub(vpl_yyyymm) > 18
+            })
+            .unwrap_or(false);
+
+        let boot_patch_level_stale = dev
+            .boot_patch_level()
+            .map(|bpl| {
+                let now = DateTime::<Utc>::from(SystemTime::now());
+                let now_yyyymm = now.year_ce().1 * 100 + now.month();
+                let bpl_yyyymm = (bpl / 100) as u32;
+                now_yyyymm.saturating_sub(bpl_yyyymm) > 18
+            })
+            .unwrap_or(false);
+
+        let os_patch_level_stale = os_patch_level_delta.map(|d| d > 12).unwrap_or(false);
+
+        tracing::info!(
+            os_version = ?dev.os_version(),
+            vendor_patch_level = ?dev.vendor_patch_level(),
+            boot_patch_level = ?dev.boot_patch_level(),
+            usage_count_limit = ?dev.usage_count_limit(),
+            algorithm = ?dev.algorithm(),
+            key_size = ?dev.key_size(),
+            ec_curve = ?dev.ec_curve(),
+            attestation_id_serial = ?attestation_id_serial,
+            attestation_id_imei = ?attestation_id_imei,
+            attestation_id_meid = ?attestation_id_meid,
+            attestation_id_second_imei = ?attestation_id_second_imei,
+            os_patch_level_stale = os_patch_level_stale,
+            vendor_patch_level_stale = vendor_patch_level_stale,
+            boot_patch_level_stale = boot_patch_level_stale,
+            "android verify: extended device metadata"
+        );
+
         let integrity_confidence = IntegrityConfidence {
             rkp_rooted,
             device_unique_attestation,
             has_id_attestation,
             unexpected_purpose,
+            unique_id_hex,
             verified_boot_key_hex,
             verified_boot_hash_hex,
             batch_cert_serial_hex,
             module_hash_hex,
             creation_time_delta_ms,
-            attestation_id_brand: to_utf8(dev.attestation_id_brand()),
-            attestation_id_manufacturer: to_utf8(dev.attestation_id_manufacturer()),
-            attestation_id_model: to_utf8(dev.attestation_id_model()),
+            attestation_id_brand,
+            attestation_id_device,
+            attestation_id_product,
+            attestation_id_serial,
+            attestation_id_imei,
+            attestation_id_meid,
+            attestation_id_manufacturer,
+            attestation_id_model,
+            attestation_id_second_imei,
+            os_version: dev.os_version(),
+            vendor_patch_level: dev.vendor_patch_level(),
+            boot_patch_level: dev.boot_patch_level(),
+            usage_count_limit: dev.usage_count_limit(),
+            algorithm: dev.algorithm(),
+            key_size: dev.key_size(),
+            ec_curve: dev.ec_curve(),
         };
 
         // Emit structured metrics for every signal so dashboards can track distribution.
@@ -332,29 +533,12 @@ impl AndroidAttestationService {
         )
         .increment(1);
 
-        if let Some(ref key_hex) = integrity_confidence.verified_boot_key_hex {
-            tracing::info!(
-                verified_boot_key = %key_hex,
-                rkp_rooted = rkp_rooted,
-                has_id_attestation = has_id_attestation,
-                device_unique = device_unique_attestation,
-                batch_serial = ?integrity_confidence.batch_cert_serial_hex,
-                "android attestation confidence signals"
-            );
-        }
-
-        let batch_cert_fingerprint = cert_chain
-            .intermediate_cert_der()
-            .map(|der| {
-                use super::keybox_defense::KeyboxDefense;
-                KeyboxDefense::fingerprint(der)
-            });
+        tracing::info!("android verify: verification complete, all checks passed");
 
         Ok(AndroidAttestationOutput {
             device_public_key: cert_chain.device_certificate().public_key(),
             os_patch_level_delta,
             integrity_confidence,
-            batch_cert_fingerprint,
         })
     }
 }

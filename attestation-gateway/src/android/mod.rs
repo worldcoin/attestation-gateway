@@ -11,7 +11,6 @@ mod android_revocation_list;
 mod device_certificate;
 mod integrity_token_data;
 pub mod key_description;
-pub mod keybox_defense;
 mod root_certificate;
 
 pub use android_attestation_service::AndroidAttestationService;
