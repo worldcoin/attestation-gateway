@@ -145,6 +145,9 @@ pub struct AndroidAttestationOutput {
     pub device_public_key: Vec<u8>,
     pub os_patch_level_delta: Option<u32>,
     pub integrity_confidence: IntegrityConfidence,
+    /// SHA-256 fingerprint of the intermediate (batch) certificate. Used by
+    /// the keybox-defense layer for rate limiting and blocklisting.
+    pub batch_cert_fingerprint: Option<String>,
 }
 
 #[derive(Clone)]
@@ -535,10 +538,16 @@ impl AndroidAttestationService {
 
         tracing::info!("android verify: verification complete, all checks passed");
 
+        let batch_cert_fingerprint = cert_chain.intermediate_cert_der().map(|der| {
+            use super::keybox_defense::KeyboxDefense;
+            KeyboxDefense::fingerprint(der)
+        });
+
         Ok(AndroidAttestationOutput {
             device_public_key: cert_chain.device_certificate().public_key(),
             os_patch_level_delta,
             integrity_confidence,
+            batch_cert_fingerprint,
         })
     }
 }
