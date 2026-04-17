@@ -10,7 +10,7 @@ pub struct KeyDescription1<'a> {
     pub _keymaster_version: u64,
     pub keymaster_security_level: asn1::Enumerated,
     pub attestation_challenge: &'a [u8],
-    pub _unique_id: &'a [u8],
+    pub unique_id: &'a [u8],
     pub software_enforced: AuthorizationList<'a>,
     pub hardware_enforced: AuthorizationList<'a>,
 }
@@ -18,7 +18,7 @@ pub struct KeyDescription1<'a> {
 #[derive(asn1::Asn1Read)]
 pub struct AuthorizationList<'a> {
     #[explicit(1)]
-    pub _purpose: Option<asn1::SetOf<'a, u64>>,
+    pub purpose: Option<asn1::SetOf<'a, u64>>,
     #[explicit(2)]
     pub algorithm: Option<u64>,
     #[explicit(3)]
@@ -48,7 +48,7 @@ pub struct AuthorizationList<'a> {
     #[explicit(600)]
     pub _all_applications: Option<asn1::Null>,
     #[explicit(701)]
-    pub _creation_date_time: Option<u64>,
+    pub creation_date_time: Option<u64>,
     #[explicit(702)]
     pub origin: Option<u64>,
     #[explicit(703)]
@@ -64,7 +64,7 @@ pub struct AuthorizationList<'a> {
 /// Root of trust for attestation schema versions 1 and 2 (no `verified_boot_hash`).
 #[derive(asn1::Asn1Read, Debug)]
 pub struct RootOfTrust<'a> {
-    pub _verified_boot_key: &'a [u8],
+    pub verified_boot_key: &'a [u8],
     pub device_locked: bool,
     pub verified_boot_state: asn1::Enumerated,
 }
