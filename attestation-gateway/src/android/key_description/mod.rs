@@ -36,10 +36,10 @@ fn unique_id_from_raw(raw: &[u8]) -> Option<Vec<u8>> {
 /// before this macro is invoked.
 macro_rules! extract_common_fields {
     ($hw:expr, $sw:expr) => {{
-        let os_version = $hw._os_version.or($sw._os_version);
-        let algorithm = $hw._algorithm.or($sw._algorithm);
-        let key_size = $hw._key_size.or($sw._key_size);
-        let ec_curve = $hw._ec_curve.or($sw._ec_curve);
+        let os_version = $hw.os_version.or($sw.os_version);
+        let algorithm = $hw.algorithm.or($sw.algorithm);
+        let key_size = $hw.key_size.or($sw.key_size);
+        let ec_curve = $hw.ec_curve.or($sw.ec_curve);
         (os_version, algorithm, key_size, ec_curve)
     }};
 }
@@ -338,21 +338,21 @@ impl KeyDescription {
             boot_patch_level: None,
             os_version: key_description
                 .hardware_enforced
-                ._os_version
-                .or(key_description.software_enforced._os_version),
+                .os_version
+                .or(key_description.software_enforced.os_version),
             usage_count_limit: None,
             algorithm: key_description
                 .hardware_enforced
-                ._algorithm
-                .or(key_description.software_enforced._algorithm),
+                .algorithm
+                .or(key_description.software_enforced.algorithm),
             key_size: key_description
                 .hardware_enforced
-                ._key_size
-                .or(key_description.software_enforced._key_size),
+                .key_size
+                .or(key_description.software_enforced.key_size),
             ec_curve: key_description
                 .hardware_enforced
-                ._ec_curve
-                .or(key_description.software_enforced._ec_curve),
+                .ec_curve
+                .or(key_description.software_enforced.ec_curve),
         })
     }
 
@@ -468,21 +468,21 @@ impl KeyDescription {
             boot_patch_level: key_description.hardware_enforced._boot_patch_level,
             os_version: key_description
                 .hardware_enforced
-                ._os_version
-                .or(key_description.software_enforced._os_version),
+                .os_version
+                .or(key_description.software_enforced.os_version),
             usage_count_limit: None,
             algorithm: key_description
                 .hardware_enforced
-                ._algorithm
-                .or(key_description.software_enforced._algorithm),
+                .algorithm
+                .or(key_description.software_enforced.algorithm),
             key_size: key_description
                 .hardware_enforced
-                ._key_size
-                .or(key_description.software_enforced._key_size),
+                .key_size
+                .or(key_description.software_enforced.key_size),
             ec_curve: key_description
                 .hardware_enforced
-                ._ec_curve
-                .or(key_description.software_enforced._ec_curve),
+                .ec_curve
+                .or(key_description.software_enforced.ec_curve),
         })
     }
 
@@ -601,21 +601,21 @@ impl KeyDescription {
             boot_patch_level: key_description.hardware_enforced._boot_patch_level,
             os_version: key_description
                 .hardware_enforced
-                ._os_version
-                .or(key_description.software_enforced._os_version),
+                .os_version
+                .or(key_description.software_enforced.os_version),
             usage_count_limit: None,
             algorithm: key_description
                 .hardware_enforced
-                ._algorithm
-                .or(key_description.software_enforced._algorithm),
+                .algorithm
+                .or(key_description.software_enforced.algorithm),
             key_size: key_description
                 .hardware_enforced
-                ._key_size
-                .or(key_description.software_enforced._key_size),
+                .key_size
+                .or(key_description.software_enforced.key_size),
             ec_curve: key_description
                 .hardware_enforced
-                ._ec_curve
-                .or(key_description.software_enforced._ec_curve),
+                .ec_curve
+                .or(key_description.software_enforced.ec_curve),
         })
     }
 
@@ -734,24 +734,24 @@ impl KeyDescription {
             boot_patch_level: key_description.hardware_enforced._boot_patch_level,
             os_version: key_description
                 .hardware_enforced
-                ._os_version
-                .or(key_description.software_enforced._os_version),
+                .os_version
+                .or(key_description.software_enforced.os_version),
             usage_count_limit: key_description
                 .hardware_enforced
                 ._usage_count_limit
                 .or(key_description.software_enforced._usage_count_limit),
             algorithm: key_description
                 .hardware_enforced
-                ._algorithm
-                .or(key_description.software_enforced._algorithm),
+                .algorithm
+                .or(key_description.software_enforced.algorithm),
             key_size: key_description
                 .hardware_enforced
-                ._key_size
-                .or(key_description.software_enforced._key_size),
+                .key_size
+                .or(key_description.software_enforced.key_size),
             ec_curve: key_description
                 .hardware_enforced
-                ._ec_curve
-                .or(key_description.software_enforced._ec_curve),
+                .ec_curve
+                .or(key_description.software_enforced.ec_curve),
         })
     }
 
@@ -870,24 +870,24 @@ impl KeyDescription {
             boot_patch_level: key_description.hardware_enforced._boot_patch_level,
             os_version: key_description
                 .hardware_enforced
-                ._os_version
-                .or(key_description.software_enforced._os_version),
+                .os_version
+                .or(key_description.software_enforced.os_version),
             usage_count_limit: key_description
                 .hardware_enforced
                 ._usage_count_limit
                 .or(key_description.software_enforced._usage_count_limit),
             algorithm: key_description
                 .hardware_enforced
-                ._algorithm
-                .or(key_description.software_enforced._algorithm),
+                .algorithm
+                .or(key_description.software_enforced.algorithm),
             key_size: key_description
                 .hardware_enforced
-                ._key_size
-                .or(key_description.software_enforced._key_size),
+                .key_size
+                .or(key_description.software_enforced.key_size),
             ec_curve: key_description
                 .hardware_enforced
-                ._ec_curve
-                .or(key_description.software_enforced._ec_curve),
+                .ec_curve
+                .or(key_description.software_enforced.ec_curve),
         })
     }
 
@@ -1009,24 +1009,24 @@ impl KeyDescription {
             boot_patch_level: key_description.hardware_enforced._boot_patch_level,
             os_version: key_description
                 .hardware_enforced
-                ._os_version
-                .or(key_description.software_enforced._os_version),
+                .os_version
+                .or(key_description.software_enforced.os_version),
             usage_count_limit: key_description
                 .hardware_enforced
                 ._usage_count_limit
                 .or(key_description.software_enforced._usage_count_limit),
             algorithm: key_description
                 .hardware_enforced
-                ._algorithm
-                .or(key_description.software_enforced._algorithm),
+                .algorithm
+                .or(key_description.software_enforced.algorithm),
             key_size: key_description
                 .hardware_enforced
-                ._key_size
-                .or(key_description.software_enforced._key_size),
+                .key_size
+                .or(key_description.software_enforced.key_size),
             ec_curve: key_description
                 .hardware_enforced
-                ._ec_curve
-                .or(key_description.software_enforced._ec_curve),
+                .ec_curve
+                .or(key_description.software_enforced.ec_curve),
         })
     }
 
@@ -1151,24 +1151,24 @@ impl KeyDescription {
             boot_patch_level: key_description.hardware_enforced._boot_patch_level,
             os_version: key_description
                 .hardware_enforced
-                ._os_version
-                .or(key_description.software_enforced._os_version),
+                .os_version
+                .or(key_description.software_enforced.os_version),
             usage_count_limit: key_description
                 .hardware_enforced
                 ._usage_count_limit
                 .or(key_description.software_enforced._usage_count_limit),
             algorithm: key_description
                 .hardware_enforced
-                ._algorithm
-                .or(key_description.software_enforced._algorithm),
+                .algorithm
+                .or(key_description.software_enforced.algorithm),
             key_size: key_description
                 .hardware_enforced
-                ._key_size
-                .or(key_description.software_enforced._key_size),
+                .key_size
+                .or(key_description.software_enforced.key_size),
             ec_curve: key_description
                 .hardware_enforced
-                ._ec_curve
-                .or(key_description.software_enforced._ec_curve),
+                .ec_curve
+                .or(key_description.software_enforced.ec_curve),
         })
     }
 }

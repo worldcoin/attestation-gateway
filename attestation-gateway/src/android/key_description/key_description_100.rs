@@ -31,9 +31,9 @@ pub struct AuthorizationList<'a> {
     #[explicit(1)]
     pub _purpose: Option<asn1::SetOf<'a, u64>>,
     #[explicit(2)]
-    pub _algorithm: Option<u64>,
+    pub algorithm: Option<u64>,
     #[explicit(3)]
-    pub _key_size: Option<u64>,
+    pub key_size: Option<u64>,
     #[explicit(5)]
     pub _digest: Option<UnorderedSetOfU64>,
     #[explicit(6)]
@@ -43,7 +43,7 @@ pub struct AuthorizationList<'a> {
     #[explicit(8)]
     pub _min_mac_length: Option<u64>,
     #[explicit(10)]
-    pub _ec_curve: Option<u64>,
+    pub ec_curve: Option<u64>,
     #[explicit(200)]
     pub _rsa_public_exponent: Option<u64>,
     #[explicit(203)]
@@ -83,7 +83,7 @@ pub struct AuthorizationList<'a> {
     #[explicit(704)]
     pub root_of_trust: Option<RootOfTrust<'a>>,
     #[explicit(705)]
-    pub _os_version: Option<u64>,
+    pub os_version: Option<u64>,
     #[explicit(706)]
     pub os_patch_level: Option<u32>,
     #[explicit(709)]
