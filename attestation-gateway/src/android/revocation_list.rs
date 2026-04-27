@@ -34,7 +34,7 @@ const DEFAULT_FALLBACK_MAX_AGE: Duration = Duration::from_secs(300);
 const REFRESH_FAILURE_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
-pub enum AndroidRevocationListError {
+pub enum RevocationListError {
     #[error("reqwest error: {0}")]
     ReqwestError(#[source] reqwest::Error),
 
@@ -47,7 +47,7 @@ pub enum AndroidRevocationListError {
 
 /// Shared handle to Google's attestation revocation JSON (thread-safe, cheap to clone).
 #[derive(Clone)]
-pub struct AndroidRevocationList {
+pub struct RevocationList {
     inner: Arc<Inner>,
 }
 
@@ -69,7 +69,7 @@ fn build_http_client() -> Result<Client, reqwest::Error> {
         .build()
 }
 
-impl AndroidRevocationList {
+impl RevocationList {
     /// Fetches the revocation feed once and returns a list whose cache is populated.
     ///
     /// # Errors
@@ -79,9 +79,9 @@ impl AndroidRevocationList {
     ///   cannot be read (network, timeout, transport).
     /// - [`AndroidRevocationListError::FetchRevocationsJsonParsing`] if the body is not valid JSON
     ///   or does not deserialize into the expected attestation status shape.
-    pub async fn connect(url: impl Into<String>) -> Result<Self, AndroidRevocationListError> {
+    pub async fn connect(url: impl Into<String>) -> Result<Self, RevocationListError> {
         let url = url.into();
-        let client = build_http_client().map_err(AndroidRevocationListError::ReqwestError)?;
+        let client = build_http_client().map_err(RevocationListError::ReqwestError)?;
         let state = fetch_revocations(&client, &url).await?;
 
         Ok(Self {
@@ -98,7 +98,7 @@ impl AndroidRevocationList {
     /// # Errors
     ///
     /// Same as [`Self::connect`].
-    pub async fn connect_google_default() -> Result<Self, AndroidRevocationListError> {
+    pub async fn connect_google_default() -> Result<Self, RevocationListError> {
         Self::connect(DEFAULT_ATTESTATION_STATUS_URL).await
     }
 
@@ -139,7 +139,7 @@ impl AndroidRevocationList {
     ///
     /// The HTTP client is already built at connect time, so [`AndroidRevocationListError::ReqwestError`]
     /// is not returned from this method.
-    pub async fn refresh(&self) -> Result<(), AndroidRevocationListError> {
+    pub async fn refresh(&self) -> Result<(), RevocationListError> {
         let state = fetch_revocations(&self.inner.client, &self.inner.url).await?;
         self.inner.cache.store(Arc::new(state));
         Ok(())
@@ -175,17 +175,14 @@ impl AndroidRevocationList {
     }
 }
 
-async fn fetch_revocations(
-    client: &Client,
-    url: &str,
-) -> Result<CacheState, AndroidRevocationListError> {
+async fn fetch_revocations(client: &Client, url: &str) -> Result<CacheState, RevocationListError> {
     let response = client
         .get(url)
         .send()
         .await
-        .map_err(AndroidRevocationListError::FetchRevocationsHttp)?
+        .map_err(RevocationListError::FetchRevocationsHttp)?
         .error_for_status()
-        .map_err(AndroidRevocationListError::FetchRevocationsHttp)?;
+        .map_err(RevocationListError::FetchRevocationsHttp)?;
 
     let max_age = response
         .headers()
@@ -206,10 +203,10 @@ async fn fetch_revocations(
     let body = response
         .bytes()
         .await
-        .map_err(AndroidRevocationListError::FetchRevocationsHttp)?;
+        .map_err(RevocationListError::FetchRevocationsHttp)?;
 
-    let parsed: StatusResponse = serde_json::from_slice(&body)
-        .map_err(AndroidRevocationListError::FetchRevocationsJsonParsing)?;
+    let parsed: StatusResponse =
+        serde_json::from_slice(&body).map_err(RevocationListError::FetchRevocationsJsonParsing)?;
 
     let mut revoked = HashSet::with_capacity(parsed.entries.len());
     for (key, entry) in parsed.entries {
@@ -224,7 +221,7 @@ async fn fetch_revocations(
     })
 }
 
-impl AndroidRevocationListError {
+impl RevocationListError {
     pub fn reason_tag(&self) -> String {
         match self {
             Self::ReqwestError(_) => "reqwest_error".to_string(),
@@ -319,7 +316,7 @@ mod tests {
             .create();
 
         let url = format!("{}/status", server.url());
-        let list = AndroidRevocationList::connect(url).await.unwrap();
+        let list = RevocationList::connect(url).await.unwrap();
         assert!(list.is_revoked("1"));
         assert!(!list.is_revoked("2"));
         let until = list.duration_until_stale();
@@ -339,7 +336,7 @@ mod tests {
             .create();
 
         let url = format!("{}/status", server.url());
-        let list = AndroidRevocationList::connect(url).await.unwrap();
+        let list = RevocationList::connect(url).await.unwrap();
         let until = list.duration_until_stale();
         assert!(
             until <= Duration::from_secs(36),
@@ -363,7 +360,7 @@ mod tests {
             .create();
 
         let url = format!("{}/status", server.url());
-        let list = AndroidRevocationList::connect(url).await.unwrap();
+        let list = RevocationList::connect(url).await.unwrap();
         assert_eq!(list.duration_until_stale(), Duration::ZERO);
     }
 }

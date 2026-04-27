@@ -2,9 +2,10 @@ use std::time::SystemTime;
 
 use crate::{
     android::{
-        android_ca_registry::{AndroidCaRegistry, AndroidCaRegistryError},
-        android_cert_chain::{AndroidCertChain, AndroidCertChainError},
-        android_revocation_list::{AndroidRevocationList, AndroidRevocationListError},
+        cert_chain_builder::{
+            CertChainBuilder, CertChainBuilderBuildChainError, CertChainBuilderNewError,
+        },
+        revocation_list::{RevocationList, RevocationListError},
     },
     utils::BundleIdentifier,
 };
@@ -26,17 +27,11 @@ const KM_ORIGIN_GENERATED: u64 = 0;
 
 #[derive(Debug, Error)]
 pub enum AndroidAttestationError {
-    #[error("ca registry: {0}")]
-    CaRegistry(#[source] AndroidCaRegistryError),
+    #[error("cert chain builder new error: {0}")]
+    CertChainBuilderNew(#[source] CertChainBuilderNewError),
 
     #[error("revocation list: {0}")]
-    RevocationList(#[source] AndroidRevocationListError),
-
-    #[error("cert chain: {0}")]
-    CertChain(#[source] AndroidCertChainError),
-
-    #[error("invalid ca root")]
-    InvalidCaRoot,
+    RevocationList(#[source] RevocationListError),
 
     #[error("invalid challenge")]
     InvalidChallenge,
@@ -82,6 +77,9 @@ pub enum AndroidAttestationError {
 
     #[error("bad certificate digest encoding: {0}")]
     BadCertificateDigestEncoding(#[source] DecodeError),
+
+    #[error("build chain error: {0}")]
+    CertChainBuilderBuildChain(#[source] CertChainBuilderBuildChainError),
 }
 
 pub struct AndroidAttestationOutput {
@@ -91,30 +89,32 @@ pub struct AndroidAttestationOutput {
 
 #[derive(Clone)]
 pub struct AndroidAttestationService {
-    ca_registry: AndroidCaRegistry,
-    revocation_list: AndroidRevocationList,
+    cert_chain_builder: CertChainBuilder,
+    revocation_list: RevocationList,
 }
 
 impl AndroidAttestationService {
     #[must_use]
     pub const fn new(
-        ca_registry: AndroidCaRegistry,
-        revocation_list: AndroidRevocationList,
+        cert_chain_builder: CertChainBuilder,
+        revocation_list: RevocationList,
     ) -> Self {
         Self {
-            ca_registry,
+            cert_chain_builder,
             revocation_list,
         }
     }
 
     /// Loads bundled Android attestation root CAs and fetches the default Google revocation feed.
     pub async fn from_defaults() -> Result<Self, AndroidAttestationError> {
-        let ca_registry =
-            AndroidCaRegistry::from_default_pem().map_err(AndroidAttestationError::CaRegistry)?;
-        let revocation_list = AndroidRevocationList::connect_google_default()
+        let cert_chain_builder = CertChainBuilder::new_from_default_pem()
+            .map_err(AndroidAttestationError::CertChainBuilderNew)?;
+
+        let revocation_list = RevocationList::connect_google_default()
             .await
             .map_err(AndroidAttestationError::RevocationList)?;
-        Ok(Self::new(ca_registry, revocation_list))
+
+        Ok(Self::new(cert_chain_builder, revocation_list))
     }
 
     /// Background refresh for the revocation list; see [`AndroidRevocationList::spawn_refresh_loop`].
@@ -130,8 +130,10 @@ impl AndroidAttestationService {
         app_version: &String,
         bundle_identifier: &BundleIdentifier,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
-        let cert_chain = AndroidCertChain::from_base64(base64_cert_chain)
-            .map_err(AndroidAttestationError::CertChain)?;
+        let cert_chain = self
+            .cert_chain_builder
+            .build_chain_from_base64(base64_cert_chain)
+            .map_err(AndroidAttestationError::CertChainBuilderBuildChain)?;
 
         if cert_chain
             .serials()
@@ -139,13 +141,6 @@ impl AndroidAttestationService {
             .any(|s| s.is_revoked(&self.revocation_list))
         {
             return Err(AndroidAttestationError::CertificateRevoked);
-        }
-
-        if !self
-            .ca_registry
-            .has_public_key(&cert_chain.root_certificate().public_key)
-        {
-            return Err(AndroidAttestationError::InvalidCaRoot);
         }
 
         if cert_chain.device_certificate().attestation_challenge()
@@ -241,16 +236,10 @@ impl AndroidAttestationService {
 impl AndroidAttestationError {
     pub fn reason_tag(&self) -> String {
         match self {
-            Self::CaRegistry(e) => {
-                format!("ca_registry_{}", e.reason_tag())
-            }
+            Self::CertChainBuilderNew(e) => "cert_chain_builder_new".to_string(),
             Self::RevocationList(e) => {
                 format!("revocation_list_{}", e.reason_tag())
             }
-            Self::CertChain(e) => {
-                format!("cert_chain_{}", e.reason_tag())
-            }
-            Self::InvalidCaRoot => "invalid_ca_root".to_string(),
             Self::InvalidChallenge => "invalid_challenge".to_string(),
             Self::LowSecurityLevel => "low_security_level".to_string(),
             Self::InconsistentSecurityLevels => "inconsistent_security_levels".to_string(),
@@ -272,16 +261,18 @@ impl AndroidAttestationError {
             Self::CertificateRevoked => "certificate_revoked".to_string(),
             Self::MissingCertificateDigest => "missing_certificate_digest".to_string(),
             Self::BadCertificateDigestEncoding(_) => "bad_certificate_digest_encoding".to_string(),
+            Self::CertChainBuilderBuildChain(e) => {
+                format!("cert_chain_builder_build_chain_{}", e.reason_tag())
+            }
         }
     }
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::CaRegistry(e) => e.is_internal_error(),
+            Self::CertChainBuilderNew(e) => true,
             Self::RevocationList(e) => e.is_internal_error(),
-            Self::CertChain(e) => e.is_internal_error(),
-            Self::InvalidCaRoot
-            | Self::InvalidChallenge
+            Self::CertChainBuilderBuildChain(e) => e.is_internal_error(),
+            Self::InvalidChallenge
             | Self::LowSecurityLevel
             | Self::InconsistentSecurityLevels
             | Self::DeviceNotLocked
@@ -295,6 +286,7 @@ impl AndroidAttestationError {
             | Self::InvalidPackageName
             | Self::CertificateRevoked => false,
             Self::MissingCertificateDigest | Self::BadCertificateDigestEncoding(_) => true,
+            _ => false,
         }
     }
 }

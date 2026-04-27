@@ -117,12 +117,12 @@ async fn extension_android_attestation()
         .with_body(r#"{"entries":{}}"#)
         .create();
     let url = format!("{}/status", server.url());
-    let list = attestation_gateway::android::AndroidRevocationList::connect(url)
+    let list = attestation_gateway::android::RevocationList::connect(url)
         .await
         .unwrap();
     Extension(
         attestation_gateway::android::AndroidAttestationService::new(
-            attestation_gateway::android::AndroidCaRegistry::from_default_pem().unwrap(),
+            attestation_gateway::android::CertChainBuilder::new_from_default_pem().unwrap(),
             list,
         ),
     )
