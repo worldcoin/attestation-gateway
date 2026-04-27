@@ -286,7 +286,6 @@ impl AndroidAttestationError {
             | Self::InvalidPackageName
             | Self::CertificateRevoked => false,
             Self::MissingCertificateDigest | Self::BadCertificateDigestEncoding(_) => true,
-            _ => false,
         }
     }
 }

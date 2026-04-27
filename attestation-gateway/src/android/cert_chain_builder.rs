@@ -45,8 +45,8 @@ pub enum CertChainBuilderBuildChainError {
     #[error("empty chain")]
     EmptyChain,
 
-    #[error("verification error: {0}")]
-    Verification(#[source] X509VerifyResult),
+    #[error("verification error: {0} at depth {1}")]
+    Verification(#[source] X509VerifyResult, u32),
 
     #[error("cert chain error: {0}")]
     CertChain(#[source] CertChainError),
@@ -161,6 +161,7 @@ impl CertChainBuilder {
                 .map_err(CertChainBuilderBuildChainError::CertChain),
             None => Err(CertChainBuilderBuildChainError::Verification(
                 context.error(),
+                context.error_depth(),
             )),
         }
     }
@@ -215,7 +216,7 @@ impl CertChainBuilderBuildChainError {
             Self::Base64Decoding(_) => "base64_decoding".to_string(),
             Self::DerDecoding => "der_decoding".to_string(),
             Self::EmptyChain => "empty_chain".to_string(),
-            Self::Verification(e) => format!("verification_{}", e.as_raw()),
+            Self::Verification(e, depth) => format!("verification_{}_{}", depth, e.as_raw()),
             Self::CertChain(e) => format!("cert_chain_{}", e.reason_tag()),
         }
     }
@@ -230,7 +231,7 @@ impl CertChainBuilderBuildChainError {
             Self::Base64Decoding(_)
             | Self::DerDecoding
             | Self::EmptyChain
-            | Self::Verification(_) => false,
+            | Self::Verification(_, _) => false,
             Self::CertChain(e) => e.is_internal_error(),
         }
     }
