@@ -8,6 +8,7 @@ mod android_attestation_service;
 mod cert_chain;
 mod cert_chain_builder;
 mod integrity_token_data;
+mod intermediate_cert;
 mod key_description;
 mod revocation_list;
 mod root_cert;
