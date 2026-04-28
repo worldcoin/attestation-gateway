@@ -236,7 +236,7 @@ impl AndroidAttestationService {
 impl AndroidAttestationError {
     pub fn reason_tag(&self) -> String {
         match self {
-            Self::CertChainBuilderNew(e) => "cert_chain_builder_new".to_string(),
+            Self::CertChainBuilderNew(_) => "cert_chain_builder_new".to_string(),
             Self::RevocationList(e) => {
                 format!("revocation_list_{}", e.reason_tag())
             }
@@ -269,7 +269,7 @@ impl AndroidAttestationError {
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::CertChainBuilderNew(e) => true,
+            Self::CertChainBuilderNew(_) => true,
             Self::RevocationList(e) => e.is_internal_error(),
             Self::CertChainBuilderBuildChain(e) => e.is_internal_error(),
             Self::InvalidChallenge
