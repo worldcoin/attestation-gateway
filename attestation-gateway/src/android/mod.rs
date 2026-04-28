@@ -7,11 +7,11 @@ use josekit::jws::ES256;
 mod android_attestation_service;
 mod cert_chain;
 mod cert_chain_builder;
-mod device_certificate;
 mod integrity_token_data;
 mod key_description;
 mod revocation_list;
-mod root_certificate;
+mod root_cert;
+mod session_cert;
 
 pub use android_attestation_service::AndroidAttestationService;
 

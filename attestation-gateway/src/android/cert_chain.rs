@@ -3,9 +3,9 @@ use openssl::x509::X509;
 use thiserror::Error;
 
 use crate::android::{
-    device_certificate::{DeviceCertificate, DeviceCertificateError},
     revocation_list::RevocationList,
-    root_certificate::{RootCertificate, RootCertificateError},
+    root_cert::{RootCert, RootCertError},
+    session_cert::{SessionCert, SessionCertError},
 };
 
 const NID_SERIAL_NUMBER: i32 = 105;
@@ -13,10 +13,10 @@ const NID_SERIAL_NUMBER: i32 = 105;
 #[derive(Debug, Error)]
 pub enum CertChainError {
     #[error("device certificate: {0}")]
-    DeviceCertificate(#[source] DeviceCertificateError),
+    SessionCert(#[source] SessionCertError),
 
     #[error("root certificate: {0}")]
-    RootCertificate(#[source] RootCertificateError),
+    RootCert(#[source] RootCertError),
 
     #[error("invalid chain length")]
     ChainLength,
@@ -62,8 +62,8 @@ impl CertSerial {
 }
 
 pub struct CertChain {
-    device_certificate: DeviceCertificate,
-    root_certificate: RootCertificate,
+    session_cert: SessionCert,
+    root_cert: RootCert,
     serials: Vec<CertSerial>,
 }
 
@@ -77,10 +77,9 @@ impl CertChain {
         let root_ca_cert = cert_chain.last().unwrap();
 
         let device_certificate =
-            DeviceCertificate::from_x509(leaf_cert).map_err(CertChainError::DeviceCertificate)?;
+            SessionCert::from_x509(leaf_cert).map_err(CertChainError::SessionCert)?;
 
-        let root_certificate =
-            RootCertificate::new(root_ca_cert).map_err(CertChainError::RootCertificate)?;
+        let root_certificate = RootCert::new(root_ca_cert).map_err(CertChainError::RootCert)?;
 
         let serials = cert_chain
             .iter()
@@ -88,8 +87,8 @@ impl CertChain {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
-            device_certificate,
-            root_certificate,
+            session_cert: device_certificate,
+            root_cert: root_certificate,
             serials,
         })
     }
@@ -101,12 +100,12 @@ impl CertChain {
         &self.serials
     }
 
-    pub const fn device_certificate(&self) -> &DeviceCertificate {
-        &self.device_certificate
+    pub const fn session_cert(&self) -> &SessionCert {
+        &self.session_cert
     }
 
-    pub const fn root_certificate(&self) -> &RootCertificate {
-        &self.root_certificate
+    pub const fn root_cert(&self) -> &RootCert {
+        &self.root_cert
     }
 }
 
@@ -145,10 +144,10 @@ fn certificate_serial(cert: &X509) -> Result<CertSerial, CertChainError> {
 impl CertChainError {
     pub fn reason_tag(&self) -> String {
         match self {
-            Self::DeviceCertificate(e) => {
+            Self::SessionCert(e) => {
                 format!("device_certificate_{}", e.reason_tag())
             }
-            Self::RootCertificate(e) => {
+            Self::RootCert(e) => {
                 format!("root_certificate_{}", e.reason_tag())
             }
             Self::ChainLength => "chain_length".to_string(),
@@ -159,8 +158,8 @@ impl CertChainError {
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::DeviceCertificate(e) => e.is_internal_error(),
-            Self::RootCertificate(e) => e.is_internal_error(),
+            Self::SessionCert(e) => e.is_internal_error(),
+            Self::RootCert(e) => e.is_internal_error(),
             Self::ChainLength | Self::IssuedToDecoding | Self::SerialNumber => false,
         }
     }
