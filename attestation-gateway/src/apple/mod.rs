@@ -14,6 +14,7 @@ use openssl::{
     x509::{
         X509, X509StoreContext,
         store::{X509Store, X509StoreBuilder},
+        verify::X509VerifyParam,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -230,7 +231,10 @@ pub fn decode_and_validate_initial_attestation(
 
     // Step 1: verify certificate chain against the provided root CA
     let root_cert = X509::from_pem(apple_root_ca_pem)?;
+    let store_param = X509VerifyParam::new()?;
+    // store_param.set_flags(X509VerifyFlags::X509_STRICT)?;
     let mut store_builder = X509StoreBuilder::new()?;
+    store_builder.set_param(&store_param)?;
     store_builder.add_cert(root_cert)?;
     let store = store_builder.build();
     internal_verify_cert_chain_with_store(&attestation, &store)?;

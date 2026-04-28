@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::android::key_description::{KeyDescription, KeyDescriptionError};
 
 #[derive(Debug, Error)]
-pub enum DeviceCertificateError {
+pub enum SessionCertError {
     #[error("attestation parsing: {0}")]
     AttestationParsing(#[source] KeyDescriptionError),
 
@@ -24,30 +24,29 @@ pub enum DeviceCertificateError {
     MissingAttestation,
 }
 
-pub struct DeviceCertificate {
+pub struct SessionCert {
     public_key: Vec<u8>,
     key_description: KeyDescription,
 }
 
-impl DeviceCertificate {
-    pub fn from_x509(x509: &X509) -> Result<Self, DeviceCertificateError> {
-        let der = x509
-            .to_der()
-            .map_err(|_| DeviceCertificateError::DerEncoding)?;
+impl SessionCert {
+    pub fn from_x509(x509: &X509) -> Result<Self, SessionCertError> {
+        let der = x509.to_der().map_err(|_| SessionCertError::DerEncoding)?;
 
         Self::from_der(&der)
     }
 
-    pub fn from_der(der: &[u8]) -> Result<Self, DeviceCertificateError> {
+    pub fn from_der(der: &[u8]) -> Result<Self, SessionCertError> {
         let (_, cert) =
-            X509Certificate::from_der(der).map_err(|_| DeviceCertificateError::DerDecoding)?;
+            X509Certificate::from_der(der).map_err(|_| SessionCertError::DerDecoding)?;
 
         let key_description = cert
             .get_extension_unique(&oid!(1.3.6.1.4.1.11129.2.1.17))
-            .map_err(|_| DeviceCertificateError::AttestationExtraction)?
-            .ok_or(DeviceCertificateError::MissingAttestation)?;
+            .map_err(|_| SessionCertError::AttestationExtraction)?
+            .ok_or(SessionCertError::MissingAttestation)?;
+
         let key_description = KeyDescription::from_der(key_description.value)
-            .map_err(DeviceCertificateError::AttestationParsing)?;
+            .map_err(SessionCertError::AttestationParsing)?;
 
         let public_key = Vec::from(cert.public_key().subject_public_key.data.clone());
 
@@ -100,7 +99,7 @@ impl DeviceCertificate {
     }
 }
 
-impl DeviceCertificateError {
+impl SessionCertError {
     pub fn reason_tag(&self) -> String {
         match self {
             Self::DerEncoding => "der_encoding".to_string(),
@@ -128,9 +127,9 @@ mod tests {
 
     use super::*;
 
-    fn cert_from_test_b64(b64: &str) -> DeviceCertificate {
+    fn cert_from_test_b64(b64: &str) -> SessionCert {
         let der = Base64.decode(b64).expect("test fixture base64");
-        DeviceCertificate::from_der(&der).expect("test fixture cert DER")
+        SessionCert::from_der(&der).expect("test fixture cert DER")
     }
 
     #[test]

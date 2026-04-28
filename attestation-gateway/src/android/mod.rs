@@ -5,21 +5,21 @@ use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
 mod android_attestation_service;
-mod android_ca_registry;
-mod android_cert_chain;
-mod android_revocation_list;
-mod device_certificate;
+mod cert_chain;
+mod cert_chain_builder;
 mod integrity_token_data;
 mod key_description;
-mod root_certificate;
+mod revocation_list;
+mod root_cert;
+mod session_cert;
 
 pub use android_attestation_service::AndroidAttestationService;
 
 #[allow(unused_imports)]
-pub use android_ca_registry::AndroidCaRegistry;
+pub use cert_chain_builder::CertChainBuilder;
 
 #[allow(unused_imports)]
-pub use android_revocation_list::AndroidRevocationList;
+pub use revocation_list::RevocationList;
 
 /// Verifies an Android Play Integrity token and returns a parsed `PlayIntegrityToken`
 ///
