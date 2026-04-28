@@ -17,8 +17,8 @@ pub enum SessionCertError {
     #[error("der decoding")]
     DerDecoding,
 
-    #[error("attestation extraction")]
-    AttestationExtraction,
+    #[error("duplicate attestation")]
+    DuplicateAttestation,
 
     #[error("missing attestation")]
     MissingAttestation,
@@ -42,7 +42,7 @@ impl SessionCert {
 
         let key_description = cert
             .get_extension_unique(&oid!(1.3.6.1.4.1.11129.2.1.17))
-            .map_err(|_| SessionCertError::AttestationExtraction)?
+            .map_err(|_| SessionCertError::DuplicateAttestation)?
             .ok_or(SessionCertError::MissingAttestation)?;
 
         let key_description = KeyDescription::from_der(key_description.value)
@@ -104,7 +104,7 @@ impl SessionCertError {
         match self {
             Self::DerEncoding => "der_encoding".to_string(),
             Self::DerDecoding => "der_decoding".to_string(),
-            Self::AttestationExtraction => "attestation_extraction".to_string(),
+            Self::DuplicateAttestation => "attestation_extraction".to_string(),
             Self::MissingAttestation => "missing_attestation".to_string(),
             Self::AttestationParsing(e) => {
                 format!("attestation_parsing_{}", e.reason_tag())
@@ -116,7 +116,7 @@ impl SessionCertError {
         match self {
             Self::AttestationParsing(e) => e.is_internal_error(),
             Self::DerEncoding | Self::DerDecoding => true,
-            Self::AttestationExtraction | Self::MissingAttestation => false,
+            Self::DuplicateAttestation | Self::MissingAttestation => false,
         }
     }
 }
