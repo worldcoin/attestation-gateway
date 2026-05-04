@@ -40,7 +40,7 @@ impl RateLimitService {
             device_public_key = cert_chain.device_cert().public_key_hex(),
         );
 
-        let (todays_count, _): (isize, bool) = redis::pipe()
+        let (todays_count, _expiration_set): (isize, bool) = redis::pipe()
             .atomic()
             .incr(&key, 1)
             .expire_at(key, tomorrow.timestamp() + 30)
