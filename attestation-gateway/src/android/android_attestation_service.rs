@@ -143,6 +143,7 @@ impl AndroidAttestationService {
     pub async fn verify(
         &mut self,
         base64_cert_chain: &[String],
+        aud: &str,
         nonce: &String,
         app_version: &String,
         bundle_identifier: &BundleIdentifier,
@@ -154,7 +155,7 @@ impl AndroidAttestationService {
 
         let rate_limit_passed = self
             .rate_limit_service
-            .try_incr(&cert_chain)
+            .try_incr(aud, &cert_chain)
             .await
             .map_err(AndroidAttestationError::InternalRateLimitServiceTryIncr)?;
 

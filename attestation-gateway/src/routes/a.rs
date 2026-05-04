@@ -122,6 +122,22 @@ pub async fn handler(
         });
     }
 
+    let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
+        if matches!(e, NonceDbError::NonceNotFound) {
+            RequestError {
+                code: ErrorCode::BadRequest,
+                details: Some("Nonce not found".to_string()),
+            }
+        } else {
+            tracing::error!(error = ?e, "Error consuming token nonce");
+
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: Some("Error consuming token nonce".to_string()),
+            }
+        }
+    })?;
+
     let challenge = format!("n={},av={}", request.nonce, request.app_version);
     let platform = request.bundle_identifier.platform();
 
@@ -148,6 +164,7 @@ pub async fn handler(
             let attestation_result = android_attestation
                 .verify(
                     &android_cert_chain,
+                    &token_details.aud,
                     &request.nonce,
                     &request.app_version,
                     &request.bundle_identifier,
@@ -192,22 +209,6 @@ pub async fn handler(
 
     metrics::counter!("attestation_gateway.attestation", "platform" => platform.to_string())
         .increment(1);
-
-    let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
-        if matches!(e, NonceDbError::NonceNotFound) {
-            RequestError {
-                code: ErrorCode::BadRequest,
-                details: Some("Nonce not found".to_string()),
-            }
-        } else {
-            tracing::error!(error = ?e, "Error consuming token nonce");
-
-            RequestError {
-                code: ErrorCode::InternalServerError,
-                details: Some("Error consuming token nonce".to_string()),
-            }
-        }
-    })?;
 
     let exp = match request.exp {
         Some(exp) => {

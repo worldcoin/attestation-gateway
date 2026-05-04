@@ -28,15 +28,17 @@ impl RateLimitService {
 
     pub async fn try_incr(
         &mut self,
+        aud: &str,
         cert_chain: &CertChain,
     ) -> Result<bool, RateLimitServiceTryIncrError> {
         let today = Utc::now().with_time(NaiveTime::MIN).single().unwrap();
         let tomorrow = today.checked_add_days(Days::new(1)).unwrap();
 
         let key = format!(
-            "android:rate_limit_service:{}:{}",
-            today.format("%Y-%m-%d"),
-            cert_chain.device_cert().public_key_hex(),
+            "android:rate_limit_service:{aud}:{date}:{device_public_key}",
+            aud = aud,
+            date = today.format("%Y-%m-%d"),
+            device_public_key = cert_chain.device_cert().public_key_hex(),
         );
 
         let count = self
