@@ -12,11 +12,8 @@ pub struct RateLimitService {
 
 #[derive(Debug, Error)]
 pub enum RateLimitServiceTryIncrError {
-    #[error("redis increrror: {0}")]
-    RedisIncr(#[source] RedisError),
-
-    #[error("redis expire at error: {0}")]
-    RedisExpireAt(#[source] RedisError),
+    #[error("redis error: {0}")]
+    Redis(#[source] RedisError),
 }
 
 impl RateLimitService {
@@ -43,16 +40,13 @@ impl RateLimitService {
             device_public_key = cert_chain.device_cert().public_key_hex(),
         );
 
-        let todays_count = self
-            .redis
+        let (todays_count, _): (isize, bool) = redis::pipe()
+            .atomic()
             .incr(&key, 1)
+            .expire_at(key, tomorrow.timestamp() + 30)
+            .query_async(&mut self.redis)
             .await
-            .map_err(RateLimitServiceTryIncrError::RedisIncr)?;
-
-        self.redis
-            .expire_at(&key, tomorrow.timestamp() + 30) // 30s for clock drift
-            .await
-            .map_err(RateLimitServiceTryIncrError::RedisExpireAt)?;
+            .map_err(RateLimitServiceTryIncrError::Redis)?;
 
         Ok(todays_count <= self.limit_per_day)
     }
@@ -61,8 +55,7 @@ impl RateLimitService {
 impl RateLimitServiceTryIncrError {
     pub fn reason_tag(&self) -> String {
         match self {
-            Self::RedisIncr(_) => "redis_incr".to_string(),
-            Self::RedisExpireAt(_) => "redis_expire_at".to_string(),
+            Self::Redis(_) => "redis".to_string(),
         }
     }
 }
