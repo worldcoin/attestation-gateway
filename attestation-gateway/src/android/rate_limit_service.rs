@@ -1,5 +1,5 @@
 use chrono::{Days, NaiveTime, Utc};
-use redis::{AsyncTypedCommands, RedisError, aio::ConnectionManager};
+use redis::{RedisError, aio::ConnectionManager};
 use thiserror::Error;
 
 use crate::android::cert_chain::CertChain;
