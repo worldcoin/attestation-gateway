@@ -3,7 +3,7 @@ use thiserror::Error;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 #[derive(Debug, Error)]
-pub enum RootCertificateError {
+pub enum RootCertError {
     #[error("der encoding error")]
     DerEncoding,
 
@@ -12,18 +12,15 @@ pub enum RootCertificateError {
 }
 
 #[derive(Debug)]
-pub struct RootCertificate {
+pub struct RootCert {
     pub public_key: Vec<u8>,
 }
 
-impl RootCertificate {
-    pub fn new(cert: &X509) -> Result<Self, RootCertificateError> {
-        let cert = cert
-            .to_der()
-            .map_err(|_| RootCertificateError::DerEncoding)?;
+impl RootCert {
+    pub fn new(cert: &X509) -> Result<Self, RootCertError> {
+        let cert = cert.to_der().map_err(|_| RootCertError::DerEncoding)?;
 
-        let (_, cert) =
-            X509Certificate::from_der(&cert).map_err(|_| RootCertificateError::DerDecoding)?;
+        let (_, cert) = X509Certificate::from_der(&cert).map_err(|_| RootCertError::DerDecoding)?;
 
         let public_key = Vec::from(cert.public_key().subject_public_key.data.clone());
 
@@ -31,7 +28,7 @@ impl RootCertificate {
     }
 }
 
-impl RootCertificateError {
+impl RootCertError {
     pub fn reason_tag(&self) -> String {
         match self {
             Self::DerEncoding => "der_encoding".to_string(),
