@@ -125,7 +125,10 @@ async fn extension_android_attestation(
         attestation_gateway::android::AndroidAttestationService::new(
             attestation_gateway::android::CertChainBuilder::new_from_default_pem().unwrap(),
             list,
-            attestation_gateway::android::rate_limit_service::RateLimitService::new(redis.clone()),
+            attestation_gateway::android::rate_limit_service::RateLimitService::new(
+                redis.clone(),
+                10,
+            ),
         ),
     )
 }

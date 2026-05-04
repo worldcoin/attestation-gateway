@@ -4,11 +4,10 @@ use thiserror::Error;
 
 use crate::android::cert_chain::CertChain;
 
-const RATE_LIMIT_PER_DAY: isize = 10;
-
 #[derive(Debug, Clone)]
 pub struct RateLimitService {
     redis: ConnectionManager,
+    limit_per_day: isize,
 }
 
 #[derive(Debug, Error)]
@@ -22,8 +21,11 @@ pub enum RateLimitServiceTryIncrError {
 
 impl RateLimitService {
     #[must_use]
-    pub fn new(redis: ConnectionManager) -> Self {
-        Self { redis }
+    pub fn new(redis: ConnectionManager, limit_per_day: isize) -> Self {
+        Self {
+            redis,
+            limit_per_day,
+        }
     }
 
     pub async fn try_incr(
@@ -52,7 +54,7 @@ impl RateLimitService {
             .await
             .map_err(RateLimitServiceTryIncrError::RedisExpireAt)?;
 
-        Ok(todays_count <= RATE_LIMIT_PER_DAY)
+        Ok(todays_count <= self.limit_per_day)
     }
 }
 

@@ -117,7 +117,10 @@ impl AndroidAttestationService {
     }
 
     /// Loads bundled Android attestation root CAs and fetches the default Google revocation feed.
-    pub async fn from_defaults(redis: ConnectionManager) -> Result<Self, AndroidAttestationError> {
+    pub async fn from_defaults(
+        redis: ConnectionManager,
+        limit_per_day: isize,
+    ) -> Result<Self, AndroidAttestationError> {
         let cert_chain_builder = CertChainBuilder::new_from_default_pem()
             .map_err(AndroidAttestationError::CertChainBuilderNew)?;
 
@@ -125,7 +128,7 @@ impl AndroidAttestationService {
             .await
             .map_err(AndroidAttestationError::RevocationList)?;
 
-        let rate_limit_service = RateLimitService::new(redis);
+        let rate_limit_service = RateLimitService::new(redis, limit_per_day);
 
         Ok(Self::new(
             cert_chain_builder,
