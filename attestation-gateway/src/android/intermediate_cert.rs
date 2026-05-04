@@ -44,6 +44,14 @@ impl IntermediateCert {
 
         Ok(Self { public_key })
     }
+
+    pub fn public_key(&self) -> &[u8] {
+        &self.public_key
+    }
+
+    pub fn public_key_hex(&self) -> String {
+        hex::encode(self.public_key())
+    }
 }
 
 impl IntermediateCertError {

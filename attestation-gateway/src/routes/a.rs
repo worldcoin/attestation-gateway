@@ -105,7 +105,7 @@ pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(mut nonce_db): Extension<NonceDb>,
-    Extension(android_attestation): Extension<AndroidAttestationService>,
+    Extension(mut android_attestation): Extension<AndroidAttestationService>,
     Extension(aws_config): Extension<SdkConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
@@ -145,12 +145,14 @@ pub async fn handler(
                 details: Some("Android attestation is required".to_string()),
             })?;
 
-            let attestation_result = android_attestation.verify(
-                &android_cert_chain,
-                &request.nonce,
-                &request.app_version,
-                &request.bundle_identifier,
-            );
+            let attestation_result = android_attestation
+                .verify(
+                    &android_cert_chain,
+                    &request.nonce,
+                    &request.app_version,
+                    &request.bundle_identifier,
+                )
+                .await;
 
             let attestation_output = match attestation_result {
                 Ok(attestation_output) => Ok(attestation_output),

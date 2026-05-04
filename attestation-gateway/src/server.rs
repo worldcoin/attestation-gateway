@@ -35,7 +35,7 @@ pub async fn start(
     };
 
     let nonce_db = NonceDb::new(redis.clone());
-    let android_attestation_service = AndroidAttestationService::from_defaults()
+    let android_attestation_service = AndroidAttestationService::from_defaults(redis.clone())
         .await
         .expect("failed to construct Android attestation service");
 

@@ -5,12 +5,14 @@ use crate::{
         cert_chain_builder::{
             CertChainBuilder, CertChainBuilderBuildChainError, CertChainBuilderNewError,
         },
+        rate_limit_service::{RateLimitService, RateLimitServiceTryIncrError},
         revocation_list::{RevocationList, RevocationListError},
     },
     utils::BundleIdentifier,
 };
 use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::{DateTime, Datelike, Utc};
+use redis::aio::ConnectionManager;
 use thiserror::Error;
 
 /// Android `KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT` — `KeyMint` / Keymaster in the TEE.
@@ -27,11 +29,17 @@ const KM_ORIGIN_GENERATED: u64 = 0;
 
 #[derive(Debug, Error)]
 pub enum AndroidAttestationError {
+    #[error("rate limit service try incr error: {0}")]
+    InternalRateLimitServiceTryIncr(#[source] RateLimitServiceTryIncrError),
+
     #[error("cert chain builder new error: {0}")]
     CertChainBuilderNew(#[source] CertChainBuilderNewError),
 
     #[error("revocation list: {0}")]
     RevocationList(#[source] RevocationListError),
+
+    #[error("rate limit exceeded")]
+    RateLimitExceeded,
 
     #[error("invalid challenge")]
     InvalidChallenge,
@@ -91,6 +99,7 @@ pub struct AndroidAttestationOutput {
 pub struct AndroidAttestationService {
     cert_chain_builder: CertChainBuilder,
     revocation_list: RevocationList,
+    rate_limit_service: RateLimitService,
 }
 
 impl AndroidAttestationService {
@@ -98,15 +107,17 @@ impl AndroidAttestationService {
     pub const fn new(
         cert_chain_builder: CertChainBuilder,
         revocation_list: RevocationList,
+        rate_limit_service: RateLimitService,
     ) -> Self {
         Self {
             cert_chain_builder,
             revocation_list,
+            rate_limit_service,
         }
     }
 
     /// Loads bundled Android attestation root CAs and fetches the default Google revocation feed.
-    pub async fn from_defaults() -> Result<Self, AndroidAttestationError> {
+    pub async fn from_defaults(redis: ConnectionManager) -> Result<Self, AndroidAttestationError> {
         let cert_chain_builder = CertChainBuilder::new_from_default_pem()
             .map_err(AndroidAttestationError::CertChainBuilderNew)?;
 
@@ -114,7 +125,13 @@ impl AndroidAttestationService {
             .await
             .map_err(AndroidAttestationError::RevocationList)?;
 
-        Ok(Self::new(cert_chain_builder, revocation_list))
+        let rate_limit_service = RateLimitService::new(redis);
+
+        Ok(Self::new(
+            cert_chain_builder,
+            revocation_list,
+            rate_limit_service,
+        ))
     }
 
     /// Background refresh for the revocation list; see [`AndroidRevocationList::spawn_refresh_loop`].
@@ -123,8 +140,8 @@ impl AndroidAttestationService {
         self.revocation_list.spawn_refresh_loop()
     }
 
-    pub fn verify(
-        &self,
+    pub async fn verify(
+        &mut self,
         base64_cert_chain: &[String],
         nonce: &String,
         app_version: &String,
@@ -134,6 +151,16 @@ impl AndroidAttestationService {
             .cert_chain_builder
             .build_chain_from_base64(base64_cert_chain)
             .map_err(AndroidAttestationError::CertChainBuilderBuildChain)?;
+
+        let rate_limit_passed = self
+            .rate_limit_service
+            .try_incr(&cert_chain)
+            .await
+            .map_err(AndroidAttestationError::InternalRateLimitServiceTryIncr)?;
+
+        if !rate_limit_passed {
+            return Err(AndroidAttestationError::RateLimitExceeded);
+        }
 
         if cert_chain
             .serials()
@@ -236,10 +263,14 @@ impl AndroidAttestationService {
 impl AndroidAttestationError {
     pub fn reason_tag(&self) -> String {
         match self {
+            Self::InternalRateLimitServiceTryIncr(e) => {
+                format!("rate_limit_service_try_incr_{}", e.reason_tag())
+            }
             Self::CertChainBuilderNew(_) => "cert_chain_builder_new".to_string(),
             Self::RevocationList(e) => {
                 format!("revocation_list_{}", e.reason_tag())
             }
+            Self::RateLimitExceeded => "rate_limit_exceeded".to_string(),
             Self::InvalidChallenge => "invalid_challenge".to_string(),
             Self::LowSecurityLevel => "low_security_level".to_string(),
             Self::InconsistentSecurityLevels => "inconsistent_security_levels".to_string(),
@@ -269,10 +300,11 @@ impl AndroidAttestationError {
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::CertChainBuilderNew(_) => true,
+            Self::InternalRateLimitServiceTryIncr(_) | Self::CertChainBuilderNew(_) => true,
             Self::RevocationList(e) => e.is_internal_error(),
             Self::CertChainBuilderBuildChain(e) => e.is_internal_error(),
-            Self::InvalidChallenge
+            Self::RateLimitExceeded
+            | Self::InvalidChallenge
             | Self::LowSecurityLevel
             | Self::InconsistentSecurityLevels
             | Self::DeviceNotLocked

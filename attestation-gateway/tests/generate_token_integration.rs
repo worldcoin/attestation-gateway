@@ -107,8 +107,9 @@ fn extension_nonce_db(
     Extension(attestation_gateway::nonces::NonceDb::new(redis.clone()))
 }
 
-async fn extension_android_attestation()
--> Extension<attestation_gateway::android::AndroidAttestationService> {
+async fn extension_android_attestation(
+    redis: &redis::aio::ConnectionManager,
+) -> Extension<attestation_gateway::android::AndroidAttestationService> {
     let mut server = mockito::Server::new_async().await;
     let _m = server
         .mock("GET", "/status")
@@ -124,6 +125,7 @@ async fn extension_android_attestation()
         attestation_gateway::android::AndroidAttestationService::new(
             attestation_gateway::android::CertChainBuilder::new_from_default_pem().unwrap(),
             list,
+            attestation_gateway::android::rate_limit_service::RateLimitService::new(redis.clone()),
         ),
     )
 }
@@ -153,7 +155,7 @@ async fn get_api_router() -> aide::axum::ApiRouter {
     attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension())
-        .layer(extension_android_attestation().await)
+        .layer(extension_android_attestation(&redis_ext.0).await)
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
         .layer(get_kinesis_extension().await)
@@ -655,7 +657,7 @@ async fn test_server_error_is_properly_logged() {
         attestation_gateway::routes::handler()
             .layer(get_aws_config_extension().await)
             .layer(get_local_config_extension())
-            .layer(extension_android_attestation().await)
+            .layer(extension_android_attestation(&redis_ext.0).await)
             .layer(extension_nonce_db(&redis_ext.0))
             .layer(redis_ext)
             .layer(get_kinesis_extension().await)
@@ -724,7 +726,7 @@ async fn test_apple_initial_attestation_e2e_success() {
     let api_router = attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension_with_pem(test_data.root_ca_pem))
-        .layer(extension_android_attestation().await)
+        .layer(extension_android_attestation(&redis_ext.0).await)
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
         .layer(get_kinesis_extension().await);
