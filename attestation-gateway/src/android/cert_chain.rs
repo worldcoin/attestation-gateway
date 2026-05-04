@@ -3,6 +3,7 @@ use openssl::x509::X509;
 use thiserror::Error;
 
 use crate::android::{
+    intermediate_cert::{IntermediateCert, IntermediateCertError},
     revocation_list::RevocationList,
     root_cert::{RootCert, RootCertError},
     session_cert::{SessionCert, SessionCertError},
@@ -14,6 +15,9 @@ const NID_SERIAL_NUMBER: i32 = 105;
 pub enum CertChainError {
     #[error("device certificate: {0}")]
     SessionCert(#[source] SessionCertError),
+
+    #[error("intermediate certificate: {0}")]
+    IntermediateCert(#[source] IntermediateCertError),
 
     #[error("root certificate: {0}")]
     RootCert(#[source] RootCertError),
@@ -63,6 +67,7 @@ impl CertSerial {
 
 pub struct CertChain {
     session_cert: SessionCert,
+    intermediate_certs: Vec<IntermediateCert>,
     root_cert: RootCert,
     serials: Vec<CertSerial>,
 }
@@ -73,13 +78,19 @@ impl CertChain {
             return Err(CertChainError::ChainLength);
         }
 
-        let leaf_cert = cert_chain.first().unwrap();
-        let root_ca_cert = cert_chain.last().unwrap();
+        let (session_cert, tail_certs) = cert_chain.split_first().unwrap();
+        let (root_cert, intermediate_certs) = tail_certs.split_last().unwrap();
 
-        let device_certificate =
-            SessionCert::from_x509(leaf_cert).map_err(CertChainError::SessionCert)?;
+        let session_cert =
+            SessionCert::from_x509(session_cert).map_err(CertChainError::SessionCert)?;
 
-        let root_certificate = RootCert::new(root_ca_cert).map_err(CertChainError::RootCert)?;
+        let intermediate_certs = intermediate_certs
+            .iter()
+            .map(|c| IntermediateCert::from_x509(c))
+            .collect::<Result<Vec<IntermediateCert>, IntermediateCertError>>()
+            .map_err(CertChainError::IntermediateCert)?;
+
+        let root_cert = RootCert::new(root_cert).map_err(CertChainError::RootCert)?;
 
         let serials = cert_chain
             .iter()
@@ -87,8 +98,9 @@ impl CertChain {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
-            session_cert: device_certificate,
-            root_cert: root_certificate,
+            session_cert,
+            intermediate_certs,
+            root_cert,
             serials,
         })
     }
@@ -147,6 +159,9 @@ impl CertChainError {
             Self::SessionCert(e) => {
                 format!("device_certificate_{}", e.reason_tag())
             }
+            Self::IntermediateCert(e) => {
+                format!("intermediate_certificate_{}", e.reason_tag())
+            }
             Self::RootCert(e) => {
                 format!("root_certificate_{}", e.reason_tag())
             }
@@ -159,6 +174,7 @@ impl CertChainError {
     pub const fn is_internal_error(&self) -> bool {
         match self {
             Self::SessionCert(e) => e.is_internal_error(),
+            Self::IntermediateCert(e) => e.is_internal_error(),
             Self::RootCert(e) => e.is_internal_error(),
             Self::ChainLength | Self::IssuedToDecoding | Self::SerialNumber => false,
         }
