@@ -41,7 +41,7 @@ impl RateLimitService {
             device_public_key = cert_chain.device_cert().public_key_hex(),
         );
 
-        let count = self
+        let todays_count = self
             .redis
             .incr(&key, 1)
             .await
@@ -52,7 +52,7 @@ impl RateLimitService {
             .await
             .map_err(RateLimitServiceTryIncrError::RedisExpireAt)?;
 
-        Ok(count <= RATE_LIMIT_PER_DAY)
+        Ok(todays_count <= RATE_LIMIT_PER_DAY)
     }
 }
 
