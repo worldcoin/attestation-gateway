@@ -7,7 +7,7 @@ use crate::android::cert_chain::CertChain;
 #[derive(Debug, Clone)]
 pub struct RateLimitService {
     redis: ConnectionManager,
-    limit_per_day: isize,
+    limit_per_day: Option<isize>,
 }
 
 #[derive(Debug, Error)]
@@ -18,7 +18,7 @@ pub enum RateLimitServiceTryIncrError {
 
 impl RateLimitService {
     #[must_use]
-    pub fn new(redis: ConnectionManager, limit_per_day: isize) -> Self {
+    pub fn new(redis: ConnectionManager, limit_per_day: Option<isize>) -> Self {
         Self {
             redis,
             limit_per_day,
@@ -30,6 +30,10 @@ impl RateLimitService {
         aud: &str,
         cert_chain: &CertChain,
     ) -> Result<bool, RateLimitServiceTryIncrError> {
+        let Some(limit) = self.limit_per_day else {
+            return Ok(true);
+        };
+
         let today = Utc::now().with_time(NaiveTime::MIN).single().unwrap();
         let tomorrow = today.checked_add_days(Days::new(1)).unwrap();
 
@@ -48,7 +52,7 @@ impl RateLimitService {
             .await
             .map_err(RateLimitServiceTryIncrError::Redis)?;
 
-        Ok(todays_count <= self.limit_per_day)
+        Ok(todays_count <= limit)
     }
 }
 

@@ -36,8 +36,10 @@ pub async fn start(
 
     let nonce_db = NonceDb::new(redis.clone());
 
-    let android_rate_limit_per_day =
-        env::var("ANDROID_RATE_LIMIT_PER_DAY").map_or(10, |v| v.parse().unwrap());
+    let android_rate_limit_per_day = env::var("ANDROID_RATE_LIMIT_PER_DAY")
+        .ok()
+        .map(|v| v.parse().expect("ANDROID_RATE_LIMIT_PER_DAY must be a valid isize"));
+
     let android_attestation_service =
         AndroidAttestationService::from_defaults(redis.clone(), android_rate_limit_per_day)
             .await

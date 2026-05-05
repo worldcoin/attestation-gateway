@@ -127,7 +127,7 @@ async fn extension_android_attestation(
             list,
             attestation_gateway::android::rate_limit_service::RateLimitService::new(
                 redis.clone(),
-                10,
+                Some(10),
             ),
         ),
     )
