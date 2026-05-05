@@ -67,6 +67,7 @@ impl CertSerial {
 
 pub struct CertChain {
     session_cert: SessionCert,
+    device_cert: IntermediateCert,
     intermediate_certs: Vec<IntermediateCert>,
     root_cert: RootCert,
     serials: Vec<CertSerial>,
@@ -79,10 +80,14 @@ impl CertChain {
         }
 
         let (session_cert, tail_certs) = cert_chain.split_first().unwrap();
+        let (device_cert, tail_certs) = tail_certs.split_first().unwrap();
         let (root_cert, intermediate_certs) = tail_certs.split_last().unwrap();
 
         let session_cert =
             SessionCert::from_x509(session_cert).map_err(CertChainError::SessionCert)?;
+
+        let device_cert =
+            IntermediateCert::from_x509(device_cert).map_err(CertChainError::IntermediateCert)?;
 
         let intermediate_certs = intermediate_certs
             .iter()
@@ -99,6 +104,7 @@ impl CertChain {
 
         Ok(Self {
             session_cert,
+            device_cert,
             intermediate_certs,
             root_cert,
             serials,
@@ -114,6 +120,10 @@ impl CertChain {
 
     pub const fn session_cert(&self) -> &SessionCert {
         &self.session_cert
+    }
+
+    pub const fn device_cert(&self) -> &IntermediateCert {
+        &self.device_cert
     }
 
     pub const fn root_cert(&self) -> &RootCert {

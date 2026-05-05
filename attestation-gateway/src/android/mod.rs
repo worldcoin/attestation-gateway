@@ -10,6 +10,7 @@ mod cert_chain_builder;
 mod integrity_token_data;
 mod intermediate_cert;
 mod key_description;
+pub mod rate_limit_service;
 mod revocation_list;
 mod root_cert;
 mod session_cert;

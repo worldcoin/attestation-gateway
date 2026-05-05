@@ -4,7 +4,7 @@ use aws_config::SdkConfig;
 
 use axum::{Extension, Json};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use josekit::jwt::JwtPayload;
 use openssl::{
     bn::BigNum,
@@ -77,7 +77,7 @@ impl IntegrityTokenPayload {
         cfn.insert("jwk".to_string(), josekit::Value::Object(cnf_jwk.into()));
 
         let mut payload = JwtPayload::new();
-        payload.set_issued_at(&SystemTime::now());
+        payload.set_issued_at(&Utc::now().round_subsecs(0).into());
         payload.set_issuer("attestation.worldcoin.org"); // TODO: what about attestation.worldcoin.dev?
         payload.set_expires_at(
             &DateTime::<Utc>::from_timestamp(self.exp, 0)
@@ -105,7 +105,7 @@ pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(mut nonce_db): Extension<NonceDb>,
-    Extension(android_attestation): Extension<AndroidAttestationService>,
+    Extension(mut android_attestation): Extension<AndroidAttestationService>,
     Extension(aws_config): Extension<SdkConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
@@ -121,6 +121,22 @@ pub async fn handler(
             details: Some("This bundle identifier is currently unavailable.".to_string()),
         });
     }
+
+    let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
+        if matches!(e, NonceDbError::NonceNotFound) {
+            RequestError {
+                code: ErrorCode::BadRequest,
+                details: Some("Nonce not found".to_string()),
+            }
+        } else {
+            tracing::error!(error = ?e, "Error consuming token nonce");
+
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: Some("Error consuming token nonce".to_string()),
+            }
+        }
+    })?;
 
     let challenge = format!("n={},av={}", request.nonce, request.app_version);
     let platform = request.bundle_identifier.platform();
@@ -145,12 +161,15 @@ pub async fn handler(
                 details: Some("Android attestation is required".to_string()),
             })?;
 
-            let attestation_result = android_attestation.verify(
-                &android_cert_chain,
-                &request.nonce,
-                &request.app_version,
-                &request.bundle_identifier,
-            );
+            let attestation_result = android_attestation
+                .verify(
+                    &android_cert_chain,
+                    &token_details.aud,
+                    &request.nonce,
+                    &request.app_version,
+                    &request.bundle_identifier,
+                )
+                .await;
 
             let attestation_output = match attestation_result {
                 Ok(attestation_output) => Ok(attestation_output),
@@ -190,22 +209,6 @@ pub async fn handler(
 
     metrics::counter!("attestation_gateway.attestation", "platform" => platform.to_string())
         .increment(1);
-
-    let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
-        if matches!(e, NonceDbError::NonceNotFound) {
-            RequestError {
-                code: ErrorCode::BadRequest,
-                details: Some("Nonce not found".to_string()),
-            }
-        } else {
-            tracing::error!(error = ?e, "Error consuming token nonce");
-
-            RequestError {
-                code: ErrorCode::InternalServerError,
-                details: Some("Error consuming token nonce".to_string()),
-            }
-        }
-    })?;
 
     let exp = match request.exp {
         Some(exp) => {

@@ -35,9 +35,15 @@ pub async fn start(
     };
 
     let nonce_db = NonceDb::new(redis.clone());
-    let android_attestation_service = AndroidAttestationService::from_defaults()
-        .await
-        .expect("failed to construct Android attestation service");
+
+    let android_rate_limit_per_day = env::var("ANDROID_RATE_LIMIT_PER_DAY")
+        .ok()
+        .map(|v| v.parse().expect("ANDROID_RATE_LIMIT_PER_DAY must be a valid isize"));
+
+    let android_attestation_service =
+        AndroidAttestationService::from_defaults(redis.clone(), android_rate_limit_per_day)
+            .await
+            .expect("failed to construct Android attestation service");
 
     #[expect(clippy::let_underscore_future)] // do not await, it's a handler for background tasks
     let _ = android_attestation_service.spawn_refresh_loop();
