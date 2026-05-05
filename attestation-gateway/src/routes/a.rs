@@ -4,7 +4,7 @@ use aws_config::SdkConfig;
 
 use axum::{Extension, Json};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use josekit::jwt::JwtPayload;
 use openssl::{
     bn::BigNum,
@@ -77,7 +77,7 @@ impl IntegrityTokenPayload {
         cfn.insert("jwk".to_string(), josekit::Value::Object(cnf_jwk.into()));
 
         let mut payload = JwtPayload::new();
-        payload.set_issued_at(&SystemTime::now());
+        payload.set_issued_at(&Utc::now().round_subsecs(0).into());
         payload.set_issuer("attestation.worldcoin.org"); // TODO: what about attestation.worldcoin.dev?
         payload.set_expires_at(
             &DateTime::<Utc>::from_timestamp(self.exp, 0)
