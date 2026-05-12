@@ -50,7 +50,7 @@ pub struct IntegrityTokenPayload {
 }
 
 impl IntegrityTokenPayload {
-    pub fn generate(&self) -> eyre::Result<JwtPayload> {
+    pub fn generate(&self, issuer: &str) -> eyre::Result<JwtPayload> {
         if self.cnf.len() != 65 {
             return Err(eyre::eyre!("Invalid device public key"));
         }
@@ -78,7 +78,7 @@ impl IntegrityTokenPayload {
 
         let mut payload = JwtPayload::new();
         payload.set_issued_at(&Utc::now().round_subsecs(0).into());
-        payload.set_issuer("attestation.worldcoin.org"); // TODO: what about attestation.worldcoin.dev?
+        payload.set_issuer(issuer);
         payload.set_expires_at(
             &DateTime::<Utc>::from_timestamp(self.exp, 0)
                 .ok_or(eyre::Error::msg("Unreachable exp conversion"))?
@@ -227,6 +227,7 @@ pub async fn handler(
     let integrity_token = generate_integrity_token(
         &mut redis,
         &aws_config,
+        &global_config.jwt_issuer,
         IntegrityTokenPayload {
             v: "1".to_string(),
             platform,
@@ -279,9 +280,10 @@ fn validate_apple_attestation_and_get_device_public_key(
 async fn generate_integrity_token(
     redis: &mut ConnectionManager,
     aws_config: &SdkConfig,
+    issuer: &str,
     integrity_token_payload: IntegrityTokenPayload,
 ) -> Result<String, RequestError> {
-    let integrity_token_payload = integrity_token_payload.generate().map_err(|e| {
+    let integrity_token_payload = integrity_token_payload.generate(issuer).map_err(|e| {
         tracing::error!(error = ?e, "Error generating integrity token payload");
         RequestError {
             code: ErrorCode::InternalServerError,
