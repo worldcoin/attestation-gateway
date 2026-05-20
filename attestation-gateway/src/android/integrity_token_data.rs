@@ -35,10 +35,17 @@ pub struct RecentDeviceActivity {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DeviceAttributes {
+    pub sdk_version: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceIntegrity {
     pub device_recognition_verdict: Option<Vec<String>>,
     pub legacy_device_recognition_verdict: Option<Vec<String>>,
     pub recent_device_activity: Option<RecentDeviceActivity>,
+    pub device_attributes: Option<DeviceAttributes>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -391,6 +398,7 @@ mod tests {
                 device_recognition_verdict: Some(vec!["MEETS_DEVICE_INTEGRITY".to_string()]),
                 legacy_device_recognition_verdict: None,
                 recent_device_activity: None,
+                device_attributes: None,
             },
             environment_details: Some(EnvironmentDetails {
                 app_access_risk_verdict: AppAccessRiskVerdict {
@@ -791,6 +799,121 @@ mod tests {
         let no_apps_detected: EnvironmentDetails =
             serde_json::from_str(no_apps_detected_json).unwrap();
         assert_eq!(no_apps_detected.app_access_risk_verdict.apps_detected, None);
+    }
+
+    /// Tests parsing of the three optional Play Integrity verdict fields that are opt-in via the
+    /// Play Console: `deviceIntegrity.recentDeviceActivity.deviceActivityLevel`,
+    /// `deviceIntegrity.deviceAttributes.sdkVersion`, and `environmentDetails.playProtectVerdict`.
+    ///
+    /// Reference: <https://developer.android.com/google/play/integrity/verdicts#optional-device-information>
+    #[test]
+    fn test_optional_verdict_fields_parsed_as_expected() {
+        // cspell:disable
+        let token_payload_str = r#"
+        {
+            "requestDetails": {
+                "requestPackageName": "com.worldcoin.staging",
+                "nonce": "i_am_a_sample_request_hash",
+                "timestampMillis": "1745276275999"
+            },
+            "appIntegrity": {
+                "appRecognitionVerdict": "PLAY_RECOGNIZED",
+                "packageName": "com.worldcoin.staging",
+                "certificateSha256Digest": [
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"
+                ],
+                "versionCode": "25700"
+            },
+            "deviceIntegrity": {
+                "deviceRecognitionVerdict": [
+                    "MEETS_DEVICE_INTEGRITY",
+                    "MEETS_STRONG_INTEGRITY"
+                ],
+                "recentDeviceActivity": {
+                    "deviceActivityLevel": "LEVEL_2"
+                },
+                "deviceAttributes": {
+                    "sdkVersion": 33
+                }
+            },
+            "accountDetails": {
+                "appLicensingVerdict": "LICENSED"
+            },
+            "environmentDetails": {
+                "appAccessRiskVerdict": {
+                    "appsDetected": [
+                        "KNOWN_INSTALLED",
+                        "UNKNOWN_INSTALLED"
+                    ]
+                },
+                "playProtectVerdict": "NO_ISSUES"
+            }
+        }"#;
+        // cspell:enable
+
+        let token = PlayIntegrityToken::from_json(token_payload_str).unwrap();
+
+        let activity = token
+            .device_integrity
+            .recent_device_activity
+            .expect("recent_device_activity should be present");
+        assert_eq!(activity.device_activity_level, "LEVEL_2");
+
+        let attributes = token
+            .device_integrity
+            .device_attributes
+            .expect("device_attributes should be present");
+        assert_eq!(attributes.sdk_version, Some(33));
+
+        let env = token
+            .environment_details
+            .expect("environment_details should be present");
+        assert_eq!(env.play_protect_verdict, Some(PlayProtectVerdict::NoIssues));
+    }
+
+    /// Tests that the optional verdict fields are absent before opt-in (current production state)
+    /// and that the absence does not break parsing.
+    #[test]
+    fn test_optional_verdict_fields_absent_parses_cleanly() {
+        let token_payload_str = r#"
+        {
+            "requestDetails": {
+                "requestPackageName": "com.worldcoin.staging",
+                "nonce": "i_am_a_sample_request_hash",
+                "timestampMillis": "1745276275999"
+            },
+            "appIntegrity": {
+                "appRecognitionVerdict": "PLAY_RECOGNIZED",
+                "packageName": "com.worldcoin.staging",
+                "certificateSha256Digest": [
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"
+                ],
+                "versionCode": "25700"
+            },
+            "deviceIntegrity": {
+                "deviceRecognitionVerdict": ["MEETS_DEVICE_INTEGRITY"]
+            },
+            "accountDetails": {
+                "appLicensingVerdict": "LICENSED"
+            },
+            "environmentDetails": {
+                "appAccessRiskVerdict": {
+                    "appsDetected": ["KNOWN_INSTALLED", "UNKNOWN_INSTALLED"]
+                }
+            }
+        }"#;
+
+        let token = PlayIntegrityToken::from_json(token_payload_str).unwrap();
+
+        assert!(token.device_integrity.recent_device_activity.is_none());
+        assert!(token.device_integrity.device_attributes.is_none());
+        assert!(
+            token
+                .environment_details
+                .unwrap()
+                .play_protect_verdict
+                .is_none()
+        );
     }
 
     /// Tests that a token with an `unevaluated` verdict is properly parsed and integrity failure is logged as such.

@@ -22,6 +22,7 @@ pub struct GlobalConfig {
     pub kinesis_stream_arn: Option<String>,
     pub apple_root_ca_pem: Vec<u8>,
     pub aud_whitelist: Vec<String>,
+    pub jwt_issuer: String,
 }
 
 impl GlobalConfig {
@@ -63,6 +64,9 @@ impl GlobalConfig {
             |val| val.split(',').map(str::to_string).collect(),
         );
 
+        let jwt_issuer =
+            env::var("JWT_ISSUER").unwrap_or_else(|_| "attestation.worldcoin.org".to_string());
+
         tracing::info!(
             "Running with enabled bundle identifiers: {:?}",
             enabled_bundle_identifiers
@@ -78,6 +82,7 @@ impl GlobalConfig {
             kinesis_stream_arn,
             apple_root_ca_pem: include_bytes!("apple/apple_app_attestation_root_ca.pem").to_vec(),
             aud_whitelist,
+            jwt_issuer,
         }
     }
 }
