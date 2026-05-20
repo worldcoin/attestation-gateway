@@ -28,9 +28,9 @@ pub enum KeyDescriptionError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyDescription {
     pub attestation_version: u64,
-    pub attestation_security_level: SecuirtyLevel,
+    pub attestation_security_level: SecurityLevel,
     pub key_security_version: u64,
-    pub key_security_level: SecuirtyLevel,
+    pub key_security_level: SecurityLevel,
     pub attestation_challenge: String,
     pub unique_id: Vec<u8>,
     pub software_enforced: AuthorizationList,
@@ -95,7 +95,7 @@ pub struct AuthorizationList {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SecuirtyLevel {
+pub enum SecurityLevel {
     Software = 0,
     TrustedEnvironment = 1,
     StrongBox = 2,
@@ -140,9 +140,9 @@ impl KeyDescription {
     pub fn from_asn1(v: &KeyDescriptionAsn1) -> Result<Self, KeyDescriptionError> {
         Ok(Self {
             attestation_version: v.attestation_version,
-            attestation_security_level: SecuirtyLevel::from_asn1(&v.attestation_security_level)?,
+            attestation_security_level: SecurityLevel::from_asn1(&v.attestation_security_level)?,
             key_security_version: v.key_security_version,
-            key_security_level: SecuirtyLevel::from_asn1(&v.key_security_level)?,
+            key_security_level: SecurityLevel::from_asn1(&v.key_security_level)?,
             attestation_challenge: parse_utf8(v.attestation_challenge)?,
             unique_id: v.unique_id.to_vec(),
             software_enforced: AuthorizationList::from_asn1(&v.software_enforced)?,
@@ -158,14 +158,14 @@ impl KeyDescription {
     }
 }
 
-impl SecuirtyLevel {
+impl SecurityLevel {
     pub fn from_asn1(v: &asn1::Enumerated) -> Result<Self, KeyDescriptionError> {
         let v = v.value();
 
         match v {
-            0 => Ok(SecuirtyLevel::Software),
-            1 => Ok(SecuirtyLevel::TrustedEnvironment),
-            2 => Ok(SecuirtyLevel::StrongBox),
+            0 => Ok(SecurityLevel::Software),
+            1 => Ok(SecurityLevel::TrustedEnvironment),
+            2 => Ok(SecurityLevel::StrongBox),
             _ => Err(KeyDescriptionError::UnknownSecurityLevel(v)),
         }
     }

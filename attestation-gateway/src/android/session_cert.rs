@@ -5,7 +5,7 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 use thiserror::Error;
 
 use crate::android::key_description::{
-    KeyDescription, KeyDescriptionError, SecuirtyLevel, VerifiedBootState,
+    KeyDescription, KeyDescriptionError, SecurityLevel, VerifiedBootState,
 };
 
 #[derive(Debug, Error)]
@@ -66,11 +66,11 @@ impl SessionCert {
         self.key_description.attestation_challenge.clone()
     }
 
-    pub fn attestation_security_level(&self) -> SecuirtyLevel {
+    pub fn attestation_security_level(&self) -> SecurityLevel {
         self.key_description.attestation_security_level.clone()
     }
 
-    pub fn key_mint_security_level(&self) -> SecuirtyLevel {
+    pub fn key_mint_security_level(&self) -> SecurityLevel {
         self.key_description.key_security_level.clone()
     }
 
@@ -163,7 +163,7 @@ mod tests {
         );
 
         assert!(cert.public_key().len() > 0);
-        assert!(cert.attestation_security_level() == SecuirtyLevel::StrongBox);
+        assert!(cert.attestation_security_level() == SecurityLevel::StrongBox);
         assert_eq!(cert.device_locked(), Some(false));
 
         assert_eq!(
@@ -179,7 +179,7 @@ mod tests {
         );
 
         assert!(cert.public_key().len() > 0);
-        assert!(cert.attestation_security_level() == SecuirtyLevel::TrustedEnvironment);
+        assert!(cert.attestation_security_level() == SecurityLevel::TrustedEnvironment);
         assert_eq!(cert.device_locked(), Some(true));
         assert_eq!(cert.os_patch_level(), Some(202503));
     }
@@ -191,7 +191,7 @@ mod tests {
         );
 
         assert!(cert.public_key().len() > 0);
-        assert!(cert.attestation_security_level() == SecuirtyLevel::TrustedEnvironment);
+        assert!(cert.attestation_security_level() == SecurityLevel::TrustedEnvironment);
         assert_eq!(cert.device_locked(), Some(true));
     }
 

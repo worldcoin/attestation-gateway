@@ -5,7 +5,7 @@ use crate::{
         cert_chain_builder::{
             CertChainBuilder, CertChainBuilderBuildChainError, CertChainBuilderNewError,
         },
-        key_description::{SecuirtyLevel, VerifiedBootState},
+        key_description::{SecurityLevel, VerifiedBootState},
         rate_limit_service::{RateLimitService, RateLimitServiceTryIncrError},
         revocation_list::{RevocationList, RevocationListError},
     },
@@ -174,7 +174,7 @@ impl AndroidAttestationService {
 
         if !matches!(
             cert_chain.session_cert().attestation_security_level(),
-            SecuirtyLevel::TrustedEnvironment | SecuirtyLevel::StrongBox
+            SecurityLevel::TrustedEnvironment | SecurityLevel::StrongBox
         ) {
             return Err(AndroidAttestationError::LowSecurityLevel);
         }
