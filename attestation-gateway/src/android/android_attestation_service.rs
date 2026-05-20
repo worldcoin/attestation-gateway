@@ -5,6 +5,7 @@ use crate::{
         cert_chain_builder::{
             CertChainBuilder, CertChainBuilderBuildChainError, CertChainBuilderNewError,
         },
+        key_description::{SecurityLevel, VerifiedBootState},
         rate_limit_service::{RateLimitService, RateLimitServiceTryIncrError},
         revocation_list::{RevocationList, RevocationListError},
     },
@@ -14,15 +15,6 @@ use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::{DateTime, Datelike, Utc};
 use redis::aio::ConnectionManager;
 use thiserror::Error;
-
-/// Android `KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT` — `KeyMint` / Keymaster in the TEE.
-const KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT: u32 = 1;
-
-/// Android `KM_SECURITY_LEVEL_STRONG_BOX` — `KeyMint` / Keymaster in `StrongBox`.
-const KM_SECURITY_LEVEL_STRONG_BOX: u32 = 2;
-
-/// Android `KM_VERIFIED_BOOT_VERIFIED` — verified boot succeeded (boot hash matches expected).
-const KM_VERIFIED_BOOT_VERIFIED: u32 = 0;
 
 /// Android `KM_ORIGIN_GENERATED` — key generated inside secure `KeyMint` / Keymaster (TEE / `StrongBox`), not imported.
 const KM_ORIGIN_GENERATED: u64 = 0;
@@ -182,7 +174,7 @@ impl AndroidAttestationService {
 
         if !matches!(
             cert_chain.session_cert().attestation_security_level(),
-            KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT | KM_SECURITY_LEVEL_STRONG_BOX
+            SecurityLevel::TrustedEnvironment | SecurityLevel::StrongBox
         ) {
             return Err(AndroidAttestationError::LowSecurityLevel);
         }
@@ -198,7 +190,7 @@ impl AndroidAttestationService {
             .verified_boot_state()
             .ok_or(AndroidAttestationError::MissingRootOfTrust)?;
 
-        if verified_boot_state != KM_VERIFIED_BOOT_VERIFIED {
+        if verified_boot_state != VerifiedBootState::Verified {
             return Err(AndroidAttestationError::BootNotVerified);
         }
 
@@ -220,11 +212,6 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::KeyNotGeneratedInSecureHardware);
         }
 
-        let attestation_signature_digests = cert_chain
-            .session_cert()
-            .attestation_signature_digests()
-            .ok_or(AndroidAttestationError::MissingAttestationSignatureDigests)?;
-
         let expected_attestation_signature_digest = bundle_identifier
             .certificate_sha256_digest_base64()
             .ok_or(AndroidAttestationError::MissingCertificateDigest)?;
@@ -233,17 +220,17 @@ impl AndroidAttestationService {
             .decode(expected_attestation_signature_digest)
             .map_err(AndroidAttestationError::BadCertificateDigestEncoding)?;
 
-        if !attestation_signature_digests.contains(&expected_attestation_signature_digest) {
+        if !cert_chain
+            .session_cert()
+            .contains_attestation_signature_digests(&expected_attestation_signature_digest)
+        {
             return Err(AndroidAttestationError::InvalidAttestationSignatureDigest);
         }
 
-        let package_names = cert_chain.session_cert().package_names();
-        if package_names.is_empty() {
-            return Err(AndroidAttestationError::MissingPackageName);
-        }
-
-        let expected = bundle_identifier.to_string();
-        if !package_names.iter().any(|name| name == &expected) {
+        if !cert_chain
+            .session_cert()
+            .contains_package_name(&bundle_identifier.to_string())
+        {
             return Err(AndroidAttestationError::InvalidPackageName);
         }
 
