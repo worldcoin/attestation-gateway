@@ -31,10 +31,7 @@ impl RootCert {
 
         let public_key = Vec::from(cert.public_key().subject_public_key.data.clone());
 
-        Ok(Self {
-            public_key,
-            serial,
-        })
+        Ok(Self { public_key, serial })
     }
 
     pub const fn serial(&self) -> &CertSerial {
