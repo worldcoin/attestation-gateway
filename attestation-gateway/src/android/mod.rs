@@ -14,6 +14,7 @@ mod key_description;
 pub mod rate_limit_service;
 mod revocation_list;
 mod root_cert;
+mod serde_hex;
 mod session_cert;
 
 pub use android_attestation_service::AndroidAttestationService;

@@ -1,5 +1,6 @@
 use der_parser::oid;
 use openssl::x509::X509;
+use serde::Serialize;
 use thiserror::Error;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
@@ -20,7 +21,9 @@ pub enum IntermediateCertError {
     Serial(#[source] CertSerialError),
 }
 
+#[derive(Serialize)]
 pub struct IntermediateCert {
+    #[serde(with = "crate::android::serde_hex")]
     public_key: Vec<u8>,
     serial: CertSerial,
 }

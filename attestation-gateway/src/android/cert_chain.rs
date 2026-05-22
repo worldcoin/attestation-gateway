@@ -1,5 +1,5 @@
 use openssl::x509::X509;
-
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::android::{
@@ -21,7 +21,7 @@ pub enum CertSerialError {
 }
 
 /// ASN.1 serial number in the two string forms used as keys in Google's attestation status JSON.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CertSerial {
     /// Certificate issued to contains serial number too
     pub issued_to: Vec<String>,
@@ -113,6 +113,7 @@ pub enum CertChainError {
     ChainLength,
 }
 
+#[derive(Serialize)]
 pub struct CertChain {
     session_cert: SessionCert,
     device_cert: IntermediateCert,

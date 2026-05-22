@@ -1,8 +1,8 @@
 use der_parser::asn1_rs::oid;
 use openssl::x509::X509;
-use x509_parser::prelude::{FromDer, X509Certificate};
-
+use serde::Serialize;
 use thiserror::Error;
+use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::android::cert_chain::{CertSerial, CertSerialError};
 use crate::android::key_description::{
@@ -30,7 +30,9 @@ pub enum SessionCertError {
     Serial(#[source] CertSerialError),
 }
 
+#[derive(Serialize)]
 pub struct SessionCert {
+    #[serde(with = "crate::android::serde_hex")]
     public_key: Vec<u8>,
     key_description: KeyDescription,
     serial: CertSerial,

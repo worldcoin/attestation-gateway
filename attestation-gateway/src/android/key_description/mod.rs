@@ -1,5 +1,6 @@
 use std::string::FromUtf8Error;
 
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::android::key_description::key_description_asn1::{
@@ -25,19 +26,20 @@ pub enum KeyDescriptionError {
     UnknownVerifiedBootState(u32),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct KeyDescription {
     pub attestation_version: u64,
     pub attestation_security_level: SecurityLevel,
     pub key_security_version: u64,
     pub key_security_level: SecurityLevel,
     pub attestation_challenge: String,
+    #[serde(with = "crate::android::serde_hex")]
     pub unique_id: Vec<u8>,
     pub software_enforced: AuthorizationList,
     pub hardware_enforced: AuthorizationList,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AuthorizationList {
     pub purpose: Option<Vec<u64>>,
     pub algorithm: Option<u64>,
@@ -91,25 +93,28 @@ pub struct AuthorizationList {
     pub boot_patch_level: Option<u64>,
     pub device_unique_attestation: bool,
     pub attestation_id_second_imei: Option<String>,
+    #[serde(with = "crate::android::serde_hex::option")]
     pub module_hash: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum SecurityLevel {
     Software = 0,
     TrustedEnvironment = 1,
     StrongBox = 2,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RootOfTrust {
+    #[serde(with = "crate::android::serde_hex")]
     pub verified_boot_key: Vec<u8>,
     pub device_locked: bool,
     pub verified_boot_state: VerifiedBootState,
+    #[serde(with = "crate::android::serde_hex::option")]
     pub verified_boot_hash: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum VerifiedBootState {
     Verified = 0,
     SelfSigned = 1,
@@ -117,13 +122,14 @@ pub enum VerifiedBootState {
     Failed = 3,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AttestationApplicationId {
     pub package_infos: Vec<AttestationPackageInfo>,
+    #[serde(with = "crate::android::serde_hex::vec")]
     pub signature_digests: Vec<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AttestationPackageInfo {
     pub package_name: String,
     pub version: u64,
