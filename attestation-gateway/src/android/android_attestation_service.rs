@@ -164,11 +164,7 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::RateLimitExceeded);
         }
 
-        if cert_chain
-            .serials()
-            .iter()
-            .any(|s| s.is_revoked(&self.revocation_list))
-        {
+        if cert_chain.any_serial_revoked(&self.revocation_list) {
             return Err(AndroidAttestationError::CertificateRevoked);
         }
 

@@ -4,6 +4,7 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 
 use thiserror::Error;
 
+use crate::android::cert_chain::{CertSerial, CertSerialError};
 use crate::android::key_description::{
     KeyDescription, KeyDescriptionError, SecurityLevel, VerifiedBootState,
 };
@@ -24,21 +25,37 @@ pub enum SessionCertError {
 
     #[error("missing attestation")]
     MissingAttestation,
+
+    #[error("serial: {0}")]
+    Serial(#[source] CertSerialError),
 }
 
 pub struct SessionCert {
     public_key: Vec<u8>,
     key_description: KeyDescription,
+    serial: CertSerial,
 }
 
 impl SessionCert {
     pub fn from_x509(x509: &X509) -> Result<Self, SessionCertError> {
+        let serial = CertSerial::from_x509(x509).map_err(SessionCertError::Serial)?;
         let der = x509.to_der().map_err(|_| SessionCertError::DerEncoding)?;
 
-        Self::from_der(&der)
+        Self::from_der_with_serial(&der, serial)
     }
 
     pub fn from_der(der: &[u8]) -> Result<Self, SessionCertError> {
+        Self::from_der_with_serial(
+            der,
+            CertSerial {
+                issued_to: vec![],
+                decimal: String::new(),
+                hex: String::new(),
+            },
+        )
+    }
+
+    fn from_der_with_serial(der: &[u8], serial: CertSerial) -> Result<Self, SessionCertError> {
         let (_, cert) =
             X509Certificate::from_der(der).map_err(|_| SessionCertError::DerDecoding)?;
 
@@ -55,7 +72,12 @@ impl SessionCert {
         Ok(Self {
             public_key,
             key_description,
+            serial,
         })
+    }
+
+    pub const fn serial(&self) -> &CertSerial {
+        &self.serial
     }
 
     pub fn public_key(&self) -> Vec<u8> {
@@ -123,12 +145,13 @@ impl SessionCertError {
             Self::AttestationParsing(e) => {
                 format!("attestation_parsing_{}", e.reason_tag())
             }
+            Self::Serial(e) => format!("serial_{}", e.reason_tag()),
         }
     }
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::AttestationParsing(_) => false,
+            Self::AttestationParsing(_) | Self::Serial(_) => false,
             Self::DerEncoding | Self::DerDecoding => true,
             Self::AttestationExtraction | Self::MissingAttestation => false,
         }
