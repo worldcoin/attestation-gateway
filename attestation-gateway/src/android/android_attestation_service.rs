@@ -2,7 +2,10 @@ use std::time::SystemTime;
 
 use crate::{
     android::{
-        analytics_service::{AnalyticsService, AnalyticsServiceNewError},
+        analytics_service::{
+            AnalyticsService, AnalyticsServiceNewError, AndroidAttestationAnalyticsEvent,
+        },
+        cert_chain::CertChain,
         cert_chain_builder::{
             CertChainBuilder, CertChainBuilderBuildChainError, CertChainBuilderNewError,
         },
@@ -149,21 +152,47 @@ impl AndroidAttestationService {
         app_version: &String,
         bundle_identifier: &BundleIdentifier,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
-        let cert_chain = self
+        let build_result = self
             .cert_chain_builder
-            .build_chain_from_base64(base64_cert_chain)
-            .map_err(AndroidAttestationError::CertChainBuilderBuildChain)?;
+            .build_chain_from_base64(base64_cert_chain);
 
-        let rate_limit_passed = self
-            .rate_limit_service
-            .try_incr(aud, &cert_chain)
-            .await
-            .map_err(AndroidAttestationError::InternalRateLimitServiceTryIncr)?;
+        let (cert_chain, verify_result) = match build_result {
+            Err(e) => (
+                None,
+                Err(AndroidAttestationError::CertChainBuilderBuildChain(e)),
+            ),
+            Ok(chain) => {
+                let verify_result = self
+                    .verify_chain(&chain, aud, nonce, app_version, bundle_identifier)
+                    .await;
+                (Some(chain), verify_result)
+            }
+        };
 
-        if !rate_limit_passed {
-            return Err(AndroidAttestationError::RateLimitExceeded);
-        }
+        self.analytics_service
+            .record(&AndroidAttestationAnalyticsEvent {
+                base64_cert_chain: base64_cert_chain.to_vec(),
+                aud: aud.to_string(),
+                nonce: nonce.clone(),
+                app_version: app_version.clone(),
+                bundle_identifier: bundle_identifier.clone(),
+                cert_chain: cert_chain.as_ref(),
+                error: verify_result.as_ref().err().map(ToString::to_string),
+                timestamp: SystemTime::now(),
+            })
+            .await;
 
+        verify_result
+    }
+
+    async fn verify_chain(
+        &mut self,
+        cert_chain: &CertChain,
+        aud: &str,
+        nonce: &String,
+        app_version: &String,
+        bundle_identifier: &BundleIdentifier,
+    ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
         if cert_chain.any_serial_revoked(&self.revocation_list) {
             return Err(AndroidAttestationError::CertificateRevoked);
         }
@@ -245,6 +274,16 @@ impl AndroidAttestationService {
                     let now = now.year_ce().1 * 100 + now.month();
                     now - os_patch_level
                 });
+
+        let rate_limit_passed = self
+            .rate_limit_service
+            .try_incr(aud, cert_chain)
+            .await
+            .map_err(AndroidAttestationError::InternalRateLimitServiceTryIncr)?;
+
+        if !rate_limit_passed {
+            return Err(AndroidAttestationError::RateLimitExceeded);
+        }
 
         Ok(AndroidAttestationOutput {
             device_public_key: cert_chain.session_cert().public_key(),
