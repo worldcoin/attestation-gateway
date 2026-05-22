@@ -314,12 +314,11 @@ mod tests {
         let json = serde_json::to_value(&cert_chain).expect("cert chain should serialize to JSON");
 
         assert!(json.get("session_cert").is_some());
-        assert!(json
-            .pointer("/session_cert/serial/decimal")
-            .is_some());
-        assert!(json
-            .pointer("/session_cert/key_description/attestation_challenge")
-            .is_some());
+        assert!(json.pointer("/session_cert/serial/decimal").is_some());
+        assert!(
+            json.pointer("/session_cert/key_description/attestation_challenge")
+                .is_some()
+        );
         assert_eq!(
             json.pointer("/session_cert/key_description/attestation_security_level")
                 .and_then(|v| v.as_str()),

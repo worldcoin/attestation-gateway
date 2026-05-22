@@ -22,8 +22,8 @@ pub mod option {
 }
 
 pub mod vec {
-    use serde::ser::SerializeSeq;
     use serde::Serializer;
+    use serde::ser::SerializeSeq;
 
     pub fn serialize<S>(digests: &[Vec<u8>], serializer: S) -> Result<S::Ok, S::Error>
     where
