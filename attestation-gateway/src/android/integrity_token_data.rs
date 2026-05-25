@@ -341,11 +341,18 @@ impl PlayIntegrityToken {
         bundle_identifier: &BundleIdentifier,
     ) -> eyre::Result<()> {
         if let Some(value) = &self.environment_details {
+            // HighRisk is logged for downstream analytics but does not block. The block was
+            // introduced in PR #7 and sat dormant until 2026-05-18 when the Play Console
+            // `Play Protect verdict` toggle was enabled, at which point it began rejecting
+            // ~14% of devices that would otherwise have passed. Telemetry-only keeps the
+            // signal available for signup-sequencer / face-signup-service to consume.
             if value.play_protect_verdict == Some(PlayProtectVerdict::HighRisk) {
-                return Err(eyre::eyre!(ClientException {
-                    code: ErrorCode::IntegrityFailed,
-                    internal_debug_info: "PlayProtectVerdict reported as HighRisk".to_string(),
-                }));
+                tracing::warn!(
+                    bundle_identifier = %bundle_identifier,
+                    play_protect_verdict = "HIGH_RISK",
+                    device_recognition_verdict = ?self.device_integrity.device_recognition_verdict,
+                    "play_protect_high_risk_observed"
+                );
             }
 
             // For staging & dev apps, allow empty apps_detected, while we're debugging an issue.
@@ -696,6 +703,7 @@ mod tests {
     }
 
     #[test]
+    #[tracing_test::traced_test]
     fn test_validate_environment_details() {
         let token = create_test_token();
         let bundle_identifier = BundleIdentifier::AndroidProdWorldApp;
@@ -707,24 +715,21 @@ mod tests {
                 .is_ok()
         );
 
-        // Test high-risk environment
-        let mut invalid_token = create_test_token();
-        invalid_token.environment_details = Some(EnvironmentDetails {
+        // HighRisk is observed-only: the request must still pass and a warn log must be emitted.
+        let mut high_risk_token = create_test_token();
+        high_risk_token.environment_details = Some(EnvironmentDetails {
             app_access_risk_verdict: AppAccessRiskVerdict {
                 apps_detected: Some(vec![]),
             },
             play_protect_verdict: Some(PlayProtectVerdict::HighRisk),
         });
-        let error = invalid_token
-            .validate_environment_details(&bundle_identifier)
-            .unwrap_err();
-        assert_eq!(
-            error.downcast::<ClientException>().unwrap(),
-            ClientException {
-                code: ErrorCode::IntegrityFailed,
-                internal_debug_info: "PlayProtectVerdict reported as HighRisk".to_string(),
-            }
+        assert!(
+            high_risk_token
+                .validate_environment_details(&bundle_identifier)
+                .is_ok()
         );
+        assert!(logs_contain("play_protect_high_risk_observed"));
+        assert!(logs_contain("HIGH_RISK"));
 
         // Test with no environment details (this is still a valid token)
         let mut valid_token = create_test_token();
