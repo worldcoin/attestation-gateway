@@ -410,6 +410,8 @@ async fn handle_client_error_if_applicable(
 /// request). Returns `Ok(Some(token))` for a well-formed `Authorization: Bearer <token>`.
 /// Returns `RequestError` with [`ErrorCode::InvalidDeveloperToken`] if the header is present
 /// but malformed (non-ASCII, missing scheme, missing token, or wrong scheme).
+///
+/// The auth scheme name is matched case-insensitively, per RFC 7235 §2.1.
 fn extract_bearer_token(headers: &HeaderMap) -> Result<Option<String>, RequestError> {
     let Some(value) = headers.get(header::AUTHORIZATION) else {
         return Ok(None);
@@ -420,12 +422,17 @@ fn extract_bearer_token(headers: &HeaderMap) -> Result<Option<String>, RequestEr
         details: Some("Invalid `Authorization` header value.".to_string()),
     })?;
 
-    let Some(token) = raw.strip_prefix("Bearer ") else {
+    let (scheme, token) = raw.split_once(char::is_whitespace).ok_or(RequestError {
+        code: ErrorCode::InvalidDeveloperToken,
+        details: Some("`Authorization` header must use the `Bearer` scheme.".to_string()),
+    })?;
+
+    if !scheme.eq_ignore_ascii_case("Bearer") {
         return Err(RequestError {
             code: ErrorCode::InvalidDeveloperToken,
             details: Some("`Authorization` header must use the `Bearer` scheme.".to_string()),
         });
-    };
+    }
 
     let token = token.trim();
     if token.is_empty() {
