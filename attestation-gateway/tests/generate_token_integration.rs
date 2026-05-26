@@ -269,7 +269,6 @@ async fn test_android_e2e_success() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -414,7 +413,6 @@ async fn test_android_token_generation_with_invalid_attributes() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -462,7 +460,6 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -531,7 +528,6 @@ async fn test_request_hash_race_condition() {
             apple_initial_attestation: None,
             apple_public_key: None,
             apple_assertion: None,
-            developer_token: None,
         };
 
         let handle = task::spawn(
@@ -593,7 +589,6 @@ async fn test_request_hash_is_released_if_request_fails() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -679,7 +674,6 @@ async fn test_server_error_is_properly_logged() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -748,7 +742,6 @@ async fn test_apple_initial_attestation_e2e_success() {
         apple_initial_attestation: Some(test_data.attestation_base64.clone()),
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -870,7 +863,6 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
         apple_initial_attestation: Some("ou000000000000000000".to_string()),
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -936,7 +928,6 @@ async fn test_apple_assertion_e2e_success() {
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1030,7 +1021,6 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some("not_even_base64".to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1095,7 +1085,6 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         // Valid base64 but invalid CBOR message
         apple_assertion: Some("aW52YWxpZA".to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1144,7 +1133,6 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
         apple_initial_attestation: None,
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1191,7 +1179,6 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
         apple_initial_attestation: None,
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
         apple_assertion: Some("0x00000000000000000000000000000000".to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1255,7 +1242,6 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(invalid_assertion.to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1319,7 +1305,6 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1398,7 +1383,6 @@ async fn test_apple_token_generation_with_invalid_counter() {
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1535,7 +1519,6 @@ async fn test_apple_counter_race_condition() {
             apple_initial_attestation: None,
             apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
             apple_assertion: Some(assertion.to_string()),
-            developer_token: None,
         };
 
         let handle = task::spawn(
@@ -1756,7 +1739,8 @@ async fn test_developer_token_generation_e2e_success() {
     let generated_client_token =
         generate_client_token(&client_jwk, developer_certificate, &request_hash);
 
-    // Generate token generation request
+    // Generate token generation request (developer token now travels in the
+    // `Authorization: Bearer ...` header)
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "relying-party.example.com".to_string(),
@@ -1766,7 +1750,6 @@ async fn test_developer_token_generation_e2e_success() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: Some(generated_client_token),
     };
     let body = serde_json::to_string(&token_generation_request).unwrap();
 
@@ -1777,6 +1760,10 @@ async fn test_developer_token_generation_e2e_success() {
                 .uri("/g")
                 .method(http::Method::POST)
                 .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .header(
+                    http::header::AUTHORIZATION,
+                    format!("Bearer {generated_client_token}"),
+                )
                 .body(Body::from(body.clone()))
                 .unwrap(),
         )
@@ -1859,7 +1846,6 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: Some(generated_client_token),
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1871,6 +1857,10 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
                 .uri("/g")
                 .method(http::Method::POST)
                 .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .header(
+                    http::header::AUTHORIZATION,
+                    format!("Bearer {generated_client_token}"),
+                )
                 .body(Body::from(body.clone()))
                 .unwrap(),
         )
@@ -1904,6 +1894,8 @@ async fn test_developer_token_generation_e2e_missing_token() {
 
     let api_router = get_api_router().await;
 
+    // note: no Authorization header is sent below, so the laissez-passer bypass
+    // does not kick in and Android verification requires `integrity_token`
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "relying-party.example.com".to_string(),
@@ -1913,8 +1905,6 @@ async fn test_developer_token_generation_e2e_missing_token() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        // note the missing developer_token
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1992,7 +1982,6 @@ async fn test_client_error_gets_logged_to_kinesis() {
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();

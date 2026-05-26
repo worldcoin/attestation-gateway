@@ -232,7 +232,6 @@ pub struct TokenGenerationRequest {
     pub apple_initial_attestation: Option<String>,
     pub apple_public_key: Option<String>,
     pub apple_assertion: Option<String>,
-    pub developer_token: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, JsonSchema)]
@@ -264,17 +263,24 @@ pub enum IntegrityVerificationInput {
 impl IntegrityVerificationInput {
     /// Parses a `TokenGenerationRequest` into an `IntegrityVerificationInput` specifically for an Android or Apple integrity check.
     ///
+    /// The optional `laissez_passer_token` is the bearer token extracted from the `Authorization`
+    /// header. When present, it takes precedence over the platform-specific attestation flows
+    /// and is routed to the Developer (laissez-passer) verification path.
+    ///
     /// # Errors
     /// Will return a `RequestError` if the request is malformed or missing required fields.
     ///
     /// # Panics
     /// No panics expected.
-    pub fn from_request(request: &TokenGenerationRequest) -> Result<Self, RequestError> {
+    pub fn from_request(
+        request: &TokenGenerationRequest,
+        laissez_passer_token: Option<String>,
+    ) -> Result<Self, RequestError> {
         if let Some(client_error) = request.client_error.clone() {
             return Ok(Self::ClientError { client_error });
         }
 
-        if let Some(developer_token) = request.developer_token.clone() {
+        if let Some(developer_token) = laissez_passer_token {
             return Ok(Self::Developer { developer_token });
         }
 
