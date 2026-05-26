@@ -1,5 +1,8 @@
 use aws_sdk_kinesis::Client as KinesisClient;
-use axum::Extension;
+use axum::{
+    Extension,
+    http::{HeaderMap, header},
+};
 use axum_jsonschema::Json;
 use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::ConnectionManager};
 use std::time::SystemTime;
@@ -26,6 +29,7 @@ pub async fn handler(
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Extension(kinesis_client): Extension<KinesisClient>,
+    headers: HeaderMap,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
     let aud = request.aud.clone();
@@ -40,7 +44,13 @@ pub async fn handler(
 
     let _enter = my_span.enter();
 
-    let integrity_verification_input = IntegrityVerificationInput::from_request(&request)?;
+    // Laissez-passer token (a.k.a. developer token) is transported in the
+    // `Authorization: Bearer ...` header. When present, it bypasses platform
+    // attestation and is verified against the issuer JWKS instead.
+    let laissez_passer_token = extract_bearer_token(&headers)?;
+
+    let integrity_verification_input =
+        IntegrityVerificationInput::from_request(&request, laissez_passer_token)?;
 
     handle_client_error_if_applicable(
         &integrity_verification_input,
@@ -392,4 +402,38 @@ async fn handle_client_error_if_applicable(
     }
 
     Ok(())
+}
+
+/// Extracts a laissez-passer bearer token from the `Authorization` header.
+///
+/// Returns `Ok(None)` when the header is absent (i.e. a regular Android/Apple attestation
+/// request). Returns `Ok(Some(token))` for a well-formed `Authorization: Bearer <token>`.
+/// Returns `RequestError` with [`ErrorCode::InvalidDeveloperToken`] if the header is present
+/// but malformed (non-ASCII, missing scheme, missing token, or wrong scheme).
+fn extract_bearer_token(headers: &HeaderMap) -> Result<Option<String>, RequestError> {
+    let Some(value) = headers.get(header::AUTHORIZATION) else {
+        return Ok(None);
+    };
+
+    let raw = value.to_str().map_err(|_| RequestError {
+        code: ErrorCode::InvalidDeveloperToken,
+        details: Some("Invalid `Authorization` header value.".to_string()),
+    })?;
+
+    let Some(token) = raw.strip_prefix("Bearer ") else {
+        return Err(RequestError {
+            code: ErrorCode::InvalidDeveloperToken,
+            details: Some("`Authorization` header must use the `Bearer` scheme.".to_string()),
+        });
+    };
+
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(RequestError {
+            code: ErrorCode::InvalidDeveloperToken,
+            details: Some("`Authorization: Bearer` token is empty.".to_string()),
+        });
+    }
+
+    Ok(Some(token.to_string()))
 }
