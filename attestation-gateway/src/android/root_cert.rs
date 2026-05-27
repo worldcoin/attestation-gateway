@@ -1,4 +1,5 @@
 use openssl::x509::X509;
+use serde::Serialize;
 use thiserror::Error;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
@@ -16,8 +17,9 @@ pub enum RootCertError {
     Serial(#[source] CertSerialError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct RootCert {
+    #[serde(with = "crate::android::serde_hex")]
     pub public_key: Vec<u8>,
     serial: CertSerial,
 }
