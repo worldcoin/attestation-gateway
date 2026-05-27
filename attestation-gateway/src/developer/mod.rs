@@ -34,7 +34,6 @@ pub async fn verify(
     let developer_token_verifier = if let Some(jwks_url) = jwks_url {
         DEVELOPER_VERIFIER
             .get_or_init(|| async {
-                tracing::info!("✅ Initializing developer verifier...");
                 RemoteJwksVerifier::new(jwks_url.to_string(), None, Duration::from_secs(3600))
             })
             .await

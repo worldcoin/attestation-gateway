@@ -273,6 +273,24 @@ pub enum IntegrityVerificationInput {
 }
 
 impl IntegrityVerificationInput {
+    /// Returns the corresponding [`CheckType`] for this verification input, or
+    /// `None` for `ClientError` (no integrity check is performed for those).
+    ///
+    /// Used to enrich tracing events along the verification path so log queries
+    /// like `check_type:Developer` can isolate LP traffic without parsing the
+    /// nested request payload.
+    #[must_use]
+    pub const fn check_type(&self) -> Option<CheckType> {
+        match self {
+            Self::Android { .. } => Some(CheckType::Android),
+            Self::AppleInitialAttestation { .. } | Self::AppleAssertion { .. } => {
+                Some(CheckType::Apple)
+            }
+            Self::Developer { .. } => Some(CheckType::Developer),
+            Self::ClientError { .. } => None,
+        }
+    }
+
     /// Parses a `TokenGenerationRequest` into an `IntegrityVerificationInput` specifically for an Android or Apple integrity check.
     ///
     /// The optional `laissez_passer_token` is the bearer token extracted from the `Authorization`

@@ -82,6 +82,10 @@ pub async fn handler(
         });
     }
 
+    // Captured before the input is moved into `verify_android_or_apple_integrity`
+    // so error logs below can be filtered by `check_type:Developer` etc.
+    let check_type = integrity_verification_input.check_type();
+
     // REVIEW: failures from DataReport.pass vs. ClientException
     let report = verify_android_or_apple_integrity(
         integrity_verification_input,
@@ -97,9 +101,9 @@ pub async fn handler(
         // Check if we have a `ClientException` in the error chain and return to the client without further logging
         if let Some(client_error) = e.downcast_ref::<ClientException>() {
             if global_config.log_client_errors {
-                tracing::info!(error = ?e, request_hash = request_hash, bundle_identifier = %request.bundle_identifier, "Client exception verifying Android or Apple integrity");
+                tracing::info!(error = ?e, request_hash = request_hash, bundle_identifier = %request.bundle_identifier, check_type = ?check_type, "Client exception verifying Android or Apple integrity");
             }else {
-                tracing::debug!(error = ?e, "Client exception verifying Android or Apple integrity");
+                tracing::debug!(error = ?e, check_type = ?check_type, "Client exception verifying Android or Apple integrity");
             }
 
             metrics::counter!("generate_token.client_exception",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string()).increment(1);
@@ -110,7 +114,7 @@ pub async fn handler(
             };
         }
 
-        tracing::error!(error = ?e, "Error verifying Android or Apple integrity");
+        tracing::error!(error = ?e, check_type = ?check_type, "Error verifying Android or Apple integrity");
         RequestError {
             code: ErrorCode::InternalServerError,
             details: None,
@@ -299,6 +303,10 @@ async fn process_and_finalize_report(
             tracing::info!(
                 request_hash = request_hash,
                 bundle_identifier = %report.bundle_identifier,
+                // `check_type` is a top-level field so queries like
+                // `check_type:Developer` filter LP/dev traffic without
+                // parsing the nested payload.
+                check_type = ?report.check_type,
                 message = "Integrity verification failed",
                 internal_debug_info = report.internal_debug_info
             );
@@ -322,7 +330,14 @@ async fn process_and_finalize_report(
     }
     .generate()?;
 
-    tracing::info!(output_token_payload = ?output_token_payload, "Output token payload");
+    tracing::info!(
+        // Promoted so this log can be filtered by `check_type:Developer`
+        // to triage LP-specific traffic. The full payload is still attached
+        // via `output_token_payload` for callers that need the body.
+        check_type = ?report.check_type,
+        output_token_payload = ?output_token_payload,
+        "Output token payload",
+    );
 
     let key = fetch_active_key(redis, &aws_config).await.map_err(|e| {
         tracing::error!(error = ?e, "Error fetching active key");
