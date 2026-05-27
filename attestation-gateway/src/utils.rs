@@ -146,15 +146,18 @@ pub enum BundleIdentifier {
     IOSProdWorldID,
     #[serde(rename = "org.world.staging.id")]
     IOSStageWorldID,
+    #[serde(rename = "org.world.id.staging")]
+    AndroidStageWorldID,
 }
 
 impl BundleIdentifier {
     #[must_use]
     pub const fn platform(&self) -> Platform {
         match self {
-            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
-                Platform::Android
-            }
+            Self::AndroidProdWorldApp
+            | Self::AndroidStageWorldApp
+            | Self::AndroidDevWorldApp
+            | Self::AndroidStageWorldID => Platform::Android,
             Self::IOSProdWorldApp
             | Self::IOSStageWorldApp
             | Self::IOSProdWorldID
@@ -170,6 +173,11 @@ impl BundleIdentifier {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
             Self::AndroidDevWorldApp => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
+            // World ID Android staging is currently only reached via the Laissez-Passer
+            // path, which bypasses Play Integrity / hardware attestation entirely. If
+            // `/g` (Play Integrity) or `/a` (hardware attestation) are wired up for this
+            // bundle later, fill in the actual signing-certificate digest here.
+            Self::AndroidStageWorldID => None,
             Self::IOSProdWorldApp
             | Self::IOSStageWorldApp
             | Self::IOSProdWorldID
@@ -185,6 +193,8 @@ impl BundleIdentifier {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
             }
             Self::AndroidDevWorldApp => Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="),
+            // See note on `certificate_sha256_digest` above.
+            Self::AndroidStageWorldID => None,
             Self::IOSProdWorldApp
             | Self::IOSStageWorldApp
             | Self::IOSProdWorldID
@@ -195,9 +205,10 @@ impl BundleIdentifier {
     #[must_use]
     pub const fn apple_app_id(&self) -> Option<&str> {
         match self {
-            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp | Self::AndroidDevWorldApp => {
-                None
-            }
+            Self::AndroidProdWorldApp
+            | Self::AndroidStageWorldApp
+            | Self::AndroidDevWorldApp
+            | Self::AndroidStageWorldID => None,
             // cspell:disable
             Self::IOSStageWorldApp => Some("35RXKB6738.org.worldcoin.insight.staging"),
             Self::IOSProdWorldApp => Some("35RXKB6738.org.worldcoin.insight"),
@@ -214,6 +225,7 @@ impl Display for BundleIdentifier {
             Self::AndroidProdWorldApp => write!(f, "com.worldcoin"),
             Self::AndroidStageWorldApp => write!(f, "com.worldcoin.staging"),
             Self::AndroidDevWorldApp => write!(f, "com.worldcoin.dev"),
+            Self::AndroidStageWorldID => write!(f, "org.world.id.staging"),
             Self::IOSProdWorldApp => write!(f, "org.worldcoin.insight"),
             Self::IOSStageWorldApp => write!(f, "org.worldcoin.insight.staging"),
             Self::IOSProdWorldID => write!(f, "org.world.id"),
@@ -232,7 +244,6 @@ pub struct TokenGenerationRequest {
     pub apple_initial_attestation: Option<String>,
     pub apple_public_key: Option<String>,
     pub apple_assertion: Option<String>,
-    pub developer_token: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, JsonSchema)]
@@ -262,19 +273,44 @@ pub enum IntegrityVerificationInput {
 }
 
 impl IntegrityVerificationInput {
+    /// Returns the corresponding [`CheckType`] for this verification input, or
+    /// `None` for `ClientError` (no integrity check is performed for those).
+    ///
+    /// Used to enrich tracing events along the verification path so log queries
+    /// like `check_type:Developer` can isolate LP traffic without parsing the
+    /// nested request payload.
+    #[must_use]
+    pub const fn check_type(&self) -> Option<CheckType> {
+        match self {
+            Self::Android { .. } => Some(CheckType::Android),
+            Self::AppleInitialAttestation { .. } | Self::AppleAssertion { .. } => {
+                Some(CheckType::Apple)
+            }
+            Self::Developer { .. } => Some(CheckType::Developer),
+            Self::ClientError { .. } => None,
+        }
+    }
+
     /// Parses a `TokenGenerationRequest` into an `IntegrityVerificationInput` specifically for an Android or Apple integrity check.
+    ///
+    /// The optional `laissez_passer_token` is the bearer token extracted from the `Authorization`
+    /// header. When present, it takes precedence over the platform-specific attestation flows
+    /// and is routed to the Developer (laissez-passer) verification path.
     ///
     /// # Errors
     /// Will return a `RequestError` if the request is malformed or missing required fields.
     ///
     /// # Panics
     /// No panics expected.
-    pub fn from_request(request: &TokenGenerationRequest) -> Result<Self, RequestError> {
+    pub fn from_request(
+        request: &TokenGenerationRequest,
+        laissez_passer_token: Option<String>,
+    ) -> Result<Self, RequestError> {
         if let Some(client_error) = request.client_error.clone() {
             return Ok(Self::ClientError { client_error });
         }
 
-        if let Some(developer_token) = request.developer_token.clone() {
+        if let Some(developer_token) = laissez_passer_token {
             return Ok(Self::Developer { developer_token });
         }
 

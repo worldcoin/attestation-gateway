@@ -1,5 +1,8 @@
 use aws_sdk_kinesis::Client as KinesisClient;
-use axum::Extension;
+use axum::{
+    Extension,
+    http::{HeaderMap, header},
+};
 use axum_jsonschema::Json;
 use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::ConnectionManager};
 use std::time::SystemTime;
@@ -26,6 +29,7 @@ pub async fn handler(
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Extension(kinesis_client): Extension<KinesisClient>,
+    headers: HeaderMap,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
     let aud = request.aud.clone();
@@ -40,7 +44,13 @@ pub async fn handler(
 
     let _enter = my_span.enter();
 
-    let integrity_verification_input = IntegrityVerificationInput::from_request(&request)?;
+    // Laissez-passer token (a.k.a. developer token) is transported in the
+    // `Authorization: Bearer ...` header. When present, it bypasses platform
+    // attestation and is verified against the issuer JWKS instead.
+    let laissez_passer_token = extract_bearer_token(&headers)?;
+
+    let integrity_verification_input =
+        IntegrityVerificationInput::from_request(&request, laissez_passer_token)?;
 
     handle_client_error_if_applicable(
         &integrity_verification_input,
@@ -72,6 +82,10 @@ pub async fn handler(
         });
     }
 
+    // Captured before the input is moved into `verify_android_or_apple_integrity`
+    // so error logs below can be filtered by `check_type:Developer` etc.
+    let check_type = integrity_verification_input.check_type();
+
     // REVIEW: failures from DataReport.pass vs. ClientException
     let report = verify_android_or_apple_integrity(
         integrity_verification_input,
@@ -87,9 +101,9 @@ pub async fn handler(
         // Check if we have a `ClientException` in the error chain and return to the client without further logging
         if let Some(client_error) = e.downcast_ref::<ClientException>() {
             if global_config.log_client_errors {
-                tracing::info!(error = ?e, request_hash = request_hash, bundle_identifier = %request.bundle_identifier, "Client exception verifying Android or Apple integrity");
+                tracing::info!(error = ?e, request_hash = request_hash, bundle_identifier = %request.bundle_identifier, check_type = ?check_type, "Client exception verifying Android or Apple integrity");
             }else {
-                tracing::debug!(error = ?e, "Client exception verifying Android or Apple integrity");
+                tracing::debug!(error = ?e, check_type = ?check_type, "Client exception verifying Android or Apple integrity");
             }
 
             metrics::counter!("generate_token.client_exception",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string()).increment(1);
@@ -100,7 +114,7 @@ pub async fn handler(
             };
         }
 
-        tracing::error!(error = ?e, "Error verifying Android or Apple integrity");
+        tracing::error!(error = ?e, check_type = ?check_type, "Error verifying Android or Apple integrity");
         RequestError {
             code: ErrorCode::InternalServerError,
             details: None,
@@ -256,7 +270,9 @@ async fn verify_android_or_apple_integrity(
         .client_exception
         .map(|err| err.internal_debug_info);
     if let Some(developer_token) = verify_result.developer_token {
-        report.dev_check_sub = Some(developer_token.sub);
+        // `sub` is optional — some certificate roles carry the issuer identity
+        // in `extra.issuer_email` instead.
+        report.dev_check_sub = developer_token.sub;
         report.extra = developer_token.extra;
     }
 
@@ -287,6 +303,10 @@ async fn process_and_finalize_report(
             tracing::info!(
                 request_hash = request_hash,
                 bundle_identifier = %report.bundle_identifier,
+                // `check_type` is a top-level field so queries like
+                // `check_type:Developer` filter LP/dev traffic without
+                // parsing the nested payload.
+                check_type = ?report.check_type,
                 message = "Integrity verification failed",
                 internal_debug_info = report.internal_debug_info
             );
@@ -310,7 +330,14 @@ async fn process_and_finalize_report(
     }
     .generate()?;
 
-    tracing::info!(output_token_payload = ?output_token_payload, "Output token payload");
+    tracing::info!(
+        // Promoted so this log can be filtered by `check_type:Developer`
+        // to triage LP-specific traffic. The full payload is still attached
+        // via `output_token_payload` for callers that need the body.
+        check_type = ?report.check_type,
+        output_token_payload = ?output_token_payload,
+        "Output token payload",
+    );
 
     let key = fetch_active_key(redis, &aws_config).await.map_err(|e| {
         tracing::error!(error = ?e, "Error fetching active key");
@@ -392,4 +419,45 @@ async fn handle_client_error_if_applicable(
     }
 
     Ok(())
+}
+
+/// Extracts a laissez-passer bearer token from the `Authorization` header.
+///
+/// Returns `Ok(None)` when the header is absent (i.e. a regular Android/Apple attestation
+/// request). Returns `Ok(Some(token))` for a well-formed `Authorization: Bearer <token>`.
+/// Returns `RequestError` with [`ErrorCode::InvalidDeveloperToken`] if the header is present
+/// but malformed (non-ASCII, missing scheme, missing token, or wrong scheme).
+///
+/// The auth scheme name is matched case-insensitively, per RFC 7235 §2.1.
+fn extract_bearer_token(headers: &HeaderMap) -> Result<Option<String>, RequestError> {
+    let Some(value) = headers.get(header::AUTHORIZATION) else {
+        return Ok(None);
+    };
+
+    let raw = value.to_str().map_err(|_| RequestError {
+        code: ErrorCode::InvalidDeveloperToken,
+        details: Some("Invalid `Authorization` header value.".to_string()),
+    })?;
+
+    let (scheme, token) = raw.split_once(char::is_whitespace).ok_or(RequestError {
+        code: ErrorCode::InvalidDeveloperToken,
+        details: Some("`Authorization` header must use the `Bearer` scheme.".to_string()),
+    })?;
+
+    if !scheme.eq_ignore_ascii_case("Bearer") {
+        return Err(RequestError {
+            code: ErrorCode::InvalidDeveloperToken,
+            details: Some("`Authorization` header must use the `Bearer` scheme.".to_string()),
+        });
+    }
+
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(RequestError {
+            code: ErrorCode::InvalidDeveloperToken,
+            details: Some("`Authorization: Bearer` token is empty.".to_string()),
+        });
+    }
+
+    Ok(Some(token.to_string()))
 }

@@ -39,22 +39,17 @@ pub struct SessionCert {
 }
 
 impl SessionCert {
+    pub fn from_der(der: &[u8]) -> Result<Self, SessionCertError> {
+        let x509 = X509::from_der(der).map_err(|_| SessionCertError::DerDecoding)?;
+
+        Self::from_x509(&x509)
+    }
+
     pub fn from_x509(x509: &X509) -> Result<Self, SessionCertError> {
         let serial = CertSerial::from_x509(x509).map_err(SessionCertError::Serial)?;
         let der = x509.to_der().map_err(|_| SessionCertError::DerEncoding)?;
 
         Self::from_der_with_serial(&der, serial)
-    }
-
-    pub fn from_der(der: &[u8]) -> Result<Self, SessionCertError> {
-        Self::from_der_with_serial(
-            der,
-            CertSerial {
-                issued_to: vec![],
-                decimal: String::new(),
-                hex: String::new(),
-            },
-        )
     }
 
     fn from_der_with_serial(der: &[u8], serial: CertSerial) -> Result<Self, SessionCertError> {
