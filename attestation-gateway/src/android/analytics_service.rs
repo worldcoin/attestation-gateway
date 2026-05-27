@@ -21,14 +21,14 @@ pub enum AnalyticsServiceNewError {
 }
 
 #[derive(Serialize)]
-pub struct AndroidAttestationAnalyticsEvent<'a> {
+pub struct AndroidAttestationAnalyticsEvent {
     pub base64_cert_chain: Vec<String>,
     pub aud: String,
     pub nonce: String,
     pub app_version: String,
     pub bundle_identifier: BundleIdentifier,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cert_chain: Option<&'a CertChain>,
+    pub cert_chain: Option<CertChain>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub timestamp: SystemTime,
@@ -56,8 +56,15 @@ impl AnalyticsService {
         })
     }
 
-    pub async fn record<'a>(&self, event: &AndroidAttestationAnalyticsEvent<'a>) {
-        let (payload_bytes, partition_key) = match Self::serialize_event(event) {
+    pub fn spawn_record(&self, event: AndroidAttestationAnalyticsEvent) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            service.record(event).await;
+        });
+    }
+
+    pub async fn record(&self, event: AndroidAttestationAnalyticsEvent) {
+        let (payload_bytes, partition_key) = match Self::serialize_event(&event) {
             Ok(serialized) => serialized,
             Err(e) => {
                 tracing::error!(
@@ -85,7 +92,7 @@ impl AnalyticsService {
     }
 
     fn serialize_event(
-        event: &AndroidAttestationAnalyticsEvent<'_>,
+        event: &AndroidAttestationAnalyticsEvent,
     ) -> Result<(Vec<u8>, String), serde_json::Error> {
         let mut payload = serde_json::to_value(event)?;
         let obj = payload

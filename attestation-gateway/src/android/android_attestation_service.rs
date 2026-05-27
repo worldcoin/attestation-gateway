@@ -170,17 +170,16 @@ impl AndroidAttestationService {
         };
 
         self.analytics_service
-            .record(&AndroidAttestationAnalyticsEvent {
+            .spawn_record(AndroidAttestationAnalyticsEvent {
                 base64_cert_chain: base64_cert_chain.to_vec(),
                 aud: aud.to_string(),
                 nonce: nonce.clone(),
                 app_version: app_version.clone(),
                 bundle_identifier: bundle_identifier.clone(),
-                cert_chain: cert_chain.as_ref(),
+                cert_chain,
                 error: verify_result.as_ref().err().map(ToString::to_string),
                 timestamp: SystemTime::now(),
-            })
-            .await;
+            });
 
         verify_result
     }
