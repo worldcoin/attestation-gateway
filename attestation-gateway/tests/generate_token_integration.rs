@@ -1611,10 +1611,7 @@ fn generate_developer_certificate(
         )
         .unwrap();
     payload
-        .set_claim(
-            "aud",
-            Some(josekit::Value::String("lp.certificate".into())),
-        )
+        .set_claim("aud", Some(josekit::Value::String("lp.certificate".into())))
         .unwrap();
 
     if let Some(extra) = extra {
