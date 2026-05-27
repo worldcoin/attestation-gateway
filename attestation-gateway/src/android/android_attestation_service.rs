@@ -2,6 +2,7 @@ use std::time::SystemTime;
 
 use crate::{
     android::{
+        analytics_service::{AnalyticsService, AnalyticsServiceNewError},
         cert_chain_builder::{
             CertChainBuilder, CertChainBuilderBuildChainError, CertChainBuilderNewError,
         },
@@ -26,6 +27,9 @@ pub enum AndroidAttestationError {
 
     #[error("cert chain builder new error: {0}")]
     CertChainBuilderNew(#[source] CertChainBuilderNewError),
+
+    #[error("analytics service new error: {0}")]
+    AnalyticsServiceNew(#[source] AnalyticsServiceNewError),
 
     #[error("revocation list: {0}")]
     RevocationList(#[source] RevocationListError),
@@ -57,14 +61,8 @@ pub enum AndroidAttestationError {
     #[error("missing key origin")]
     MissingKeyOrigin,
 
-    #[error("missing attestation signature digests")]
-    MissingAttestationSignatureDigests,
-
     #[error("invalid attestation signature digest")]
     InvalidAttestationSignatureDigest,
-
-    #[error("missing package name")]
-    MissingPackageName,
 
     #[error("invalid package name")]
     InvalidPackageName,
@@ -92,19 +90,22 @@ pub struct AndroidAttestationService {
     cert_chain_builder: CertChainBuilder,
     revocation_list: RevocationList,
     rate_limit_service: RateLimitService,
+    analytics_service: AnalyticsService,
 }
 
 impl AndroidAttestationService {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         cert_chain_builder: CertChainBuilder,
         revocation_list: RevocationList,
         rate_limit_service: RateLimitService,
+        analytics_service: AnalyticsService,
     ) -> Self {
         Self {
             cert_chain_builder,
             revocation_list,
             rate_limit_service,
+            analytics_service,
         }
     }
 
@@ -112,6 +113,7 @@ impl AndroidAttestationService {
     pub async fn from_defaults(
         redis: ConnectionManager,
         limit_per_day: Option<isize>,
+        analytics_kinesis_stream_arn: String,
     ) -> Result<Self, AndroidAttestationError> {
         let cert_chain_builder = CertChainBuilder::new_from_default_pem()
             .map_err(AndroidAttestationError::CertChainBuilderNew)?;
@@ -121,11 +123,15 @@ impl AndroidAttestationService {
             .map_err(AndroidAttestationError::RevocationList)?;
 
         let rate_limit_service = RateLimitService::new(redis, limit_per_day);
+        let analytics_service = AnalyticsService::new(analytics_kinesis_stream_arn)
+            .await
+            .map_err(AndroidAttestationError::AnalyticsServiceNew)?;
 
         Ok(Self::new(
             cert_chain_builder,
             revocation_list,
             rate_limit_service,
+            analytics_service,
         ))
     }
 
@@ -258,6 +264,9 @@ impl AndroidAttestationError {
                 format!("rate_limit_service_try_incr_{}", e.reason_tag())
             }
             Self::CertChainBuilderNew(_) => "cert_chain_builder_new".to_string(),
+            Self::AnalyticsServiceNew(e) => {
+                format!("analytics_service_new_{}", e.reason_tag())
+            }
             Self::RevocationList(e) => {
                 format!("revocation_list_{}", e.reason_tag())
             }
@@ -272,13 +281,9 @@ impl AndroidAttestationError {
             }
             Self::MissingRootOfTrust => "missing_root_of_trust".to_string(),
             Self::MissingKeyOrigin => "missing_key_origin".to_string(),
-            Self::MissingAttestationSignatureDigests => {
-                "missing_attestation_signature_digests".to_string()
-            }
             Self::InvalidAttestationSignatureDigest => {
                 "invalid_attestation_signature_digest".to_string()
             }
-            Self::MissingPackageName => "missing_package_name".to_string(),
             Self::InvalidPackageName => "invalid_package_name".to_string(),
             Self::CertificateRevoked => "certificate_revoked".to_string(),
             Self::MissingCertificateDigest => "missing_certificate_digest".to_string(),
@@ -291,7 +296,9 @@ impl AndroidAttestationError {
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::InternalRateLimitServiceTryIncr(_) | Self::CertChainBuilderNew(_) => true,
+            Self::InternalRateLimitServiceTryIncr(_)
+            | Self::CertChainBuilderNew(_)
+            | Self::AnalyticsServiceNew(_) => true,
             Self::RevocationList(e) => e.is_internal_error(),
             Self::CertChainBuilderBuildChain(e) => e.is_internal_error(),
             Self::RateLimitExceeded
@@ -303,9 +310,7 @@ impl AndroidAttestationError {
             | Self::KeyNotGeneratedInSecureHardware
             | Self::MissingRootOfTrust
             | Self::MissingKeyOrigin
-            | Self::MissingAttestationSignatureDigests
             | Self::InvalidAttestationSignatureDigest
-            | Self::MissingPackageName
             | Self::InvalidPackageName
             | Self::CertificateRevoked => false,
             Self::MissingCertificateDigest | Self::BadCertificateDigestEncoding(_) => true,

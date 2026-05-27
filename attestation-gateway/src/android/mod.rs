@@ -4,6 +4,7 @@ pub use integrity_token_data::PlayIntegrityToken;
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
+pub mod analytics_service;
 mod android_attestation_service;
 mod cert_chain;
 mod cert_chain_builder;

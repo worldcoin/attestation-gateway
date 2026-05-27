@@ -41,10 +41,16 @@ pub async fn start(
             .expect("ANDROID_RATE_LIMIT_PER_DAY must be a valid isize")
     });
 
-    let android_attestation_service =
-        AndroidAttestationService::from_defaults(redis.clone(), android_rate_limit_per_day)
-            .await
-            .expect("failed to construct Android attestation service");
+    let android_analytics_kinesis_stream_arn =
+        env::var("KINESIS_STREAM_V1_ARN").expect("KINESIS_STREAM_V1_ARN is required");
+
+    let android_attestation_service = AndroidAttestationService::from_defaults(
+        redis.clone(),
+        android_rate_limit_per_day,
+        android_analytics_kinesis_stream_arn,
+    )
+    .await
+    .expect("failed to construct Android attestation service");
 
     #[expect(clippy::let_underscore_future)] // do not await, it's a handler for background tasks
     let _ = android_attestation_service.spawn_refresh_loop();

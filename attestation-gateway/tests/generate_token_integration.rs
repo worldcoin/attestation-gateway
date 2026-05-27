@@ -130,6 +130,12 @@ async fn extension_android_attestation(
                 redis.clone(),
                 Some(10),
             ),
+            attestation_gateway::android::analytics_service::AnalyticsService::new(
+                "arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports"
+                    .to_string(),
+            )
+            .await
+            .unwrap(),
         ),
     )
 }
