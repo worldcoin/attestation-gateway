@@ -1606,14 +1606,14 @@ fn generate_developer_certificate(
     payload.set_subject("foo.bar@relying-party.example.com");
     payload
         .set_claim(
-            "publicKey",
+            "public_key",
             Some(josekit::Value::String(client_public_key.to_string())),
         )
         .unwrap();
     payload
         .set_claim(
             "aud",
-            Some(josekit::Value::String("relying-party.certificate".into())),
+            Some(josekit::Value::String("lp.certificate".into())),
         )
         .unwrap();
 
@@ -1645,7 +1645,12 @@ fn generate_client_token(
     let mut payload = josekit::jwt::JwtPayload::new();
     payload.set_expires_at(&(SystemTime::now() + Duration::from_secs(60)));
     payload.set_issued_at(&SystemTime::now());
-    payload.set_jwt_id(request_hash);
+    payload
+        .set_claim(
+            "request_hash",
+            Some(josekit::Value::String(request_hash.clone())),
+        )
+        .unwrap();
     payload
         .set_claim(
             "certificate",
