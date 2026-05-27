@@ -8,6 +8,7 @@ use crate::{
     developer::integrity_token_data::{ActorTokenExtraClaims, DeveloperTokenExtraClaims},
     utils::{ClientException, ErrorCode, VerificationOutput},
 };
+use base64::Engine;
 pub use integrity_token_data::{ActorTokenClaims, DeveloperTokenClaims};
 use jwtk::jwk::RemoteJwksVerifier;
 use std::time::Duration;
@@ -113,10 +114,23 @@ fn verify_outer_jwt(
         // Try to parse the public key as a PEM string
         jwtk::SomePublicKey::from_pem(developer_inner_token.public_key.as_bytes())
             .or_else(|_| {
-                // If that fails, parse the public key as a JWK
+                // Or as a JWK JSON object.
                 let parsed_key: jwtk::jwk::Jwk =
                     serde_json::from_str(&developer_inner_token.public_key)?;
                 parsed_key.to_verification_key()
+            })
+            .or_else(|_| {
+                // Or as a base64url-encoded SubjectPublicKeyInfo DER blob (what
+                // Android emits via `KeyFactory`/`PublicKey.getEncoded()`). We
+                // rewrap the DER bytes in a PEM envelope and reuse `from_pem`
+                // since `EcdsaPublicKey::from_pkey` is `pub(crate)` in `jwtk`.
+                let der = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(developer_inner_token.public_key.as_bytes())
+                    .or_else(|_| {
+                        base64::engine::general_purpose::URL_SAFE
+                            .decode(developer_inner_token.public_key.as_bytes())
+                    })?;
+                jwtk::SomePublicKey::from_pem(der_to_pem(&der).as_bytes())
             })?;
 
     jwtk::verify::<ActorTokenExtraClaims>(developer_outer_token, &verification_key).map_err(
@@ -150,6 +164,23 @@ fn validate_developer_token_claims(
         });
     }
     Ok(())
+}
+
+/// Wraps a SubjectPublicKeyInfo DER blob in a PEM envelope so it can be fed
+/// back into `SomePublicKey::from_pem`. Lines are wrapped at 64 chars as per
+/// RFC 7468 — OpenSSL is lenient about this, but staying conventional avoids
+/// surprises with stricter parsers.
+fn der_to_pem(der: &[u8]) -> String {
+    const LINE_WIDTH: usize = 64;
+    let body = base64::engine::general_purpose::STANDARD.encode(der);
+    let mut out = String::with_capacity(body.len() + body.len() / LINE_WIDTH + 64);
+    out.push_str("-----BEGIN PUBLIC KEY-----\n");
+    for chunk in body.as_bytes().chunks(LINE_WIDTH) {
+        out.push_str(std::str::from_utf8(chunk).expect("base64 is ASCII"));
+        out.push('\n');
+    }
+    out.push_str("-----END PUBLIC KEY-----\n");
+    out
 }
 
 #[cfg(test)]
@@ -276,6 +307,43 @@ mod tests {
             &serde_json::to_string(&client_some_private_key.public_key_to_jwk().unwrap()).unwrap(),
         );
         // 🧪 Create outer JWT with correct requestHash
+        let calculated_request_hash = "test-request-hash";
+        let outer_token = generate_outer_token(
+            &client_some_private_key,
+            &inner_token,
+            calculated_request_hash,
+        );
+
+        // 🧪 Call the function under test
+        let user = verify(&outer_token, Some(&jwks_url), calculated_request_hash)
+            .await
+            .expect("should succeed");
+
+        assert_eq!(user.success, true);
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_with_base64url_der_public_key_fallback() {
+        let (developer_kid, developer_some_private_key, client_some_private_key, jwks_url) =
+            generate_keys_and_mock_jwks_server().await;
+
+        // Reproduce what Android emits: base64url-encoded SubjectPublicKeyInfo DER.
+        // We don't have direct access to the raw DER through `jwtk`, so we round-trip
+        // through PEM (strip BEGIN/END lines + whitespace, decode standard base64, then
+        // re-encode as URL_SAFE_NO_PAD).
+        let pem = client_some_private_key.public_key_to_pem().unwrap();
+        let der_b64 = pem
+            .lines()
+            .filter(|line| !line.starts_with("-----"))
+            .collect::<String>();
+        let der = base64::engine::general_purpose::STANDARD
+            .decode(der_b64)
+            .unwrap();
+        let base64url_der = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(der);
+
+        // 🧪 Create an inner JWT that uses a **base64url DER** public key string
+        let inner_token =
+            generate_inner_token(&developer_some_private_key, &developer_kid, &base64url_der);
         let calculated_request_hash = "test-request-hash";
         let outer_token = generate_outer_token(
             &client_some_private_key,
