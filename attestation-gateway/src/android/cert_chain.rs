@@ -12,24 +12,12 @@ use crate::android::{
 const NID_SERIAL_NUMBER: i32 = 105;
 
 #[derive(Debug, Error)]
-pub enum CertChainError {
-    #[error("device certificate: {0}")]
-    SessionCert(#[source] SessionCertError),
-
-    #[error("intermediate certificate: {0}")]
-    IntermediateCert(#[source] IntermediateCertError),
-
-    #[error("root certificate: {0}")]
-    RootCert(#[source] RootCertError),
-
-    #[error("invalid chain length")]
-    ChainLength,
+pub enum CertSerialError {
+    #[error("serial number error")]
+    SerialNumber,
 
     #[error("issued to decoding error")]
     IssuedToDecoding,
-
-    #[error("serial number error")]
-    SerialNumber,
 }
 
 /// ASN.1 serial number in the two string forms used as keys in Google's attestation status JSON.
@@ -44,6 +32,38 @@ pub struct CertSerial {
 }
 
 impl CertSerial {
+    pub fn from_x509(cert: &X509) -> Result<Self, CertSerialError> {
+        let bn = cert
+            .serial_number()
+            .to_bn()
+            .map_err(|_| CertSerialError::SerialNumber)?;
+
+        let decimal = bn
+            .to_dec_str()
+            .map_err(|_| CertSerialError::SerialNumber)?
+            .to_string();
+
+        let hex = bn
+            .to_hex_str()
+            .map_err(|_| CertSerialError::SerialNumber)?
+            .to_string()
+            .to_lowercase();
+
+        let issued_to = cert
+            .subject_name()
+            .entries()
+            .filter(|e| e.object().nid().as_raw() == NID_SERIAL_NUMBER)
+            .map(|e| e.data().as_utf8().map(|v| String::from(&**v)))
+            .collect::<Result<Vec<String>, openssl::error::ErrorStack>>()
+            .map_err(|_| CertSerialError::IssuedToDecoding)?;
+
+        Ok(Self {
+            issued_to,
+            decimal,
+            hex,
+        })
+    }
+
     /// `true` if either representation appears in [`AndroidRevocationList`].
     #[must_use]
     pub fn is_revoked(&self, list: &RevocationList) -> bool {
@@ -65,12 +85,39 @@ impl CertSerial {
     }
 }
 
+impl CertSerialError {
+    pub fn reason_tag(&self) -> String {
+        match self {
+            Self::SerialNumber => "serial_number".to_string(),
+            Self::IssuedToDecoding => "issued_to_decoding".to_string(),
+        }
+    }
+
+    pub const fn is_internal_error(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum CertChainError {
+    #[error("device certificate: {0}")]
+    SessionCert(#[source] SessionCertError),
+
+    #[error("intermediate certificate: {0}")]
+    IntermediateCert(#[source] IntermediateCertError),
+
+    #[error("root certificate: {0}")]
+    RootCert(#[source] RootCertError),
+
+    #[error("invalid chain length")]
+    ChainLength,
+}
+
 pub struct CertChain {
     session_cert: SessionCert,
     device_cert: IntermediateCert,
     intermediate_certs: Vec<IntermediateCert>,
     root_cert: RootCert,
-    serials: Vec<CertSerial>,
 }
 
 impl CertChain {
@@ -91,31 +138,29 @@ impl CertChain {
 
         let intermediate_certs = intermediate_certs
             .iter()
-            .map(|c| IntermediateCert::from_x509(c))
+            .map(IntermediateCert::from_x509)
             .collect::<Result<Vec<IntermediateCert>, IntermediateCertError>>()
             .map_err(CertChainError::IntermediateCert)?;
 
         let root_cert = RootCert::new(root_cert).map_err(CertChainError::RootCert)?;
-
-        let serials = cert_chain
-            .iter()
-            .map(certificate_serial)
-            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
             session_cert,
             device_cert,
             intermediate_certs,
             root_cert,
-            serials,
         })
     }
 
-    /// Serial numbers for each certificate in the validated chain, **leaf first, root last** (same
-    /// order as the client-sent chain). Use [`CertificateSerial::is_revoked`] against
-    /// [`AndroidRevocationList`] (Google's feed keys are decimal or lowercase hex).
-    pub fn serials(&self) -> &[CertSerial] {
-        &self.serials
+    #[must_use]
+    pub fn any_serial_revoked(&self, list: &RevocationList) -> bool {
+        self.session_cert().serial().is_revoked(list)
+            || self.device_cert().serial().is_revoked(list)
+            || self
+                .intermediate_certs()
+                .iter()
+                .any(|c| c.serial().is_revoked(list))
+            || self.root_cert().serial().is_revoked(list)
     }
 
     pub const fn session_cert(&self) -> &SessionCert {
@@ -126,41 +171,13 @@ impl CertChain {
         &self.device_cert
     }
 
+    pub fn intermediate_certs(&self) -> &[IntermediateCert] {
+        &self.intermediate_certs
+    }
+
     pub const fn root_cert(&self) -> &RootCert {
         &self.root_cert
     }
-}
-
-fn certificate_serial(cert: &X509) -> Result<CertSerial, CertChainError> {
-    let bn = cert
-        .serial_number()
-        .to_bn()
-        .map_err(|_| CertChainError::SerialNumber)?;
-
-    let decimal = bn
-        .to_dec_str()
-        .map_err(|_| CertChainError::SerialNumber)?
-        .to_string();
-
-    let hex = bn
-        .to_hex_str()
-        .map_err(|_| CertChainError::SerialNumber)?
-        .to_string()
-        .to_lowercase();
-
-    let issued_to = cert
-        .subject_name()
-        .entries()
-        .filter(|e| e.object().nid().as_raw() == NID_SERIAL_NUMBER)
-        .map(|e| e.data().as_utf8().map(|v| String::from(&**v)))
-        .collect::<Result<Vec<String>, openssl::error::ErrorStack>>()
-        .map_err(|_| CertChainError::IssuedToDecoding)?;
-
-    Ok(CertSerial {
-        issued_to,
-        decimal,
-        hex,
-    })
 }
 
 impl CertChainError {
@@ -176,8 +193,6 @@ impl CertChainError {
                 format!("root_certificate_{}", e.reason_tag())
             }
             Self::ChainLength => "chain_length".to_string(),
-            Self::IssuedToDecoding => "issued_to_decoding".to_string(),
-            Self::SerialNumber => "serial_number".to_string(),
         }
     }
 
@@ -186,7 +201,7 @@ impl CertChainError {
             Self::SessionCert(e) => e.is_internal_error(),
             Self::IntermediateCert(e) => e.is_internal_error(),
             Self::RootCert(e) => e.is_internal_error(),
-            Self::ChainLength | Self::IssuedToDecoding | Self::SerialNumber => false,
+            Self::ChainLength => false,
         }
     }
 }

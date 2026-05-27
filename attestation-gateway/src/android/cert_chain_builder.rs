@@ -253,6 +253,8 @@ mod tests {
     #[allow(unused_imports)]
     use super::*;
 
+    use crate::android::intermediate_cert::IntermediateCert;
+
     #[test]
     fn test_certificate_order1() {
         let cert_chain_builder = CertChainBuilder::new_from_default_pem().unwrap();
@@ -270,6 +272,29 @@ mod tests {
             .build_chain_from_base64(&[cert1.clone(), cert3.clone(), cert2.clone()])
             .unwrap();
 
-        assert_eq!(cert_chain1.serials(), cert_chain2.serials());
+        assert_eq!(
+            cert_chain1.session_cert().serial(),
+            cert_chain2.session_cert().serial()
+        );
+        assert_eq!(
+            cert_chain1.device_cert().serial(),
+            cert_chain2.device_cert().serial()
+        );
+        assert_eq!(
+            cert_chain1
+                .intermediate_certs()
+                .iter()
+                .map(IntermediateCert::serial)
+                .collect::<Vec<_>>(),
+            cert_chain2
+                .intermediate_certs()
+                .iter()
+                .map(IntermediateCert::serial)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            cert_chain1.root_cert().serial(),
+            cert_chain2.root_cert().serial()
+        );
     }
 }
