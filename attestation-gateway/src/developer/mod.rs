@@ -137,10 +137,10 @@ fn validate_developer_token_claims(
     outer_token: &ActorTokenClaims,
     request_hash: &str,
 ) -> eyre::Result<()> {
-    if outer_token.jti != request_hash {
+    if outer_token.request_hash != request_hash {
         let error_message = format!(
             "Outer token and request hash do not match: {left} != {right}",
-            left = outer_token.jti,
+            left = outer_token.request_hash,
             right = request_hash
         );
         tracing::warn!(error_message);
@@ -166,8 +166,8 @@ mod tests {
             .set_iat_now()
             .set_iss("https://relying-party.example.com")
             .set_sub("test@relying-party.example.com")
-            .insert("publicKey", client_pub_key)
-            .insert("aud", "relying-party.certificate")
+            .insert("public_key", client_pub_key)
+            .insert("aud", "lp.certificate")
             .set_kid(kid);
 
         jwtk::sign(&mut claims, key).unwrap()
@@ -182,7 +182,7 @@ mod tests {
         claims
             .set_exp_from_now(Duration::from_secs(60))
             .set_iat_now()
-            .set_jti(request_hash)
+            .insert("request_hash", request_hash)
             .insert("certificate", certificate);
 
         jwtk::sign(&mut claims, client_key).unwrap()

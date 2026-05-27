@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct DeveloperTokenExtraClaims {
     pub public_key: String,
     pub extra: Option<HashMap<String, String>>,
@@ -14,26 +13,29 @@ pub struct DeveloperTokenExtraClaims {
 /// This represents the payload of the inner JWT that is embedded within the outer actor token's
 /// certificate field. The inner JWT contains the developer's public key and standard JWT claims.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct DeveloperTokenClaims {
-    /// Token expiration time (Unix timestamp)
-    pub exp: f64,
+    /// Token expiration time (Unix timestamp). Optional — long-lived certificates
+    /// are issued without `exp`.
+    pub exp: Option<f64>,
     /// Token issued at time (Unix timestamp)
     pub iat: f64,
     /// Issuer of the token
     pub iss: String,
-    /// Subject (typically the developer/user identifier)
-    pub sub: String,
+    /// Subject. Optional — some certificate roles carry the subject identity in
+    /// `extra` instead of in `sub`.
+    pub sub: Option<String>,
     /// The developer's public key (can be in PEM or JWK format)
     pub public_key: String,
-    /// Audience of the token - relying-party.certificate
+    /// Audience of the token
     pub aud: String,
+    /// Optional informational identifier for the inner certificate (used for
+    /// auditing/revocation). Unrelated to the outer token's `request_hash`.
+    pub jti: Option<String>,
     /// Passthrough claims
     pub extra: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct ActorTokenExtraClaims {
     pub certificate: String,
 }
@@ -42,16 +44,17 @@ pub struct ActorTokenExtraClaims {
 ///
 /// This represents the payload of the outer JWT that wraps the developer token.
 /// The outer token contains standard JWT claims along with a certificate field
-/// that holds the inner developer token as a JWT string.
+/// that holds the inner developer token as a JWT string. It also binds itself
+/// to a specific request via the `request_hash` claim.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct ActorTokenClaims {
     /// Token expiration time (Unix timestamp)
     pub exp: f64,
     /// Token issued at time (Unix timestamp)
     pub iat: f64,
-    /// JWT ID - unique identifier for this token that contains the request hash
-    pub jti: String,
+    /// Hash of the request body — must equal the `request_hash` value AG
+    /// receives alongside this token.
+    pub request_hash: String,
     /// The inner developer token as a JWT string
     pub certificate: String,
 }

@@ -266,7 +266,9 @@ async fn verify_android_or_apple_integrity(
         .client_exception
         .map(|err| err.internal_debug_info);
     if let Some(developer_token) = verify_result.developer_token {
-        report.dev_check_sub = Some(developer_token.sub);
+        // `sub` is optional — some certificate roles carry the issuer identity
+        // in `extra.issuer_email` instead.
+        report.dev_check_sub = developer_token.sub;
         report.extra = developer_token.extra;
     }
 
