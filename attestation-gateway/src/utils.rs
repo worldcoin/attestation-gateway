@@ -132,22 +132,31 @@ pub enum BundleIdentifier {
     // World App
     #[serde(rename = "com.worldcoin")]
     AndroidProdWorldApp,
+
     #[serde(rename = "com.worldcoin.staging")]
     AndroidStageWorldApp,
+
     #[serde(rename = "com.worldcoin.dev")]
     AndroidDevWorldApp,
+
     #[serde(rename = "org.worldcoin.insight")]
     IOSProdWorldApp,
+
     #[serde(rename = "org.worldcoin.insight.staging")]
     IOSStageWorldApp,
 
     // World ID
     #[serde(rename = "org.world.id")]
     IOSProdWorldID,
+
     #[serde(rename = "org.world.staging.id")]
     IOSStageWorldID,
+
     #[serde(rename = "org.world.id.staging")]
     AndroidStageWorldID,
+
+    #[serde(rename = "org.world.id.dev")]
+    AndroidDevWorldID,
 }
 
 impl BundleIdentifier {
@@ -157,7 +166,8 @@ impl BundleIdentifier {
             Self::AndroidProdWorldApp
             | Self::AndroidStageWorldApp
             | Self::AndroidDevWorldApp
-            | Self::AndroidStageWorldID => Platform::Android,
+            | Self::AndroidStageWorldID
+            | Self::AndroidDevWorldID => Platform::Android,
             Self::IOSProdWorldApp
             | Self::IOSStageWorldApp
             | Self::IOSProdWorldID
@@ -172,7 +182,7 @@ impl BundleIdentifier {
                 // cspell:disable-next-line
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
-            Self::AndroidDevWorldApp | Self::AndroidStageWorldID => {
+            Self::AndroidDevWorldApp | Self::AndroidStageWorldID | Self::AndroidDevWorldID => {
                 Some("6a6a1474b5cbbb2b1aa57e0bc3")
             }
             // World ID Android staging is currently only reached via the Laissez-Passer
@@ -193,7 +203,7 @@ impl BundleIdentifier {
             Self::AndroidProdWorldApp | Self::AndroidStageWorldApp => {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
             }
-            Self::AndroidDevWorldApp | Self::AndroidStageWorldID => {
+            Self::AndroidDevWorldApp | Self::AndroidStageWorldID | Self::AndroidDevWorldID => {
                 Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=")
             }
             // See note on `certificate_sha256_digest` above.
@@ -210,7 +220,8 @@ impl BundleIdentifier {
             Self::AndroidProdWorldApp
             | Self::AndroidStageWorldApp
             | Self::AndroidDevWorldApp
-            | Self::AndroidStageWorldID => None,
+            | Self::AndroidStageWorldID
+            | Self::AndroidDevWorldID => None,
             // cspell:disable
             Self::IOSStageWorldApp => Some("35RXKB6738.org.worldcoin.insight.staging"),
             Self::IOSProdWorldApp => Some("35RXKB6738.org.worldcoin.insight"),
@@ -228,6 +239,7 @@ impl Display for BundleIdentifier {
             Self::AndroidStageWorldApp => write!(f, "com.worldcoin.staging"),
             Self::AndroidDevWorldApp => write!(f, "com.worldcoin.dev"),
             Self::AndroidStageWorldID => write!(f, "org.world.id.staging"),
+            Self::AndroidDevWorldID => write!(f, "org.world.id.dev"),
             Self::IOSProdWorldApp => write!(f, "org.worldcoin.insight"),
             Self::IOSStageWorldApp => write!(f, "org.worldcoin.insight.staging"),
             Self::IOSProdWorldID => write!(f, "org.world.id"),
