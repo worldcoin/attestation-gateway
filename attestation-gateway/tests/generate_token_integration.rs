@@ -102,10 +102,8 @@ fn get_global_config_extension_with_pem(
     Extension(config)
 }
 
-fn extension_nonce_db(
-    redis: &redis::aio::ConnectionManager,
-) -> Extension<attestation_gateway::nonces::NonceDb> {
-    Extension(attestation_gateway::nonces::NonceDb::new(redis.clone()))
+fn extension_nonce_db() -> Extension<attestation_gateway::nonces::NonceDb> {
+    Extension(attestation_gateway::nonces::NonceDb::new())
 }
 
 async fn extension_android_attestation(
@@ -166,7 +164,7 @@ async fn get_api_router() -> aide::axum::ApiRouter {
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension())
         .layer(extension_android_attestation(&redis_ext.0).await)
-        .layer(extension_nonce_db(&redis_ext.0))
+        .layer(extension_nonce_db())
         .layer(redis_ext)
         .layer(get_kinesis_extension().await)
 }
@@ -664,7 +662,7 @@ async fn test_server_error_is_properly_logged() {
             .layer(get_aws_config_extension().await)
             .layer(get_local_config_extension())
             .layer(extension_android_attestation(&redis_ext.0).await)
-            .layer(extension_nonce_db(&redis_ext.0))
+            .layer(extension_nonce_db())
             .layer(redis_ext)
             .layer(get_kinesis_extension().await)
     }
@@ -732,7 +730,7 @@ async fn test_apple_initial_attestation_e2e_success() {
         .layer(get_aws_config_extension().await)
         .layer(get_global_config_extension_with_pem(test_data.root_ca_pem))
         .layer(extension_android_attestation(&redis_ext.0).await)
-        .layer(extension_nonce_db(&redis_ext.0))
+        .layer(extension_nonce_db())
         .layer(redis_ext)
         .layer(get_kinesis_extension().await);
 

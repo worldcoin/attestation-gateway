@@ -122,21 +122,24 @@ pub async fn handler(
         });
     }
 
-    let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
-        if matches!(e, NonceDbError::NonceNotFound) {
-            RequestError {
-                code: ErrorCode::BadRequest,
-                details: Some("Nonce not found".to_string()),
-            }
-        } else {
-            tracing::error!(error = ?e, "Error consuming token nonce");
+    let token_details = nonce_db
+        .consume_nonce(&mut redis, &request.nonce)
+        .await
+        .map_err(|e| {
+            if matches!(e, NonceDbError::NonceNotFound) {
+                RequestError {
+                    code: ErrorCode::BadRequest,
+                    details: Some("Nonce not found".to_string()),
+                }
+            } else {
+                tracing::error!(error = ?e, "Error consuming token nonce");
 
-            RequestError {
-                code: ErrorCode::InternalServerError,
-                details: Some("Error consuming token nonce".to_string()),
+                RequestError {
+                    code: ErrorCode::InternalServerError,
+                    details: Some("Error consuming token nonce".to_string()),
+                }
             }
-        }
-    })?;
+        })?;
 
     let challenge = format!("n={},av={}", request.nonce, request.app_version);
     let platform = request.bundle_identifier.platform();

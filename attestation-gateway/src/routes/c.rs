@@ -1,5 +1,6 @@
 use axum::{Extension, Json};
 use chrono::{DateTime, Utc};
+use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::nonces::{NonceDb, TokenDetails};
@@ -39,6 +40,7 @@ pub struct Response {
 /// ```
 pub async fn handler(
     Extension(mut nonce_db): Extension<NonceDb>,
+    Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
@@ -54,14 +56,17 @@ pub async fn handler(
     }
 
     let token_details = TokenDetails::from_aud(request.aud.clone());
-    let nonce = nonce_db.generate_nonce(&token_details).await.map_err(|e| {
-        tracing::error!(error = ?e, "Failed to generate nonce.");
+    let nonce = nonce_db
+        .generate_nonce(&mut redis, &token_details)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "Failed to generate nonce.");
 
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: Some("Failed to generate nonce.".to_string()),
-        }
-    })?;
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: Some("Failed to generate nonce.".to_string()),
+            }
+        })?;
 
     let device_key_expires_at =
         DateTime::<Utc>::from_timestamp(token_details.exp_max, 0).ok_or(RequestError {
