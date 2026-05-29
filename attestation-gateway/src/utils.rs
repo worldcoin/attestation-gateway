@@ -172,12 +172,13 @@ impl BundleIdentifier {
                 // cspell:disable-next-line
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
-            Self::AndroidDevWorldApp => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
+            Self::AndroidDevWorldApp | Self::AndroidStageWorldID => {
+                Some("6a6a1474b5cbbb2b1aa57e0bc3")
+            }
             // World ID Android staging is currently only reached via the Laissez-Passer
             // path, which bypasses Play Integrity / hardware attestation entirely. If
             // `/g` (Play Integrity) or `/a` (hardware attestation) are wired up for this
             // bundle later, fill in the actual signing-certificate digest here.
-            Self::AndroidStageWorldID => None,
             Self::IOSProdWorldApp
             | Self::IOSStageWorldApp
             | Self::IOSProdWorldID
@@ -192,9 +193,10 @@ impl BundleIdentifier {
             Self::AndroidProdWorldApp | Self::AndroidStageWorldApp => {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
             }
-            Self::AndroidDevWorldApp => Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="),
+            Self::AndroidDevWorldApp | Self::AndroidStageWorldID => {
+                Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=")
+            }
             // See note on `certificate_sha256_digest` above.
-            Self::AndroidStageWorldID => None,
             Self::IOSProdWorldApp
             | Self::IOSStageWorldApp
             | Self::IOSProdWorldID
