@@ -34,7 +34,7 @@ pub async fn start(
         ..Default::default()
     };
 
-    let nonce_db = NonceDb::new(redis.clone());
+    let nonce_db = NonceDb::new();
 
     let android_rate_limit_per_day = env::var("ANDROID_RATE_LIMIT_PER_DAY").ok().map(|v| {
         v.parse()
