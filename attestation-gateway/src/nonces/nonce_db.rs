@@ -21,18 +21,14 @@ pub enum NonceDbError {
 
 #[derive(Clone)]
 pub struct NonceDb {
-    // redis: ConnectionManager,
+    redis: ConnectionManager,
 }
 
 impl NonceDb {
-    // #[must_use]
-    // #[expect(clippy::missing_const_for_fn)] // `ConnectionManager` is not usable in `const`
-    // pub fn new(redis: ConnectionManager) -> Self {
-    //     Self { redis }
-    // }
-
-    pub fn new() -> Self {
-        Self {}
+    #[must_use]
+    #[expect(clippy::missing_const_for_fn)] // `ConnectionManager` is not usable in `const`
+    pub fn new(redis: ConnectionManager) -> Self {
+        Self { redis }
     }
 
     /// # Errors
@@ -40,7 +36,6 @@ impl NonceDb {
     /// When `token_details` cannot be serialized to JSON, or Redis rejects `SET`.
     pub async fn generate_nonce(
         &mut self,
-        redis: &mut ConnectionManager,
         token_details: &TokenDetails,
     ) -> Result<String, NonceDbError> {
         let mut nonce = [0; 16];
@@ -56,7 +51,7 @@ impl NonceDb {
             ))
             .conditional_set(ExistenceCheck::NX);
 
-        redis
+        self.redis
             .set_options::<String, String>(key, value, options)
             .await
             .map_err(NonceDbError::RedisError)?;
@@ -67,13 +62,10 @@ impl NonceDb {
     /// # Errors
     ///
     /// When Redis `GETDEL` fails, the value is missing, or JSON does not decode to [`TokenDetails`].
-    pub async fn consume_nonce(
-        &mut self,
-        redis: &mut ConnectionManager,
-        nonce: &str,
-    ) -> Result<TokenDetails, NonceDbError> {
+    pub async fn consume_nonce(&mut self, nonce: &str) -> Result<TokenDetails, NonceDbError> {
         let key = format!("nonce:{nonce}");
-        let value = redis
+        let value = self
+            .redis
             .get_del::<String>(key)
             .await
             .map_err(NonceDbError::RedisError)?
