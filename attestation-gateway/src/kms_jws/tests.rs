@@ -89,7 +89,7 @@ async fn test_generate_output_token() {
     let output_token_payload = OutputTokenPayload {
         aud: "example.worldcoin.org".to_string(),
         request_hash: "a_sample_request_hash".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         pass: true,
         out: OutEnum::Pass,
         error: None,

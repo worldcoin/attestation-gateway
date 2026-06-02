@@ -145,7 +145,7 @@ mod tests {
 
         let error_report = verify(
             &test_jwe,
-            &BundleIdentifier::AndroidStageWorldApp,
+            &BundleIdentifier::ComWorldcoinStaging,
             "test",
             jwe_sk,
             jws_pk,
@@ -180,7 +180,7 @@ mod tests {
 
         let error_report = verify(
             &test_jwe,
-            &BundleIdentifier::AndroidStageWorldApp,
+            &BundleIdentifier::ComWorldcoinStaging,
             "test",
             jwe_sk,
             jws_pk,

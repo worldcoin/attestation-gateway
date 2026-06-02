@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use aws_config::SdkConfig;
 
 use axum::{Extension, Json};
@@ -101,6 +99,31 @@ impl IntegrityTokenPayload {
     }
 }
 
+fn infer_platform(request: &Request) -> Result<Platform, RequestError> {
+    let has_android = request.android_attestation.is_some();
+    let has_apple = request.apple_attestation.is_some();
+
+    if has_android && has_apple {
+        return Err(RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("Conflicting attestation fields for platform inference.".to_string()),
+        });
+    }
+
+    if has_android {
+        return Ok(Platform::Android);
+    }
+
+    if has_apple {
+        return Ok(Platform::AppleIOS);
+    }
+
+    Err(RequestError {
+        code: ErrorCode::BadRequest,
+        details: Some("Could not infer platform from attestation fields.".to_string()),
+    })
+}
+
 pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
@@ -139,7 +162,7 @@ pub async fn handler(
     })?;
 
     let challenge = format!("n={},av={}", request.nonce, request.app_version);
-    let platform = request.bundle_identifier.platform();
+    let platform = infer_platform(&request)?;
 
     let device_public_key = match platform {
         Platform::AppleIOS => {
@@ -316,4 +339,45 @@ async fn generate_integrity_token(
     })?;
 
     Ok(integrity_token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_request() -> Request {
+        Request {
+            nonce: "nonce".to_string(),
+            exp: None,
+            app_version: "1.0.0".to_string(),
+            bundle_identifier: BundleIdentifier::OrgWorldId,
+            apple_attestation: None,
+            android_attestation: None,
+        }
+    }
+
+    #[test]
+    fn infer_platform_android_from_android_attestation() {
+        let mut request = base_request();
+        request.android_attestation = Some(vec!["cert".to_string()]);
+        assert_eq!(infer_platform(&request).unwrap(), Platform::Android);
+    }
+
+    #[test]
+    fn infer_platform_ios_from_apple_attestation() {
+        let mut request = base_request();
+        request.apple_attestation = Some("attestation".to_string());
+        assert_eq!(infer_platform(&request).unwrap(), Platform::AppleIOS);
+    }
+
+    #[test]
+    fn infer_platform_rejects_both_attestations() {
+        let mut request = base_request();
+        request.android_attestation = Some(vec!["cert".to_string()]);
+        request.apple_attestation = Some("attestation".to_string());
+        assert_eq!(
+            infer_platform(&request).unwrap_err().code,
+            ErrorCode::BadRequest
+        );
+    }
 }

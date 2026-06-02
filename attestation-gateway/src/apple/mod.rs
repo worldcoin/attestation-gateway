@@ -174,11 +174,11 @@ impl AAGUID {
         bundle_identifier: &BundleIdentifier,
     ) -> eyre::Result<Vec<Self>> {
         match bundle_identifier {
-            BundleIdentifier::IOSProdWorldApp | BundleIdentifier::IOSProdWorldID => {
+            BundleIdentifier::OrgWorldcoinInsight | BundleIdentifier::OrgWorldId => {
                 // REVIEW: Temporarily allowing local development for production app. Remove after April 10, 2025.
                 Ok([Self::AppAttest, Self::AppAttestDevelop].to_vec())
             }
-            BundleIdentifier::IOSStageWorldApp | BundleIdentifier::IOSStageWorldID => {
+            BundleIdentifier::OrgWorldcoinInsightStaging | BundleIdentifier::OrgWorldStagingId => {
                 // Staging app can be operating in either the development environment (e.g. local development) or
                 // production environment (e.g. through TestFlight distribution)
                 Ok([Self::AppAttest, Self::AppAttestDevelop].to_vec())
