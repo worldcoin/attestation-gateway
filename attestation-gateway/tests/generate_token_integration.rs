@@ -446,7 +446,7 @@ async fn test_android_token_generation_with_invalid_attributes() {
             "allowRetry": false,
             "error": {
                 "code": "bad_request",
-                "message": "`integrity_token` is required for this bundle identifier."
+                "message": "Could not infer platform from attestation fields."
             }
         })
     );
@@ -1167,7 +1167,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
             "allowRetry": false,
             "error": {
                 "code": "bad_request",
-                "message": "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
+                "message": "`apple_assertion` and `apple_public_key` are required when inferring iOS platform."
             }
         })
     );
@@ -1904,10 +1904,9 @@ async fn test_developer_token_generation_e2e_missing_token() {
 
     let api_router = get_api_router().await;
 
-    // note: no Authorization header is sent below, so the laissez-passer bypass
-    // does not kick in and Android verification requires `integrity_token`
+    // note: no Authorization header and no attestation fields, so platform cannot be inferred
     let token_generation_request = TokenGenerationRequest {
-        integrity_token: None, // note the missing token
+        integrity_token: None,
         aud: "relying-party.example.com".to_string(),
         bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
@@ -1942,7 +1941,7 @@ async fn test_developer_token_generation_e2e_missing_token() {
             "allowRetry": false,
             "error": {
                 "code": "bad_request",
-                "message": "`integrity_token` is required for this bundle identifier."
+                "message": "Could not infer platform from attestation fields."
             }
         })
     );
