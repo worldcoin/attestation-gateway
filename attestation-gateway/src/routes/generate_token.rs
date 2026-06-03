@@ -14,13 +14,62 @@ use crate::{
     kms_jws,
     utils::{
         BundleIdentifier, CheckType, ClientException, DataReport, ErrorCode, GlobalConfig,
-        IntegrityVerificationInput, OutEnum, OutputTokenPayload, RequestError,
+        IntegrityVerificationInput, OutEnum, OutputTokenPayload, Platform, RequestError,
         TokenGenerationRequest, TokenGenerationResponse, handle_redis_error,
     },
 };
 
 const REQUEST_HASH_REDIS_KEY_PREFIX: &str = "request_hash:";
 const REQUEST_HASH_CACHE_TTL: u64 = 60 * 60 * 24; // 24 hours
+
+fn infer_platform(request: &TokenGenerationRequest) -> Result<Platform, RequestError> {
+    let has_integrity_token = request.integrity_token.is_some();
+    let has_apple_initial = request.apple_initial_attestation.is_some();
+    let has_apple_assertion = request.apple_assertion.is_some();
+    let has_apple_public_key = request.apple_public_key.is_some();
+
+    if has_integrity_token && (has_apple_initial || has_apple_assertion || has_apple_public_key) {
+        return Err(RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("Conflicting attestation fields for platform inference.".to_string()),
+        });
+    }
+
+    if has_integrity_token {
+        return Ok(Platform::Android);
+    }
+
+    if has_apple_initial {
+        if has_apple_assertion || has_apple_public_key {
+            return Err(RequestError {
+                code: ErrorCode::BadRequest,
+                details: Some(
+                    "For initial attestations, `apple_assertion` and `apple_public_key` attributes are not allowed."
+                        .to_string(),
+                ),
+            });
+        }
+        return Ok(Platform::AppleIOS);
+    }
+
+    if has_apple_assertion || has_apple_public_key {
+        if has_apple_assertion && has_apple_public_key {
+            return Ok(Platform::AppleIOS);
+        }
+        return Err(RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some(
+                "`apple_assertion` and `apple_public_key` are required when inferring iOS platform."
+                    .to_string(),
+            ),
+        });
+    }
+
+    Err(RequestError {
+        code: ErrorCode::BadRequest,
+        details: Some("Could not infer platform from attestation fields.".to_string()),
+    })
+}
 
 // NOTE: Integration tests for route handlers are in the `/tests` module
 
@@ -49,8 +98,14 @@ pub async fn handler(
     // attestation and is verified against the issuer JWKS instead.
     let laissez_passer_token = extract_bearer_token(&headers)?;
 
+    let platform = if request.client_error.is_some() || laissez_passer_token.is_some() {
+        None
+    } else {
+        Some(infer_platform(&request)?)
+    };
+
     let integrity_verification_input =
-        IntegrityVerificationInput::from_request(&request, laissez_passer_token)?;
+        IntegrityVerificationInput::from_request(&request, laissez_passer_token, platform)?;
 
     handle_client_error_if_applicable(
         &integrity_verification_input,
@@ -460,4 +515,56 @@ fn extract_bearer_token(headers: &HeaderMap) -> Result<Option<String>, RequestEr
     }
 
     Ok(Some(token.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::TokenGenerationRequest;
+
+    fn base_request() -> TokenGenerationRequest {
+        TokenGenerationRequest {
+            integrity_token: None,
+            client_error: None,
+            aud: "test".to_string(),
+            bundle_identifier: BundleIdentifier::OrgWorldId,
+            request_hash: "hash".to_string(),
+            apple_initial_attestation: None,
+            apple_public_key: None,
+            apple_assertion: None,
+        }
+    }
+
+    #[test]
+    fn infer_platform_android_from_integrity_token() {
+        let mut request = base_request();
+        request.integrity_token = Some("token".to_string());
+        assert_eq!(infer_platform(&request).unwrap(), Platform::Android);
+    }
+
+    #[test]
+    fn infer_platform_ios_from_apple_initial_attestation() {
+        let mut request = base_request();
+        request.apple_initial_attestation = Some("attestation".to_string());
+        assert_eq!(infer_platform(&request).unwrap(), Platform::AppleIOS);
+    }
+
+    #[test]
+    fn infer_platform_ios_from_apple_assertion_pair() {
+        let mut request = base_request();
+        request.apple_assertion = Some("assertion".to_string());
+        request.apple_public_key = Some("key".to_string());
+        assert_eq!(infer_platform(&request).unwrap(), Platform::AppleIOS);
+    }
+
+    #[test]
+    fn infer_platform_rejects_conflicting_fields() {
+        let mut request = base_request();
+        request.integrity_token = Some("token".to_string());
+        request.apple_initial_attestation = Some("attestation".to_string());
+        assert_eq!(
+            infer_platform(&request).unwrap_err().code,
+            ErrorCode::BadRequest
+        );
+    }
 }

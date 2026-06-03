@@ -111,7 +111,7 @@ pub const SIGNING_CONFIG: SigningConfigDefinition = SigningConfigDefinition {
     key_ttl_verification: 60 * 60 * 24 * 182, // 182 days
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     AppleIOS,
     Android,
@@ -126,107 +126,91 @@ impl Display for Platform {
     }
 }
 
-#[allow(clippy::enum_variant_names)] // Only World App is supported right now (postfix)
 #[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema, PartialEq, Eq, Clone)]
 pub enum BundleIdentifier {
-    // World App
     #[serde(rename = "com.worldcoin")]
-    AndroidProdWorldApp,
+    ComWorldcoin,
 
     #[serde(rename = "com.worldcoin.staging")]
-    AndroidStageWorldApp,
+    ComWorldcoinStaging,
 
     #[serde(rename = "com.worldcoin.dev")]
-    AndroidDevWorldApp,
+    ComWorldcoinDev,
 
     #[serde(rename = "org.worldcoin.insight")]
-    IOSProdWorldApp,
+    OrgWorldcoinInsight,
 
     #[serde(rename = "org.worldcoin.insight.staging")]
-    IOSStageWorldApp,
+    OrgWorldcoinInsightStaging,
 
-    // World ID
     #[serde(rename = "org.world.id")]
-    IOSProdWorldID,
+    OrgWorldId,
 
     #[serde(rename = "org.world.staging.id")]
-    IOSStageWorldID,
+    OrgWorldStagingId,
 
     #[serde(rename = "org.world.id.staging")]
-    AndroidStageWorldID,
+    OrgWorldIdStaging,
 
     #[serde(rename = "org.world.id.dev")]
-    AndroidDevWorldID,
+    OrgWorldIdDev,
 }
 
 impl BundleIdentifier {
+    /// Play Integrity prod checks (`PlayRecognized`, `Licensed`) for World App and World ID prod.
     #[must_use]
-    pub const fn platform(&self) -> Platform {
-        match self {
-            Self::AndroidProdWorldApp
-            | Self::AndroidStageWorldApp
-            | Self::AndroidDevWorldApp
-            | Self::AndroidStageWorldID
-            | Self::AndroidDevWorldID => Platform::Android,
-            Self::IOSProdWorldApp
-            | Self::IOSStageWorldApp
-            | Self::IOSProdWorldID
-            | Self::IOSStageWorldID => Platform::AppleIOS,
-        }
+    pub const fn requires_play_store_prod_checks(&self) -> bool {
+        matches!(self, Self::ComWorldcoin | Self::OrgWorldId)
     }
 
+    /// Expected app signing-certificate digest (hex) for Android Play Integrity (`POST /g`).
     #[must_use]
-    pub const fn certificate_sha256_digest(&self) -> Option<&str> {
+    pub const fn android_certificate_sha256_digest(&self) -> Option<&str> {
         match self {
-            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp => {
+            Self::ComWorldcoin | Self::ComWorldcoinStaging => {
                 // cspell:disable-next-line
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
-            Self::AndroidDevWorldApp | Self::AndroidStageWorldID | Self::AndroidDevWorldID => {
-                Some("6a6a1474b5cbbb2b1aa57e0bc3")
-            }
-            // World ID Android staging is currently only reached via the Laissez-Passer
-            // path, which bypasses Play Integrity / hardware attestation entirely. If
-            // `/g` (Play Integrity) or `/a` (hardware attestation) are wired up for this
-            // bundle later, fill in the actual signing-certificate digest here.
-            Self::IOSProdWorldApp
-            | Self::IOSStageWorldApp
-            | Self::IOSProdWorldID
-            | Self::IOSStageWorldID => None,
+            Self::ComWorldcoinDev
+            | Self::OrgWorldId
+            | Self::OrgWorldIdStaging
+            | Self::OrgWorldIdDev => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
+            Self::OrgWorldcoinInsight
+            | Self::OrgWorldcoinInsightStaging
+            | Self::OrgWorldStagingId => None,
         }
     }
 
-    /// Expected app signing-certificate digest for **hardware attestation** (`POST /a`), base64-encoded.
+    /// Expected app signing-certificate digest (base64) for Android hardware attestation (`POST /a`).
     #[must_use]
-    pub const fn certificate_sha256_digest_base64(&self) -> Option<&'static str> {
+    pub const fn android_certificate_sha256_digest_base64(&self) -> Option<&'static str> {
         match self {
-            Self::AndroidProdWorldApp | Self::AndroidStageWorldApp => {
+            Self::ComWorldcoin | Self::ComWorldcoinStaging => {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
             }
-            Self::AndroidDevWorldApp | Self::AndroidStageWorldID | Self::AndroidDevWorldID => {
-                Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=")
-            }
-            // See note on `certificate_sha256_digest` above.
-            Self::IOSProdWorldApp
-            | Self::IOSStageWorldApp
-            | Self::IOSProdWorldID
-            | Self::IOSStageWorldID => None,
+            Self::ComWorldcoinDev
+            | Self::OrgWorldId
+            | Self::OrgWorldIdStaging
+            | Self::OrgWorldIdDev => Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="),
+            Self::OrgWorldcoinInsight
+            | Self::OrgWorldcoinInsightStaging
+            | Self::OrgWorldStagingId => None,
         }
     }
 
     #[must_use]
     pub const fn apple_app_id(&self) -> Option<&str> {
         match self {
-            Self::AndroidProdWorldApp
-            | Self::AndroidStageWorldApp
-            | Self::AndroidDevWorldApp
-            | Self::AndroidStageWorldID
-            | Self::AndroidDevWorldID => None,
+            Self::ComWorldcoin
+            | Self::ComWorldcoinStaging
+            | Self::ComWorldcoinDev
+            | Self::OrgWorldIdStaging
+            | Self::OrgWorldIdDev => None,
             // cspell:disable
-            Self::IOSStageWorldApp => Some("35RXKB6738.org.worldcoin.insight.staging"),
-            Self::IOSProdWorldApp => Some("35RXKB6738.org.worldcoin.insight"),
-            Self::IOSProdWorldID => Some("35RXKB6738.org.world.id"),
-            Self::IOSStageWorldID => Some("35RXKB6738.org.world.staging.id"),
+            Self::OrgWorldcoinInsightStaging => Some("35RXKB6738.org.worldcoin.insight.staging"),
+            Self::OrgWorldcoinInsight => Some("35RXKB6738.org.worldcoin.insight"),
+            Self::OrgWorldId => Some("35RXKB6738.org.world.id"),
+            Self::OrgWorldStagingId => Some("35RXKB6738.org.world.staging.id"),
             // cspell:enable
         }
     }
@@ -235,15 +219,15 @@ impl BundleIdentifier {
 impl Display for BundleIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::AndroidProdWorldApp => write!(f, "com.worldcoin"),
-            Self::AndroidStageWorldApp => write!(f, "com.worldcoin.staging"),
-            Self::AndroidDevWorldApp => write!(f, "com.worldcoin.dev"),
-            Self::AndroidStageWorldID => write!(f, "org.world.id.staging"),
-            Self::AndroidDevWorldID => write!(f, "org.world.id.dev"),
-            Self::IOSProdWorldApp => write!(f, "org.worldcoin.insight"),
-            Self::IOSStageWorldApp => write!(f, "org.worldcoin.insight.staging"),
-            Self::IOSProdWorldID => write!(f, "org.world.id"),
-            Self::IOSStageWorldID => write!(f, "org.world.staging.id"),
+            Self::ComWorldcoin => write!(f, "com.worldcoin"),
+            Self::ComWorldcoinStaging => write!(f, "com.worldcoin.staging"),
+            Self::ComWorldcoinDev => write!(f, "com.worldcoin.dev"),
+            Self::OrgWorldIdStaging => write!(f, "org.world.id.staging"),
+            Self::OrgWorldIdDev => write!(f, "org.world.id.dev"),
+            Self::OrgWorldcoinInsight => write!(f, "org.worldcoin.insight"),
+            Self::OrgWorldcoinInsightStaging => write!(f, "org.worldcoin.insight.staging"),
+            Self::OrgWorldId => write!(f, "org.world.id"),
+            Self::OrgWorldStagingId => write!(f, "org.world.staging.id"),
         }
     }
 }
@@ -319,6 +303,7 @@ impl IntegrityVerificationInput {
     pub fn from_request(
         request: &TokenGenerationRequest,
         laissez_passer_token: Option<String>,
+        platform: Option<Platform>,
     ) -> Result<Self, RequestError> {
         if let Some(client_error) = request.client_error.clone() {
             return Ok(Self::ClientError { client_error });
@@ -328,7 +313,12 @@ impl IntegrityVerificationInput {
             return Ok(Self::Developer { developer_token });
         }
 
-        match request.bundle_identifier.platform() {
+        let platform = platform.ok_or_else(|| RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("Could not infer platform from attestation fields.".to_string()),
+        })?;
+
+        match platform {
             Platform::Android => {
                 if request.integrity_token.is_none() {
                     return Err(RequestError {
@@ -776,7 +766,7 @@ mod tests {
         let payload = OutputTokenPayload {
             aud: "my-aud.com".to_string(),
             request_hash: "this_is_not_a_hash_with_enough_entropy".to_string(),
-            bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+            bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
             pass: true,
             out: OutEnum::Pass,
             error: None,
@@ -873,7 +863,7 @@ mod tests {
             client_error: None,
             request_hash: "i_am_a_sample_request_hash".to_string(),
             timestamp: SystemTime::now(),
-            bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+            bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
             aud: "example.worldcoin.org".to_string(),
             internal_debug_info: None,
             play_integrity: Some(token),
@@ -896,5 +886,30 @@ mod tests {
             raw_deserialized["playIntegrity"]["requestDetails"]["requestPackageName"],
             serde_json::Value::String("com.worldcoin.staging".to_string())
         );
+    }
+
+    #[test]
+    fn org_world_id_deserializes_from_wire_string() {
+        let bundle: BundleIdentifier = serde_json::from_str("\"org.world.id\"").unwrap();
+        assert!(matches!(bundle, BundleIdentifier::OrgWorldId));
+    }
+
+    #[test]
+    fn org_world_id_android_cert_digest() {
+        let bundle = BundleIdentifier::OrgWorldId;
+        assert_eq!(
+            bundle.android_certificate_sha256_digest(),
+            Some("6a6a1474b5cbbb2b1aa57e0bc3")
+        );
+        assert_eq!(
+            bundle.android_certificate_sha256_digest_base64(),
+            Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=")
+        );
+    }
+
+    #[test]
+    fn org_world_id_requires_play_store_prod_checks() {
+        assert!(BundleIdentifier::OrgWorldId.requires_play_store_prod_checks());
+        assert!(!BundleIdentifier::OrgWorldIdStaging.requires_play_store_prod_checks());
     }
 }

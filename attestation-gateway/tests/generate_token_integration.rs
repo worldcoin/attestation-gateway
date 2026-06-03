@@ -91,7 +91,7 @@ fn get_global_config_extension_with_pem(
         android_outer_jwe_private_key: std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").expect("`ANDROID_OUTER_JWE_PRIVATE_KEY` must be set for tests."),
         android_inner_jws_public_key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/EScv4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==".to_string(),
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        enabled_bundle_identifiers: vec![BundleIdentifier::AndroidStageWorldApp, BundleIdentifier::AndroidDevWorldApp, BundleIdentifier::IOSStageWorldApp, BundleIdentifier::IOSProdWorldApp],
+        enabled_bundle_identifiers: vec![BundleIdentifier::ComWorldcoinStaging, BundleIdentifier::ComWorldcoinDev, BundleIdentifier::OrgWorldcoinInsightStaging, BundleIdentifier::OrgWorldcoinInsight],
         log_client_errors: false,
         kinesis_stream_arn: Some("arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
         developer_inner_jwks_url: std::env::var("DEVELOPER_INNER_JWKS_URL").ok(),
@@ -269,7 +269,7 @@ async fn test_android_e2e_success() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinDev,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -413,7 +413,7 @@ async fn test_android_token_generation_with_invalid_attributes() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinDev,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -446,7 +446,7 @@ async fn test_android_token_generation_with_invalid_attributes() {
             "allowRetry": false,
             "error": {
                 "code": "bad_request",
-                "message": "`integrity_token` is required for this bundle identifier."
+                "message": "Could not infer platform from attestation fields."
             }
         })
     );
@@ -460,7 +460,7 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinDev,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -528,7 +528,7 @@ async fn test_request_hash_race_condition() {
         let token_generation_request = TokenGenerationRequest {
             integrity_token: Some(helper_generate_valid_token()),
             aud: "relying-party.example.com".to_string(),
-            bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+            bundle_identifier: BundleIdentifier::ComWorldcoinDev,
             request_hash: "i_am_a_sample_request_hash".to_string(), // note we use the same request hash for all requests
             client_error: None,
             apple_initial_attestation: None,
@@ -589,7 +589,7 @@ async fn test_request_hash_is_released_if_request_fails() {
     let mut token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -618,7 +618,7 @@ async fn test_request_hash_is_released_if_request_fails() {
     assert_eq!(body["error"]["code"], "integrity_failed");
 
     // Subsequent request succeeds (request hash is freed up)
-    token_generation_request.bundle_identifier = BundleIdentifier::AndroidDevWorldApp;
+    token_generation_request.bundle_identifier = BundleIdentifier::ComWorldcoinDev;
     let body = serde_json::to_string(&token_generation_request).unwrap();
     let response = api_router
         .oneshot(
@@ -646,7 +646,7 @@ async fn test_server_error_is_properly_logged() {
                 .encode("invalid"),
             android_inner_jws_public_key: "irrelevant".to_string(),
             apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-            enabled_bundle_identifiers: vec![BundleIdentifier::AndroidDevWorldApp],
+            enabled_bundle_identifiers: vec![BundleIdentifier::ComWorldcoinDev],
             log_client_errors: false,
             kinesis_stream_arn: None,
             developer_inner_jwks_url: None,
@@ -674,7 +674,7 @@ async fn test_server_error_is_properly_logged() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinDev,
         request_hash: "test_server_error_is_properly_logged_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -722,7 +722,9 @@ async fn test_server_error_is_properly_logged() {
 #[tokio::test]
 #[serial]
 async fn test_apple_initial_attestation_e2e_success() {
-    let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
+    let app_id = BundleIdentifier::OrgWorldcoinInsightStaging
+        .apple_app_id()
+        .unwrap();
     let request_hash = "e2e_test_request_hash";
     let test_data =
         apple::test_helpers::build_test_attestation(app_id, request_hash, "appattestdevelop");
@@ -742,7 +744,7 @@ async fn test_apple_initial_attestation_e2e_success() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: request_hash.to_string(),
         client_error: None,
         apple_initial_attestation: Some(test_data.attestation_base64.clone()),
@@ -863,7 +865,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsight,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: Some("ou000000000000000000".to_string()),
@@ -916,7 +918,7 @@ async fn test_apple_assertion_e2e_success() {
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -928,7 +930,7 @@ async fn test_apple_assertion_e2e_success() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: TEST_REQUEST_HASH.to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -1009,7 +1011,7 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -1021,7 +1023,7 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -1072,7 +1074,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -1084,7 +1086,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -1133,7 +1135,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsight,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -1165,7 +1167,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
             "allowRetry": false,
             "error": {
                 "code": "bad_request",
-                "message": "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
+                "message": "`apple_assertion` and `apple_public_key` are required when inferring iOS platform."
             }
         })
     );
@@ -1179,7 +1181,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsight,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -1230,7 +1232,7 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -1242,7 +1244,7 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: "testhash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -1292,7 +1294,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSProdWorldApp, // <-- we also change this to test explicitly the `rp_id` check in the assertion
+        BundleIdentifier::OrgWorldcoinInsight, // <-- we also change this to test explicitly the `rp_id` check in the assertion
         TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -1305,7 +1307,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
         // Notice the bundle identifier is different
-        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsight,
         request_hash: TEST_REQUEST_HASH.to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -1356,7 +1358,7 @@ async fn test_apple_token_generation_with_invalid_counter() {
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         // this assertion has a `counter = 1`
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -1383,7 +1385,7 @@ async fn test_apple_token_generation_with_invalid_counter() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: TEST_REQUEST_HASH.to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -1437,7 +1439,7 @@ fn helper_generate_valid_assertion(
     // 0 - 32 bytes
     let mut hasher = Sha256::new();
     hasher.update(
-        BundleIdentifier::IOSStageWorldApp
+        BundleIdentifier::OrgWorldcoinInsightStaging
             .apple_app_id()
             .unwrap()
             .as_bytes(),
@@ -1499,7 +1501,7 @@ async fn test_apple_counter_race_condition() {
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         pk,
         "receipt".to_string(),
@@ -1519,7 +1521,7 @@ async fn test_apple_counter_race_condition() {
         let token_generation_request = TokenGenerationRequest {
             integrity_token: None,
             aud: "relying-party.example.com".to_string(),
-            bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+            bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
             request_hash: format!("testhash-{i}"),
             client_error: None,
             apple_initial_attestation: None,
@@ -1752,7 +1754,7 @@ async fn test_developer_token_generation_e2e_success() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash,
         client_error: None,
         apple_initial_attestation: None,
@@ -1848,7 +1850,7 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash: expected_request_hash.clone(),
         client_error: None,
         apple_initial_attestation: None,
@@ -1902,12 +1904,11 @@ async fn test_developer_token_generation_e2e_missing_token() {
 
     let api_router = get_api_router().await;
 
-    // note: no Authorization header is sent below, so the laissez-passer bypass
-    // does not kick in and Android verification requires `integrity_token`
+    // note: no Authorization header and no attestation fields, so platform cannot be inferred
     let token_generation_request = TokenGenerationRequest {
-        integrity_token: None, // note the missing token
+        integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
@@ -1940,7 +1941,7 @@ async fn test_developer_token_generation_e2e_missing_token() {
             "allowRetry": false,
             "error": {
                 "code": "bad_request",
-                "message": "`integrity_token` is required for this bundle identifier."
+                "message": "Could not infer platform from attestation fields."
             }
         })
     );
@@ -1984,7 +1985,7 @@ async fn test_client_error_gets_logged_to_kinesis() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: Some("play_integrity_api_is_down".to_string()),
         apple_initial_attestation: None,
@@ -2050,7 +2051,7 @@ async fn test_client_error_gets_logged_to_kinesis() {
     assert!(!data_report.pass);
     assert_eq!(
         data_report.bundle_identifier,
-        BundleIdentifier::AndroidStageWorldApp
+        BundleIdentifier::ComWorldcoinStaging
     );
     assert_eq!(
         data_report.request_hash,

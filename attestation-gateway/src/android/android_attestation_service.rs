@@ -243,7 +243,7 @@ impl AndroidAttestationService {
         }
 
         let expected_attestation_signature_digest = bundle_identifier
-            .certificate_sha256_digest_base64()
+            .android_certificate_sha256_digest_base64()
             .ok_or(AndroidAttestationError::MissingCertificateDigest)?;
 
         let expected_attestation_signature_digest = Base64
