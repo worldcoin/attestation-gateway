@@ -69,8 +69,8 @@ impl IntegrityTokenPayload {
         )
         .map_err(|_| bad_request("Invalid device public key"))?;
 
-        let cnf_pkey = PKey::from_ec_key(cnf_ec_key)
-            .map_err(|_| bad_request("Invalid device public key"))?;
+        let cnf_pkey =
+            PKey::from_ec_key(cnf_ec_key).map_err(|_| bad_request("Invalid device public key"))?;
 
         let cnf_key_id = Base64.encode(sha256(&self.cnf));
         let cnf_jwk = keys::public_key_to_jwk(&cnf_pkey, Some(cnf_key_id))?;
