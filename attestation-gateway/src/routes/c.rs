@@ -47,6 +47,8 @@ pub async fn handler(
     let _enter = tracing_span.enter();
 
     if !global_config.aud_whitelist.contains(&request.aud) {
+        tracing::error!(aud = %request.aud, "This audience is currently unavailable.");
+
         return Err(RequestError {
             code: ErrorCode::BadRequest,
             details: Some("This audience is currently unavailable.".to_string()),
