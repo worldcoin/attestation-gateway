@@ -21,6 +21,15 @@ use crate::{
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
 };
 
+fn bad_request(details: impl Into<String>) -> RequestError {
+    let details = details.into();
+    tracing::error!(endpoint = "/a", message = %details);
+    RequestError {
+        code: ErrorCode::BadRequest,
+        details: Some(details),
+    }
+}
+
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct Request {
     pub nonce: String,
@@ -58,15 +67,10 @@ impl IntegrityTokenPayload {
             &BigNum::from_slice(&self.cnf[1..33]).unwrap(),
             &BigNum::from_slice(&self.cnf[33..65]).unwrap(),
         )
-        .map_err(|_| RequestError {
-            code: ErrorCode::BadRequest,
-            details: Some("Invalid device public key".to_string()),
-        })?;
+        .map_err(|_| bad_request("Invalid device public key"))?;
 
-        let cnf_pkey = PKey::from_ec_key(cnf_ec_key).map_err(|_| RequestError {
-            code: ErrorCode::BadRequest,
-            details: Some("Invalid device public key".to_string()),
-        })?;
+        let cnf_pkey =
+            PKey::from_ec_key(cnf_ec_key).map_err(|_| bad_request("Invalid device public key"))?;
 
         let cnf_key_id = Base64.encode(sha256(&self.cnf));
         let cnf_jwk = keys::public_key_to_jwk(&cnf_pkey, Some(cnf_key_id))?;
@@ -104,10 +108,9 @@ fn infer_platform(request: &Request) -> Result<Platform, RequestError> {
     let has_apple = request.apple_attestation.is_some();
 
     if has_android && has_apple {
-        return Err(RequestError {
-            code: ErrorCode::BadRequest,
-            details: Some("Conflicting attestation fields for platform inference.".to_string()),
-        });
+        return Err(bad_request(
+            "Conflicting attestation fields for platform inference.",
+        ));
     }
 
     if has_android {
@@ -118,10 +121,9 @@ fn infer_platform(request: &Request) -> Result<Platform, RequestError> {
         return Ok(Platform::AppleIOS);
     }
 
-    Err(RequestError {
-        code: ErrorCode::BadRequest,
-        details: Some("Could not infer platform from attestation fields.".to_string()),
-    })
+    Err(bad_request(
+        "Could not infer platform from attestation fields.",
+    ))
 }
 
 pub async fn handler(
@@ -139,18 +141,14 @@ pub async fn handler(
         .enabled_bundle_identifiers
         .contains(&request.bundle_identifier)
     {
-        return Err(RequestError {
-            code: ErrorCode::BadRequest,
-            details: Some("This bundle identifier is currently unavailable.".to_string()),
-        });
+        return Err(bad_request(
+            "This bundle identifier is currently unavailable.",
+        ));
     }
 
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
         if matches!(e, NonceDbError::NonceNotFound) {
-            RequestError {
-                code: ErrorCode::BadRequest,
-                details: Some("Nonce not found".to_string()),
-            }
+            bad_request("Nonce not found")
         } else {
             tracing::error!(error = ?e, "Error consuming token nonce");
 
@@ -166,10 +164,9 @@ pub async fn handler(
 
     let device_public_key = match platform {
         Platform::AppleIOS => {
-            let apple_attestation = request.apple_attestation.ok_or_else(|| RequestError {
-                code: ErrorCode::BadRequest,
-                details: Some("Apple attestation is required".to_string()),
-            })?;
+            let apple_attestation = request
+                .apple_attestation
+                .ok_or_else(|| bad_request("Apple attestation is required"))?;
 
             validate_apple_attestation_and_get_device_public_key(
                 &global_config.apple_root_ca_pem,
@@ -179,10 +176,9 @@ pub async fn handler(
             )?
         }
         Platform::Android => {
-            let android_cert_chain = request.android_attestation.ok_or_else(|| RequestError {
-                code: ErrorCode::BadRequest,
-                details: Some("Android attestation is required".to_string()),
-            })?;
+            let android_cert_chain = request
+                .android_attestation
+                .ok_or_else(|| bad_request("Android attestation is required"))?;
 
             let attestation_result = android_attestation
                 .verify(
@@ -208,12 +204,7 @@ pub async fn handler(
                             details: None,
                         })
                     } else {
-                        tracing::debug!(error = ?e, "Error validating Android attestation");
-
-                        Err(RequestError {
-                            code: ErrorCode::BadRequest,
-                            details: Some(e.to_string()),
-                        })
+                        Err(bad_request(e.to_string()))
                     }
                 }
             }?;
@@ -236,10 +227,7 @@ pub async fn handler(
     let exp = match request.exp {
         Some(exp) => {
             if exp > token_details.exp_max {
-                return Err(RequestError {
-                    code: ErrorCode::BadRequest,
-                    details: Some("Exp is greater than token exp max".to_string()),
-                });
+                return Err(bad_request("Exp is greater than token exp max"));
             } else {
                 Ok(exp)
             }
@@ -274,16 +262,10 @@ fn validate_apple_attestation_and_get_device_public_key(
 ) -> Result<Vec<u8>, RequestError> {
     let app_id = bundle_identifier
         .apple_app_id()
-        .ok_or_else(|| RequestError {
-            code: ErrorCode::BadRequest,
-            details: Some("Invalid bundle identifier".to_string()),
-        })?;
+        .ok_or_else(|| bad_request("Invalid bundle identifier"))?;
 
     let allowed_aaguid_vec = apple::AAGUID::allowed_for_bundle_identifier(bundle_identifier)
-        .map_err(|_| RequestError {
-            code: ErrorCode::BadRequest,
-            details: Some("Invalid bundle identifier".to_string()),
-        })?;
+        .map_err(|_| bad_request("Invalid bundle identifier"))?;
 
     let initial_attestation = apple::decode_and_validate_initial_attestation(
         apple_attestation,
@@ -292,10 +274,7 @@ fn validate_apple_attestation_and_get_device_public_key(
         allowed_aaguid_vec.as_slice(),
         apple_root_ca_pem,
     )
-    .map_err(|e| RequestError {
-        code: ErrorCode::BadRequest,
-        details: Some(e.to_string()),
-    })?;
+    .map_err(|e| bad_request(e.to_string()))?;
 
     Ok(initial_attestation.key_public_key)
 }
