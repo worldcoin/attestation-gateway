@@ -167,14 +167,13 @@ impl BundleIdentifier {
     #[must_use]
     pub const fn android_certificate_sha256_digest(&self) -> Option<&str> {
         match self {
-            Self::ComWorldcoin | Self::ComWorldcoinStaging => {
+            Self::ComWorldcoin | Self::ComWorldcoinStaging | Self::OrgWorldIdStaging => {
                 // cspell:disable-next-line
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
-            Self::ComWorldcoinDev
-            | Self::OrgWorldId
-            | Self::OrgWorldIdStaging
-            | Self::OrgWorldIdDev => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
+            Self::ComWorldcoinDev | Self::OrgWorldId | Self::OrgWorldIdDev => {
+                Some("6a6a1474b5cbbb2b1aa57e0bc3")
+            }
             Self::OrgWorldcoinInsight
             | Self::OrgWorldcoinInsightStaging
             | Self::OrgWorldStagingId => None,
@@ -185,13 +184,12 @@ impl BundleIdentifier {
     #[must_use]
     pub const fn android_certificate_sha256_digest_base64(&self) -> Option<&'static str> {
         match self {
-            Self::ComWorldcoin | Self::ComWorldcoinStaging => {
+            Self::ComWorldcoin | Self::ComWorldcoinStaging | Self::OrgWorldIdStaging => {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
             }
-            Self::ComWorldcoinDev
-            | Self::OrgWorldId
-            | Self::OrgWorldIdStaging
-            | Self::OrgWorldIdDev => Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="),
+            Self::ComWorldcoinDev | Self::OrgWorldId | Self::OrgWorldIdDev => {
+                Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=")
+            }
             Self::OrgWorldcoinInsight
             | Self::OrgWorldcoinInsightStaging
             | Self::OrgWorldStagingId => None,
