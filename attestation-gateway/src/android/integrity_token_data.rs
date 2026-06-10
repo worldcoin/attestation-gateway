@@ -678,7 +678,9 @@ mod tests {
                 package_name: Some("org.world.id".to_string()),
                 version_code: Some("100".to_string()),
                 // cspell:disable-next-line
-                certificate_sha_256_digest: Some(vec!["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8".to_string()]),
+                certificate_sha_256_digest: Some(vec![
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8".to_string(),
+                ]),
                 app_recognition_verdict: AppIntegrityVerdict::PlayRecognized,
             },
             account_details: AccountDetails {
