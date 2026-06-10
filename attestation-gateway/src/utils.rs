@@ -167,11 +167,14 @@ impl BundleIdentifier {
     #[must_use]
     pub const fn android_certificate_sha256_digest(&self) -> Option<&str> {
         match self {
-            Self::ComWorldcoin | Self::ComWorldcoinStaging | Self::OrgWorldIdStaging => {
+            Self::ComWorldcoin
+            | Self::ComWorldcoinStaging
+            | Self::OrgWorldId
+            | Self::OrgWorldIdStaging => {
                 // cspell:disable-next-line
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
-            Self::ComWorldcoinDev | Self::OrgWorldId | Self::OrgWorldIdDev => {
+            Self::ComWorldcoinDev | Self::OrgWorldIdDev => {
                 Some("6a6a1474b5cbbb2b1aa57e0bc3")
             }
             Self::OrgWorldcoinInsight
@@ -184,10 +187,13 @@ impl BundleIdentifier {
     #[must_use]
     pub const fn android_certificate_sha256_digest_base64(&self) -> Option<&'static str> {
         match self {
-            Self::ComWorldcoin | Self::ComWorldcoinStaging | Self::OrgWorldIdStaging => {
+            Self::ComWorldcoin
+            | Self::ComWorldcoinStaging
+            | Self::OrgWorldId
+            | Self::OrgWorldIdStaging => {
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
             }
-            Self::ComWorldcoinDev | Self::OrgWorldId | Self::OrgWorldIdDev => {
+            Self::ComWorldcoinDev | Self::OrgWorldIdDev => {
                 Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=")
             }
             Self::OrgWorldcoinInsight
@@ -897,11 +903,12 @@ mod tests {
         let bundle = BundleIdentifier::OrgWorldId;
         assert_eq!(
             bundle.android_certificate_sha256_digest(),
-            Some("6a6a1474b5cbbb2b1aa57e0bc3")
+            // cspell:disable-next-line
+            Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
         );
         assert_eq!(
             bundle.android_certificate_sha256_digest_base64(),
-            Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=")
+            Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
         );
     }
 
