@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{collections::HashMap, time::SystemTime};
 
 use crate::{
     android::{
@@ -151,6 +151,7 @@ impl AndroidAttestationService {
         nonce: &String,
         app_version: &String,
         bundle_identifier: &BundleIdentifier,
+        request_headers: HashMap<String, String>,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
         let build_result = self
             .cert_chain_builder
@@ -178,6 +179,7 @@ impl AndroidAttestationService {
                 bundle_identifier: bundle_identifier.clone(),
                 cert_chain,
                 error: verify_result.as_ref().err().map(ToString::to_string),
+                request_headers,
                 timestamp: SystemTime::now(),
             });
 
