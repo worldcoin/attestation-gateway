@@ -1,6 +1,6 @@
 use aws_config::SdkConfig;
 
-use axum::{Extension, Json};
+use axum::{Extension, Json, http::HeaderMap};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::{DateTime, SubsecRound, Utc};
 use josekit::jwt::JwtPayload;
@@ -20,6 +20,21 @@ use crate::{
     nonces::{NonceDb, NonceDbError},
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
 };
+
+fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::<String, String>::new();
+    for (name, value) in headers.iter() {
+        if let Ok(v) = value.to_str() {
+            map.entry(name.as_str().to_string())
+                .and_modify(|existing: &mut String| {
+                    existing.push_str(", ");
+                    existing.push_str(v);
+                })
+                .or_insert_with(|| v.to_string());
+        }
+    }
+    map
+}
 
 fn bad_request(details: impl Into<String>) -> RequestError {
     let details = details.into();
@@ -132,6 +147,7 @@ pub async fn handler(
     Extension(mut nonce_db): Extension<NonceDb>,
     Extension(mut android_attestation): Extension<AndroidAttestationService>,
     Extension(aws_config): Extension<SdkConfig>,
+    headers: HeaderMap,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
     let tracing_span = tracing::span!(tracing::Level::DEBUG, "a", endpoint = "/a");
@@ -187,6 +203,7 @@ pub async fn handler(
                     &request.nonce,
                     &request.app_version,
                     &request.bundle_identifier,
+                    headers_to_map(&headers),
                 )
                 .await;
 
@@ -358,5 +375,19 @@ mod tests {
             infer_platform(&request).unwrap_err().code,
             ErrorCode::BadRequest
         );
+    }
+
+    #[test]
+    fn headers_to_map_joins_duplicate_header_values() {
+        use axum::http::{HeaderMap, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+        headers.insert("header-1", HeaderValue::from_static("value-1"));
+        headers.append("header-1", HeaderValue::from_static("value-1b"));
+        headers.insert("header-2", HeaderValue::from_static("value-2"));
+
+        let map = headers_to_map(&headers);
+        assert_eq!(map["header-1"], "value-1, value-1b");
+        assert_eq!(map["header-2"], "value-2");
     }
 }

@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{collections::HashMap, time::SystemTime};
 
 use aws_config::Region;
 use aws_sdk_kinesis::{Client as KinesisClient, primitives::Blob};
@@ -31,6 +31,8 @@ pub struct AndroidAttestationAnalyticsEvent {
     pub cert_chain: Option<CertChain>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub request_headers: HashMap<String, String>,
     pub timestamp: SystemTime,
 }
 
@@ -133,6 +135,7 @@ mod tests {
             bundle_identifier: BundleIdentifier::ComWorldcoinDev,
             cert_chain: None,
             error: None,
+            request_headers: HashMap::new(),
             timestamp: SystemTime::UNIX_EPOCH,
         };
 
@@ -153,7 +156,34 @@ mod tests {
         assert_eq!(json["bundle_identifier"], "com.worldcoin.dev");
         assert!(json.get("cert_chain").is_none());
         assert!(json.get("error").is_none());
+        assert!(json.get("request_headers").is_none());
         assert!(json.get("timestamp").is_some());
+    }
+
+    #[test]
+    fn serializes_event_with_request_headers() {
+        let event = AndroidAttestationAnalyticsEvent {
+            base64_cert_chain: vec!["cert".to_string()],
+            aud: "face".to_string(),
+            nonce: "nonce".to_string(),
+            app_version: "1.0.102".to_string(),
+            bundle_identifier: BundleIdentifier::OrgWorldIdStaging,
+            cert_chain: None,
+            error: None,
+            request_headers: HashMap::from([
+                ("header-1".to_string(), "value-1".to_string()),
+                ("header-2".to_string(), "value-2".to_string()),
+                ("header-3".to_string(), "value-3".to_string()),
+            ]),
+            timestamp: SystemTime::UNIX_EPOCH,
+        };
+
+        let (bytes, _) = AnalyticsService::serialize_event(&event).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(json["request_headers"]["header-1"], "value-1");
+        assert_eq!(json["request_headers"]["header-2"], "value-2");
+        assert_eq!(json["request_headers"]["header-3"], "value-3");
     }
 
     #[test]
@@ -166,6 +196,7 @@ mod tests {
             bundle_identifier: BundleIdentifier::ComWorldcoin,
             cert_chain: None,
             error: Some("invalid challenge".to_string()),
+            request_headers: HashMap::new(),
             timestamp: SystemTime::UNIX_EPOCH,
         };
 
