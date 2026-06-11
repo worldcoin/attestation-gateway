@@ -1,9 +1,6 @@
 use aws_config::SdkConfig;
 
-use axum::{
-    Extension, Json,
-    http::HeaderMap,
-};
+use axum::{Extension, Json, http::HeaderMap};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::{DateTime, SubsecRound, Utc};
 use josekit::jwt::JwtPayload;
