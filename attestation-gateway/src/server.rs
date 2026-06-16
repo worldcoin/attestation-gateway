@@ -1,6 +1,8 @@
 use std::{env, net::SocketAddr, time::Duration};
 
-use crate::{android::AndroidAttestationService, nonces::NonceDb};
+use crate::{
+    android::AndroidAttestationService, audience_authorizer::AudienceAuthorizer, nonces::NonceDb,
+};
 use aide::openapi::{Info, OpenApi};
 use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
@@ -35,6 +37,7 @@ pub async fn start(
     };
 
     let nonce_db = NonceDb::new(redis.clone());
+    let audience_authorizer = AudienceAuthorizer::from_config(redis.clone(), &global_config);
 
     let android_rate_limit_per_day = env::var("ANDROID_RATE_LIMIT_PER_DAY").ok().map(|v| {
         v.parse()
@@ -58,6 +61,7 @@ pub async fn start(
     let app = routes::handler()
         .finish_api(&mut openapi)
         .layer(Extension(nonce_db))
+        .layer(Extension(audience_authorizer))
         .layer(Extension(redis))
         .layer(Extension(openapi))
         .layer(Extension(aws_config))

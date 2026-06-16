@@ -242,16 +242,12 @@ pub async fn handler(
         .increment(1);
 
     let exp = match request.exp {
-        Some(exp) => {
-            if exp > token_details.exp_max {
-                return Err(bad_request("Exp is greater than token exp max"));
-            } else {
-                Ok(exp)
-            }
+        Some(exp) if exp > token_details.exp_max => {
+            return Err(bad_request("Exp is greater than token exp max"));
         }
-        None => Ok(token_details.exp_max),
-    }?;
-
+        Some(exp) => exp,
+        None => token_details.exp_max,
+    };
     let integrity_token = generate_integrity_token(
         &mut redis,
         &aws_config,

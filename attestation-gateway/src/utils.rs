@@ -23,6 +23,8 @@ pub struct GlobalConfig {
     pub apple_root_ca_pem: Vec<u8>,
     pub aud_whitelist: Vec<String>,
     pub jwt_issuer: String,
+    pub developer_portal_base_url: Option<String>,
+    pub aud_authorization_cache_ttl_secs: u64,
 }
 
 impl GlobalConfig {
@@ -67,6 +69,14 @@ impl GlobalConfig {
         let jwt_issuer =
             env::var("JWT_ISSUER").unwrap_or_else(|_| "attestation.worldcoin.org".to_string());
 
+        let developer_portal_base_url = env::var("DEVELOPER_PORTAL_BASE_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+
+        let aud_authorization_cache_ttl_secs = env::var("AUD_AUTHORIZATION_CACHE_TTL_SECS")
+            .map_or(Ok(60 * 60), |value| value.parse::<u64>())
+            .expect("AUD_AUTHORIZATION_CACHE_TTL_SECS must be a valid u64");
+
         tracing::info!(
             "Running with enabled bundle identifiers: {:?}",
             enabled_bundle_identifiers
@@ -83,6 +93,8 @@ impl GlobalConfig {
             apple_root_ca_pem: include_bytes!("apple/apple_app_attestation_root_ca.pem").to_vec(),
             aud_whitelist,
             jwt_issuer,
+            developer_portal_base_url,
+            aud_authorization_cache_ttl_secs,
         }
     }
 }

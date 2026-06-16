@@ -98,6 +98,8 @@ fn get_global_config_extension_with_pem(
         apple_root_ca_pem,
         aud_whitelist: vec!["relying-party.example.com".to_string()],
         jwt_issuer: "attestation.worldcoin.org".to_string(),
+        developer_portal_base_url: None,
+        aud_authorization_cache_ttl_secs: 60 * 60,
     };
     Extension(config)
 }
@@ -106,6 +108,18 @@ fn extension_nonce_db(
     redis: &redis::aio::ConnectionManager,
 ) -> Extension<attestation_gateway::nonces::NonceDb> {
     Extension(attestation_gateway::nonces::NonceDb::new(redis.clone()))
+}
+
+fn extension_audience_authorizer(
+    redis: &redis::aio::ConnectionManager,
+    global_config: &attestation_gateway::utils::GlobalConfig,
+) -> Extension<attestation_gateway::audience_authorizer::AudienceAuthorizer> {
+    Extension(
+        attestation_gateway::audience_authorizer::AudienceAuthorizer::from_config(
+            redis.clone(),
+            global_config,
+        ),
+    )
 }
 
 async fn extension_android_attestation(
@@ -162,13 +176,34 @@ async fn get_kinesis_extension() -> Extension<aws_sdk_kinesis::Client> {
 
 async fn get_api_router() -> aide::axum::ApiRouter {
     let redis_ext = get_redis_extension().await;
+    let global_config_ext = get_global_config_extension();
     attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
-        .layer(get_global_config_extension())
+        .layer(global_config_ext.clone())
         .layer(extension_android_attestation(&redis_ext.0).await)
+        .layer(extension_audience_authorizer(
+            &redis_ext.0,
+            &global_config_ext.0,
+        ))
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
         .layer(get_kinesis_extension().await)
+}
+
+async fn get_challenge_router() -> (aide::axum::ApiRouter, redis::aio::ConnectionManager) {
+    let redis_ext = get_redis_extension().await;
+    let redis = redis_ext.0.clone();
+    let global_config_ext = get_global_config_extension();
+    let api_router = attestation_gateway::routes::handler()
+        .layer(global_config_ext.clone())
+        .layer(extension_audience_authorizer(
+            &redis_ext.0,
+            &global_config_ext.0,
+        ))
+        .layer(extension_nonce_db(&redis_ext.0))
+        .layer(redis_ext);
+
+    (api_router, redis)
 }
 
 /// Generates a valid Android integrity token (simulating what Play Store would generate)
@@ -256,6 +291,69 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
 
     jwe
 }
+
+// SECTION ------------------ challenge tests ------------------
+
+#[tokio::test]
+#[serial]
+async fn test_challenge_static_allowlist_succeeds() {
+    let (api_router, _redis) = get_challenge_router().await;
+
+    let response = api_router
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/c")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "aud": "relying-party.example.com" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response_body = response.collect().await.unwrap().to_bytes();
+    let response_json: Value = serde_json::from_slice(&response_body).unwrap();
+    assert!(
+        response_json["nonce"]
+            .as_str()
+            .is_some_and(|nonce| !nonce.is_empty())
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_challenge_unauthorized_audience_does_not_create_nonce() {
+    let (api_router, mut redis) = get_challenge_router().await;
+
+    let response = api_router
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/c")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "aud": "face.worldcoin.org" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let nonce_keys = redis::cmd("KEYS")
+        .arg("nonce:*")
+        .query_async::<Vec<String>>(&mut redis)
+        .await
+        .unwrap();
+    assert!(nonce_keys.is_empty());
+}
+
+// !SECTION ------------------ challenge tests ------------------
 
 // SECTION ------------------ android tests ------------------
 
@@ -654,16 +752,23 @@ async fn test_server_error_is_properly_logged() {
                 .to_vec(),
             aud_whitelist: vec!["relying-party.example.com".to_string()],
             jwt_issuer: "attestation.worldcoin.org".to_string(),
+            developer_portal_base_url: None,
+            aud_authorization_cache_ttl_secs: 60 * 60,
         };
         Extension(config)
     }
 
     async fn get_local_api_router() -> aide::axum::ApiRouter {
         let redis_ext = get_redis_extension().await;
+        let global_config_ext = get_local_config_extension();
         attestation_gateway::routes::handler()
             .layer(get_aws_config_extension().await)
-            .layer(get_local_config_extension())
+            .layer(global_config_ext.clone())
             .layer(extension_android_attestation(&redis_ext.0).await)
+            .layer(extension_audience_authorizer(
+                &redis_ext.0,
+                &global_config_ext.0,
+            ))
             .layer(extension_nonce_db(&redis_ext.0))
             .layer(redis_ext)
             .layer(get_kinesis_extension().await)
@@ -730,10 +835,15 @@ async fn test_apple_initial_attestation_e2e_success() {
         apple::test_helpers::build_test_attestation(app_id, request_hash, "appattestdevelop");
 
     let redis_ext = get_redis_extension().await;
+    let global_config_ext = get_global_config_extension_with_pem(test_data.root_ca_pem);
     let api_router = attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
-        .layer(get_global_config_extension_with_pem(test_data.root_ca_pem))
+        .layer(global_config_ext.clone())
         .layer(extension_android_attestation(&redis_ext.0).await)
+        .layer(extension_audience_authorizer(
+            &redis_ext.0,
+            &global_config_ext.0,
+        ))
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
         .layer(get_kinesis_extension().await);
