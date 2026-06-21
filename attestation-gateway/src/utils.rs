@@ -10,10 +10,42 @@ use uuid::Uuid;
 
 static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(60 * 10);
 
+/// A Play Integrity response-encryption key pair (the self-managed "download my keys" pair):
+/// the outer JWE decryption key (AES-256, base64) and the inner JWS verification key (EC, base64).
+#[derive(Debug, Clone)]
+pub struct AndroidResponseKeys {
+    pub outer_jwe_private_key: String,
+    pub inner_jws_public_key: String,
+}
+
+impl AndroidResponseKeys {
+    /// Loads a key pair from the given env vars, returning `None` unless BOTH are set
+    /// (both-or-none) so the caller can fall back to the default keys.
+    fn from_env_pair(outer_var: &str, inner_var: &str) -> Option<Self> {
+        match (env::var(outer_var), env::var(inner_var)) {
+            (Ok(outer_jwe_private_key), Ok(inner_jws_public_key)) => Some(Self {
+                outer_jwe_private_key,
+                inner_jws_public_key,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// App family used to select the correct Play Integrity response-encryption keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AndroidApp {
+    WorldApp,
+    WorldId,
+}
+
 #[derive(Debug, Clone)]
 pub struct GlobalConfig {
-    pub android_outer_jwe_private_key: String,
-    pub android_inner_jws_public_key: String,
+    /// Default Android response keys (legacy World App pair). Used as the fallback for any bundle
+    /// without a configured per-app key; see [`GlobalConfig::android_response_keys`].
+    pub android_default_keys: AndroidResponseKeys,
+    pub android_world_app_keys: Option<AndroidResponseKeys>,
+    pub android_world_id_keys: Option<AndroidResponseKeys>,
     pub apple_keys_dynamo_table_name: String,
     pub developer_inner_jwks_url: Option<String>,
     pub enabled_bundle_identifiers: Vec<BundleIdentifier>,
@@ -31,11 +63,25 @@ impl GlobalConfig {
     /// # Panics
     /// If required environment variables are not set
     pub fn from_env() -> Self {
-        let android_outer_jwe_private_key = env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
-            .expect("env var `ANDROID_OUTER_JWE_PRIVATE_KEY` is required");
+        // Default (legacy) Android response keys — kept required so the service always has a
+        // working fallback. Per-app namespaced keys are layered on top below.
+        let android_default_keys = AndroidResponseKeys {
+            outer_jwe_private_key: env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
+                .expect("env var `ANDROID_OUTER_JWE_PRIVATE_KEY` is required"),
+            inner_jws_public_key: env::var("ANDROID_INNER_JWS_PUBLIC_KEY")
+                .expect("env var `ANDROID_INNER_JWS_PUBLIC_KEY` is required"),
+        };
 
-        let android_inner_jws_public_key = env::var("ANDROID_INNER_JWS_PUBLIC_KEY")
-            .expect("env var `ANDROID_INNER_JWS_PUBLIC_KEY` is required");
+        // Optional per-app response keys. When unset, the corresponding app family falls back to
+        // `android_default_keys` (see `GlobalConfig::android_response_keys`).
+        let android_world_app_keys = AndroidResponseKeys::from_env_pair(
+            "ANDROID_WORLD_APP_JWE_PRIVATE_KEY",
+            "ANDROID_WORLD_APP_JWS_PUBLIC_KEY",
+        );
+        let android_world_id_keys = AndroidResponseKeys::from_env_pair(
+            "ANDROID_WORLD_ID_JWE_PRIVATE_KEY",
+            "ANDROID_WORLD_ID_JWS_PUBLIC_KEY",
+        );
 
         let apple_keys_dynamo_table_name = env::var("APPLE_KEYS_DYNAMO_TABLE_NAME")
             .expect("env var `APPLE_KEYS_DYNAMO_TABLE_NAME` is required");
@@ -73,8 +119,9 @@ impl GlobalConfig {
         );
 
         Self {
-            android_outer_jwe_private_key,
-            android_inner_jws_public_key,
+            android_default_keys,
+            android_world_app_keys,
+            android_world_id_keys,
             apple_keys_dynamo_table_name,
             developer_inner_jwks_url,
             enabled_bundle_identifiers,
@@ -84,6 +131,30 @@ impl GlobalConfig {
             aud_whitelist,
             jwt_issuer,
         }
+    }
+
+    /// Selects the Play Integrity response-encryption keys for `bundle`. Each app family looks up
+    /// its own namespaced key and falls back to `android_default_keys` when that key is not
+    /// configured (or the bundle has no Android mapping). Never errors: a mismatched key simply
+    /// fails decryption rather than passing a bad token, so falling back is safe. Fallbacks are
+    /// counted (metric only — no per-request log, to avoid spam on high-volume bundles) so a
+    /// missing expected key or an unmapped enabled bundle is observable.
+    #[must_use]
+    pub fn android_response_keys(&self, bundle: &BundleIdentifier) -> &AndroidResponseKeys {
+        let configured = match bundle.android_app() {
+            Some(AndroidApp::WorldApp) => self.android_world_app_keys.as_ref(),
+            Some(AndroidApp::WorldId) => self.android_world_id_keys.as_ref(),
+            None => None,
+        };
+
+        configured.unwrap_or_else(|| {
+            metrics::counter!(
+                "generate_token.android_response_key_fallback",
+                "bundle_identifier" => bundle.to_string(),
+            )
+            .increment(1);
+            &self.android_default_keys
+        })
     }
 }
 
@@ -161,6 +232,23 @@ impl BundleIdentifier {
     #[must_use]
     pub const fn requires_play_store_prod_checks(&self) -> bool {
         matches!(self, Self::ComWorldcoin | Self::OrgWorldId)
+    }
+
+    /// App family this bundle belongs to, used to select Play Integrity response-encryption keys.
+    /// Returns `None` for iOS bundles (no Android Play Integrity flow).
+    #[must_use]
+    pub const fn android_app(&self) -> Option<AndroidApp> {
+        match self {
+            Self::ComWorldcoin | Self::ComWorldcoinStaging | Self::ComWorldcoinDev => {
+                Some(AndroidApp::WorldApp)
+            }
+            Self::OrgWorldId | Self::OrgWorldIdStaging | Self::OrgWorldIdDev => {
+                Some(AndroidApp::WorldId)
+            }
+            Self::OrgWorldcoinInsight
+            | Self::OrgWorldcoinInsightStaging
+            | Self::OrgWorldStagingId => None,
+        }
     }
 
     /// Expected app signing-certificate digest (hex) for Android Play Integrity (`POST /g`).
@@ -912,5 +1000,109 @@ mod tests {
     fn org_world_id_requires_play_store_prod_checks() {
         assert!(BundleIdentifier::OrgWorldId.requires_play_store_prod_checks());
         assert!(!BundleIdentifier::OrgWorldIdStaging.requires_play_store_prod_checks());
+    }
+
+    fn test_keys(tag: &str) -> AndroidResponseKeys {
+        AndroidResponseKeys {
+            outer_jwe_private_key: format!("{tag}-outer"),
+            inner_jws_public_key: format!("{tag}-inner"),
+        }
+    }
+
+    fn config_with_android_keys(
+        world_app: Option<AndroidResponseKeys>,
+        world_id: Option<AndroidResponseKeys>,
+    ) -> GlobalConfig {
+        GlobalConfig {
+            android_default_keys: test_keys("default"),
+            android_world_app_keys: world_app,
+            android_world_id_keys: world_id,
+            apple_keys_dynamo_table_name: String::new(),
+            developer_inner_jwks_url: None,
+            enabled_bundle_identifiers: Vec::new(),
+            log_client_errors: false,
+            kinesis_stream_arn: None,
+            apple_root_ca_pem: Vec::new(),
+            aud_whitelist: Vec::new(),
+            jwt_issuer: String::new(),
+        }
+    }
+
+    #[test]
+    fn android_app_maps_bundles_to_families() {
+        assert_eq!(
+            BundleIdentifier::ComWorldcoin.android_app(),
+            Some(AndroidApp::WorldApp)
+        );
+        assert_eq!(
+            BundleIdentifier::ComWorldcoinStaging.android_app(),
+            Some(AndroidApp::WorldApp)
+        );
+        assert_eq!(
+            BundleIdentifier::ComWorldcoinDev.android_app(),
+            Some(AndroidApp::WorldApp)
+        );
+        assert_eq!(
+            BundleIdentifier::OrgWorldId.android_app(),
+            Some(AndroidApp::WorldId)
+        );
+        assert_eq!(
+            BundleIdentifier::OrgWorldIdStaging.android_app(),
+            Some(AndroidApp::WorldId)
+        );
+        assert_eq!(
+            BundleIdentifier::OrgWorldIdDev.android_app(),
+            Some(AndroidApp::WorldId)
+        );
+        // iOS bundles have no Android Play Integrity flow
+        assert_eq!(BundleIdentifier::OrgWorldcoinInsight.android_app(), None);
+        assert_eq!(
+            BundleIdentifier::OrgWorldcoinInsightStaging.android_app(),
+            None
+        );
+        assert_eq!(BundleIdentifier::OrgWorldStagingId.android_app(), None);
+    }
+
+    #[test]
+    fn android_response_keys_uses_namespaced_when_set() {
+        let config = config_with_android_keys(Some(test_keys("world_app")), Some(test_keys("world_id")));
+        assert_eq!(
+            config
+                .android_response_keys(&BundleIdentifier::ComWorldcoin)
+                .outer_jwe_private_key,
+            "world_app-outer"
+        );
+        assert_eq!(
+            config
+                .android_response_keys(&BundleIdentifier::OrgWorldId)
+                .outer_jwe_private_key,
+            "world_id-outer"
+        );
+    }
+
+    #[test]
+    fn android_response_keys_falls_back_to_default_when_unset() {
+        let config = config_with_android_keys(None, None);
+        // World App without a namespaced key -> default.
+        assert_eq!(
+            config
+                .android_response_keys(&BundleIdentifier::ComWorldcoin)
+                .outer_jwe_private_key,
+            "default-outer"
+        );
+        // World ID without a namespaced key (e.g. staging) -> default, no panic/error.
+        assert_eq!(
+            config
+                .android_response_keys(&BundleIdentifier::OrgWorldId)
+                .outer_jwe_private_key,
+            "default-outer"
+        );
+        // iOS / unmapped bundle -> default.
+        assert_eq!(
+            config
+                .android_response_keys(&BundleIdentifier::OrgWorldcoinInsight)
+                .outer_jwe_private_key,
+            "default-outer"
+        );
     }
 }

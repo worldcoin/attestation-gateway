@@ -259,12 +259,13 @@ async fn verify_android_or_apple_integrity(
     let verify_result = match verification_input {
         IntegrityVerificationInput::Android { integrity_token } => {
             report.check_type = Some(CheckType::Android);
+            let keys = config.android_response_keys(&bundle_identifier);
             android::verify(
                 &integrity_token,
                 &bundle_identifier,
                 &request_hash,
-                config.android_outer_jwe_private_key,
-                config.android_inner_jws_public_key,
+                keys.outer_jwe_private_key.clone(),
+                keys.inner_jws_public_key.clone(),
             )?
         }
         IntegrityVerificationInput::AppleInitialAttestation {

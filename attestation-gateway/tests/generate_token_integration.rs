@@ -88,8 +88,12 @@ fn get_global_config_extension_with_pem(
     // Required to load default env vars
     dotenvy::from_filename(".env.example").unwrap();
     let config = attestation_gateway::utils::GlobalConfig {
-        android_outer_jwe_private_key: std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").expect("`ANDROID_OUTER_JWE_PRIVATE_KEY` must be set for tests."),
-        android_inner_jws_public_key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/EScv4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==".to_string(),
+        android_default_keys: attestation_gateway::utils::AndroidResponseKeys {
+            outer_jwe_private_key: std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").expect("`ANDROID_OUTER_JWE_PRIVATE_KEY` must be set for tests."),
+            inner_jws_public_key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/EScv4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==".to_string(),
+        },
+        android_world_app_keys: None,
+        android_world_id_keys: None,
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         enabled_bundle_identifiers: vec![BundleIdentifier::ComWorldcoinStaging, BundleIdentifier::ComWorldcoinDev, BundleIdentifier::OrgWorldcoinInsightStaging, BundleIdentifier::OrgWorldcoinInsight],
         log_client_errors: false,
@@ -642,9 +646,12 @@ async fn test_server_error_is_properly_logged() {
     fn get_local_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
         let config = attestation_gateway::utils::GlobalConfig {
             // This is not a valid AES-256 key
-            android_outer_jwe_private_key: base64::engine::general_purpose::STANDARD
-                .encode("invalid"),
-            android_inner_jws_public_key: "irrelevant".to_string(),
+            android_default_keys: attestation_gateway::utils::AndroidResponseKeys {
+                outer_jwe_private_key: base64::engine::general_purpose::STANDARD.encode("invalid"),
+                inner_jws_public_key: "irrelevant".to_string(),
+            },
+            android_world_app_keys: None,
+            android_world_id_keys: None,
             apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
             enabled_bundle_identifiers: vec![BundleIdentifier::ComWorldcoinDev],
             log_client_errors: false,
