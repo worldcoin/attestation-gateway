@@ -1065,7 +1065,8 @@ mod tests {
 
     #[test]
     fn android_response_keys_uses_namespaced_when_set() {
-        let config = config_with_android_keys(Some(test_keys("world_app")), Some(test_keys("world_id")));
+        let config =
+            config_with_android_keys(Some(test_keys("world_app")), Some(test_keys("world_id")));
         assert_eq!(
             config
                 .android_response_keys(&BundleIdentifier::ComWorldcoin)
