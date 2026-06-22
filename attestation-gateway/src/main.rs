@@ -10,6 +10,7 @@ use std::{env, fmt};
 
 mod android;
 mod apple;
+mod audience_authorizer;
 mod developer;
 mod keys;
 mod kinesis;
