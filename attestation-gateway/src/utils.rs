@@ -1037,6 +1037,8 @@ mod tests {
             apple_root_ca_pem: Vec::new(),
             aud_whitelist: Vec::new(),
             jwt_issuer: String::new(),
+            developer_portal_base_url: None,
+            aud_authorization_cache_ttl_secs: 0,
         }
     }
 

@@ -53,6 +53,7 @@ pub struct Request {
     pub bundle_identifier: BundleIdentifier,
     pub apple_attestation: Option<String>,
     pub android_attestation: Option<Vec<String>>,
+    pub device_model: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
@@ -204,6 +205,7 @@ pub async fn handler(
                     &request.app_version,
                     &request.bundle_identifier,
                     headers_to_map(&headers),
+                    request.device_model.clone(),
                 )
                 .await;
 
@@ -345,6 +347,7 @@ mod tests {
             bundle_identifier: BundleIdentifier::OrgWorldId,
             apple_attestation: None,
             android_attestation: None,
+            device_model: None,
         }
     }
 
