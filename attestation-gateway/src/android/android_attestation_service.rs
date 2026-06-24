@@ -152,6 +152,7 @@ impl AndroidAttestationService {
         app_version: &String,
         bundle_identifier: &BundleIdentifier,
         request_headers: HashMap<String, String>,
+        device_model: Option<String>,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
         let build_result = self
             .cert_chain_builder
@@ -180,6 +181,7 @@ impl AndroidAttestationService {
                 cert_chain,
                 error: verify_result.as_ref().err().map(ToString::to_string),
                 request_headers,
+                device_model,
                 timestamp: SystemTime::now(),
             });
 
