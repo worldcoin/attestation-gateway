@@ -220,11 +220,17 @@ pub enum BundleIdentifier {
     #[serde(rename = "com.worldcoin.dev")]
     ComWorldcoinDev,
 
+    #[serde(rename = "com.worldcoin.sandbox")]
+    ComWorldcoinSandbox,
+
     #[serde(rename = "org.worldcoin.insight")]
     OrgWorldcoinInsight,
 
     #[serde(rename = "org.worldcoin.insight.staging")]
     OrgWorldcoinInsightStaging,
+
+    #[serde(rename = "org.worldcoin.insight.sandbox")]
+    OrgWorldcoinInsightSandbox,
 
     #[serde(rename = "org.world.id")]
     OrgWorldId,
@@ -232,11 +238,17 @@ pub enum BundleIdentifier {
     #[serde(rename = "org.world.staging.id")]
     OrgWorldStagingId,
 
+    #[serde(rename = "org.world.sandbox.id")]
+    OrgWorldSandboxId,
+
     #[serde(rename = "org.world.id.staging")]
     OrgWorldIdStaging,
 
     #[serde(rename = "org.world.id.dev")]
     OrgWorldIdDev,
+
+    #[serde(rename = "org.world.id.sandbox")]
+    OrgWorldIdSandbox,
 }
 
 impl BundleIdentifier {
@@ -251,15 +263,19 @@ impl BundleIdentifier {
     #[must_use]
     pub const fn android_app(&self) -> Option<AndroidApp> {
         match self {
-            Self::ComWorldcoin | Self::ComWorldcoinStaging | Self::ComWorldcoinDev => {
-                Some(AndroidApp::WorldApp)
-            }
-            Self::OrgWorldId | Self::OrgWorldIdStaging | Self::OrgWorldIdDev => {
-                Some(AndroidApp::WorldId)
-            }
+            Self::ComWorldcoin
+            | Self::ComWorldcoinStaging
+            | Self::ComWorldcoinDev
+            | Self::ComWorldcoinSandbox => Some(AndroidApp::WorldApp),
+            Self::OrgWorldId
+            | Self::OrgWorldIdStaging
+            | Self::OrgWorldIdDev
+            | Self::OrgWorldIdSandbox => Some(AndroidApp::WorldId),
             Self::OrgWorldcoinInsight
             | Self::OrgWorldcoinInsightStaging
-            | Self::OrgWorldStagingId => None,
+            | Self::OrgWorldcoinInsightSandbox
+            | Self::OrgWorldStagingId
+            | Self::OrgWorldSandboxId => None,
         }
     }
 
@@ -269,15 +285,19 @@ impl BundleIdentifier {
         match self {
             Self::ComWorldcoin
             | Self::ComWorldcoinStaging
+            | Self::ComWorldcoinSandbox
             | Self::OrgWorldId
-            | Self::OrgWorldIdStaging => {
+            | Self::OrgWorldIdStaging
+            | Self::OrgWorldIdSandbox => {
                 // cspell:disable-next-line
                 Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
             }
             Self::ComWorldcoinDev | Self::OrgWorldIdDev => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
             Self::OrgWorldcoinInsight
             | Self::OrgWorldcoinInsightStaging
-            | Self::OrgWorldStagingId => None,
+            | Self::OrgWorldcoinInsightSandbox
+            | Self::OrgWorldStagingId
+            | Self::OrgWorldSandboxId => None,
         }
     }
 
@@ -287,14 +307,18 @@ impl BundleIdentifier {
         match self {
             Self::ComWorldcoin
             | Self::ComWorldcoinStaging
+            | Self::ComWorldcoinSandbox
             | Self::OrgWorldId
-            | Self::OrgWorldIdStaging => Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="),
+            | Self::OrgWorldIdStaging
+            | Self::OrgWorldIdSandbox => Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="),
             Self::ComWorldcoinDev | Self::OrgWorldIdDev => {
                 Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=")
             }
             Self::OrgWorldcoinInsight
             | Self::OrgWorldcoinInsightStaging
-            | Self::OrgWorldStagingId => None,
+            | Self::OrgWorldcoinInsightSandbox
+            | Self::OrgWorldStagingId
+            | Self::OrgWorldSandboxId => None,
         }
     }
 
@@ -304,13 +328,17 @@ impl BundleIdentifier {
             Self::ComWorldcoin
             | Self::ComWorldcoinStaging
             | Self::ComWorldcoinDev
+            | Self::ComWorldcoinSandbox
             | Self::OrgWorldIdStaging
-            | Self::OrgWorldIdDev => None,
+            | Self::OrgWorldIdDev
+            | Self::OrgWorldIdSandbox => None,
             // cspell:disable
             Self::OrgWorldcoinInsightStaging => Some("35RXKB6738.org.worldcoin.insight.staging"),
+            Self::OrgWorldcoinInsightSandbox => Some("35RXKB6738.org.worldcoin.insight.sandbox"),
             Self::OrgWorldcoinInsight => Some("35RXKB6738.org.worldcoin.insight"),
             Self::OrgWorldId => Some("35RXKB6738.org.world.id"),
             Self::OrgWorldStagingId => Some("35RXKB6738.org.world.staging.id"),
+            Self::OrgWorldSandboxId => Some("35RXKB6738.org.world.sandbox.id"),
             // cspell:enable
         }
     }
@@ -322,12 +350,16 @@ impl Display for BundleIdentifier {
             Self::ComWorldcoin => write!(f, "com.worldcoin"),
             Self::ComWorldcoinStaging => write!(f, "com.worldcoin.staging"),
             Self::ComWorldcoinDev => write!(f, "com.worldcoin.dev"),
+            Self::ComWorldcoinSandbox => write!(f, "com.worldcoin.sandbox"),
             Self::OrgWorldIdStaging => write!(f, "org.world.id.staging"),
             Self::OrgWorldIdDev => write!(f, "org.world.id.dev"),
+            Self::OrgWorldIdSandbox => write!(f, "org.world.id.sandbox"),
             Self::OrgWorldcoinInsight => write!(f, "org.worldcoin.insight"),
             Self::OrgWorldcoinInsightStaging => write!(f, "org.worldcoin.insight.staging"),
+            Self::OrgWorldcoinInsightSandbox => write!(f, "org.worldcoin.insight.sandbox"),
             Self::OrgWorldId => write!(f, "org.world.id"),
             Self::OrgWorldStagingId => write!(f, "org.world.staging.id"),
+            Self::OrgWorldSandboxId => write!(f, "org.world.sandbox.id"),
         }
     }
 }
