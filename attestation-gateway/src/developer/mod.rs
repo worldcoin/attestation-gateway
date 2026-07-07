@@ -18,6 +18,16 @@ mod integrity_token_data;
 
 static DEVELOPER_VERIFIER: OnceCell<RemoteJwksVerifier> = OnceCell::const_new();
 
+/// Audience the certificate authority stamps on every Laissez-Passer certificate.
+/// Single fixed value for now; may become a set if audiences are enriched later.
+const EXPECTED_CERTIFICATE_AUDIENCE: &str = "lp.certificate";
+
+/// Well-known JWKS path published by the certificate authority. The expected
+/// certificate issuer is the JWKS URL with this suffix removed (e.g.
+/// `https://certauth.worldcoin.dev/.well-known/jwks.json` ->
+/// `https://certauth.worldcoin.dev`).
+const WELL_KNOWN_JWKS_SUFFIX: &str = "/.well-known/jwks.json";
+
 /// Verifies a developer token and returns the sub.
 ///
 /// Currently supported developers:
@@ -30,17 +40,17 @@ pub async fn verify(
     jwks_url: Option<&str>,
     request_hash: &str,
 ) -> eyre::Result<VerificationOutput> {
-    // Initialize the verifier if it's not already initialized
-    let developer_token_verifier = if let Some(jwks_url) = jwks_url {
-        DEVELOPER_VERIFIER
-            .get_or_init(|| async {
-                RemoteJwksVerifier::new(jwks_url.to_string(), None, Duration::from_secs(3600))
-            })
-            .await
-    } else {
+    let Some(jwks_url) = jwks_url else {
         tracing::error!("No JWKS URL provided for developer verifier");
         return Err(eyre::eyre!("No JWKS URL provided for developer verifier"));
     };
+
+    // Initialize the verifier if it's not already initialized
+    let developer_token_verifier = DEVELOPER_VERIFIER
+        .get_or_init(|| async {
+            RemoteJwksVerifier::new(jwks_url.to_string(), None, Duration::from_secs(3600))
+        })
+        .await;
 
     // Parse outer JWT
     let outer_jwt_payload = parse_outer_jwt(developer_token)?;
@@ -48,6 +58,10 @@ pub async fn verify(
     // Verify and parse inner JWT
     let inner_jwt_payload =
         verify_and_parse_inner_jwt(&outer_jwt_payload, developer_token_verifier).await?;
+
+    // Validate inner certificate claims (iss must match the certificate authority
+    // the JWKS was fetched from, aud must be the LP certificate audience)
+    validate_inner_certificate_claims(&inner_jwt_payload, jwks_url)?;
 
     // Verify outer JWT against inner JWT public key
     verify_outer_jwt(developer_token, &inner_jwt_payload)?;
@@ -146,6 +160,50 @@ fn verify_outer_jwt(
     Ok(())
 }
 
+/// Validates the `iss` and `aud` claims of the inner certificate.
+///
+/// The expected issuer is derived from the configured JWKS URL: the certificate
+/// authority publishes its keys at `<issuer>/.well-known/jwks.json`, so a
+/// certificate is only accepted if its `iss` matches the authority whose keys
+/// verified it (`https://certauth.toolsforhumanity.com` in prod,
+/// `https://certauth.worldcoin.dev` in staging). Trailing slashes are ignored
+/// to tolerate formatting differences between issuers and configuration.
+fn validate_inner_certificate_claims(
+    inner_token: &DeveloperTokenClaims,
+    jwks_url: &str,
+) -> eyre::Result<()> {
+    let expected_issuer = jwks_url
+        .strip_suffix(WELL_KNOWN_JWKS_SUFFIX)
+        .unwrap_or(jwks_url)
+        .trim_end_matches('/');
+
+    if inner_token.iss.trim_end_matches('/') != expected_issuer {
+        let error_message = format!(
+            "Inner certificate issuer does not match certificate authority: {actual} != {expected_issuer}",
+            actual = inner_token.iss,
+        );
+        tracing::warn!(error_message);
+        eyre::bail!(ClientException {
+            code: ErrorCode::InvalidDeveloperToken,
+            internal_debug_info: error_message,
+        });
+    }
+
+    if inner_token.aud != EXPECTED_CERTIFICATE_AUDIENCE {
+        let error_message = format!(
+            "Inner certificate audience is not {EXPECTED_CERTIFICATE_AUDIENCE}: {actual}",
+            actual = inner_token.aud,
+        );
+        tracing::warn!(error_message);
+        eyre::bail!(ClientException {
+            code: ErrorCode::InvalidDeveloperToken,
+            internal_debug_info: error_message,
+        });
+    }
+
+    Ok(())
+}
+
 fn validate_developer_token_claims(
     outer_token: &ActorTokenClaims,
     request_hash: &str,
@@ -190,17 +248,43 @@ mod tests {
     use serde_json::json;
 
     fn generate_inner_token(key: &jwtk::SomePrivateKey, kid: &str, client_pub_key: &str) -> String {
+        generate_inner_token_with_claims(
+            key,
+            kid,
+            client_pub_key,
+            &issuer_for_tests(),
+            EXPECTED_CERTIFICATE_AUDIENCE,
+        )
+    }
+
+    fn generate_inner_token_with_claims(
+        key: &jwtk::SomePrivateKey,
+        kid: &str,
+        client_pub_key: &str,
+        iss: &str,
+        aud: &str,
+    ) -> String {
         let mut claims = jwtk::HeaderAndClaims::new_dynamic();
         claims
             .set_exp_from_now(Duration::from_secs(60))
             .set_iat_now()
-            .set_iss("https://relying-party.example.com")
+            .set_iss(iss)
             .set_sub("test@relying-party.example.com")
             .insert("public_key", client_pub_key)
-            .insert("aud", "lp.certificate")
+            .insert("aud", aud)
             .set_kid(kid);
 
         jwtk::sign(&mut claims, key).unwrap()
+    }
+
+    /// Issuer matching the mock JWKS server, i.e. the JWKS URL minus the
+    /// well-known suffix — mirrors how `validate_inner_certificate_claims`
+    /// derives the expected issuer.
+    fn issuer_for_tests() -> String {
+        JWK_SERVER
+            .get()
+            .expect("JWKS mock server must be initialized before generating tokens")
+            .url()
     }
 
     fn generate_outer_token(
@@ -355,6 +439,78 @@ mod tests {
             .await
             .expect("should succeed");
 
+        assert_eq!(user.success, true);
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_rejects_wrong_issuer() {
+        let (developer_kid, developer_some_private_key, client_some_private_key, jwks_url) =
+            generate_keys_and_mock_jwks_server().await;
+
+        // 🧪 Inner JWT signed by the trusted key but claiming a different issuer
+        let inner_token = generate_inner_token_with_claims(
+            &developer_some_private_key,
+            &developer_kid,
+            &client_some_private_key.public_key_to_pem().unwrap(),
+            "https://evil-issuer.example.com",
+            EXPECTED_CERTIFICATE_AUDIENCE,
+        );
+        let outer_token =
+            generate_outer_token(&client_some_private_key, &inner_token, "test-request-hash");
+
+        let result = verify(&outer_token, Some(&jwks_url), "test-request-hash").await;
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            err.to_string()
+                .contains("Inner certificate issuer does not match certificate authority")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_rejects_wrong_audience() {
+        let (developer_kid, developer_some_private_key, client_some_private_key, jwks_url) =
+            generate_keys_and_mock_jwks_server().await;
+
+        // 🧪 Inner JWT with correct issuer but wrong audience
+        let inner_token = generate_inner_token_with_claims(
+            &developer_some_private_key,
+            &developer_kid,
+            &client_some_private_key.public_key_to_pem().unwrap(),
+            &issuer_for_tests(),
+            "some.other.audience",
+        );
+        let outer_token =
+            generate_outer_token(&client_some_private_key, &inner_token, "test-request-hash");
+
+        let result = verify(&outer_token, Some(&jwks_url), "test-request-hash").await;
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            err.to_string()
+                .contains("Inner certificate audience is not lp.certificate")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_token_accepts_issuer_with_trailing_slash() {
+        let (developer_kid, developer_some_private_key, client_some_private_key, jwks_url) =
+            generate_keys_and_mock_jwks_server().await;
+
+        // 🧪 Same issuer but with a trailing slash — must still be accepted
+        let inner_token = generate_inner_token_with_claims(
+            &developer_some_private_key,
+            &developer_kid,
+            &client_some_private_key.public_key_to_pem().unwrap(),
+            &(issuer_for_tests() + "/"),
+            EXPECTED_CERTIFICATE_AUDIENCE,
+        );
+        let outer_token =
+            generate_outer_token(&client_some_private_key, &inner_token, "test-request-hash");
+
+        let user = verify(&outer_token, Some(&jwks_url), "test-request-hash")
+            .await
+            .expect("should succeed");
         assert_eq!(user.success, true);
     }
 
