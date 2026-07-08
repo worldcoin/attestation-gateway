@@ -34,7 +34,7 @@ josekit = "0.10.3"
 jwtk = "0.4.0"
 metrics = "0.24.6"
 metrics-exporter-statsd = "0.9.0"
-openssl = { version = "0.1081", features = ["vendored"] }
+openssl = { version = "0.10.81", features = ["vendored"] }
 rand = "0.10.2"
 redis = { version = "1.3.0", default-features = false, features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"] }
 regex = "1.12.4"
