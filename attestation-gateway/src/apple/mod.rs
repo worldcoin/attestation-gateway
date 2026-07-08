@@ -183,6 +183,11 @@ impl AAGUID {
                 // production environment (e.g. through TestFlight distribution)
                 Ok([Self::AppAttest, Self::AppAttestDevelop].to_vec())
             }
+            BundleIdentifier::OrgWorldcoinInsightSandbox | BundleIdentifier::OrgWorldSandboxId => {
+                // Sandbox app can be operating in either the development environment (e.g. local development) or
+                // production environment (e.g. through TestFlight distribution)
+                Ok([Self::AppAttest, Self::AppAttestDevelop].to_vec())
+            }
             _ => eyre::bail!("Invalid bundle identifier for Apple verification."),
         }
     }
