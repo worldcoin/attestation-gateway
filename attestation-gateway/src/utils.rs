@@ -769,6 +769,7 @@ impl DataReport {
 
 #[derive(Debug)]
 pub struct OutputTokenPayload {
+    pub issuer: String,
     pub aud: String,
     pub request_hash: String,
     pub bundle_identifier: BundleIdentifier,
@@ -809,7 +810,7 @@ impl OutputTokenPayload {
     pub fn generate(&self) -> Result<JwtPayload, RequestError> {
         let mut payload = JwtPayload::new();
         payload.set_issued_at(&SystemTime::now());
-        payload.set_issuer("attestation.worldcoin.org");
+        payload.set_issuer(&self.issuer);
         payload.set_expires_at(&(SystemTime::now() + OUTPUT_TOKEN_EXPIRATION));
 
         // Claims
@@ -896,6 +897,7 @@ mod tests {
         let now = SystemTime::now();
 
         let payload = OutputTokenPayload {
+            issuer: "attestation.worldcoin.org".to_string(),
             aud: "my-aud.com".to_string(),
             request_hash: "this_is_not_a_hash_with_enough_entropy".to_string(),
             bundle_identifier: BundleIdentifier::ComWorldcoinStaging,

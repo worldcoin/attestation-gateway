@@ -87,6 +87,7 @@ async fn test_generate_output_token() {
     let aws_config = get_aws_config().await;
 
     let output_token_payload = OutputTokenPayload {
+        issuer: "attestation.worldcoin.org".to_string(),
         aud: "example.worldcoin.org".to_string(),
         request_hash: "a_sample_request_hash".to_string(),
         bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
