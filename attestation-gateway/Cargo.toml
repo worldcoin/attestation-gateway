@@ -14,17 +14,17 @@ test-helpers = []
 
 [dependencies]
 aide = { version = "0.13.5", features = ["axum", "macros", "scalar"] }
-anyhow = "1.0.102"
-arc-swap = "1.7"
+anyhow = "1.0.103"
+arc-swap = "1.9.2"
 asn1 = "0.24.1"
-aws-config = "1.8.14"
-aws-sdk-dynamodb = { version = "1.107.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
-aws-sdk-kinesis = { version = "1.101.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
-aws-sdk-kms = { version = "1.102.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-config = "1.8.18"
+aws-sdk-dynamodb = { version = "1.116.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-kinesis = { version = "1.109.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-kms = { version = "1.111.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
 axum = "0.7.9"
 axum-jsonschema = { version = "0.8.0", features = ["aide"] }
 base64 = "0.22.1"
-chrono = { version = "0.4.44", features = ["serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
 ciborium = "0.2.2"
 der-parser = "10.0.0"
 dotenvy = "0.15.7"
@@ -32,36 +32,36 @@ eyre = "0.6.12"
 hex.workspace = true
 josekit = "0.10.3"
 jwtk = "0.4.0"
-metrics = "0.24.3"
+metrics = "0.24.6"
 metrics-exporter-statsd = "0.9.0"
-openssl = { version = "0.10.75", features = ["vendored"] }
-rand = "0.10.0"
-redis = { version = "1.0.4", default-features = false, features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"] }
-regex = "1.12.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots-no-provider"] }
-rustls = { version = "0.23", features = ["aws-lc-rs"] }
+openssl = { version = "0.1081", features = ["vendored"] }
+rand = "0.10.2"
+redis = { version = "1.3.0", default-features = false, features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"] }
+regex = "1.12.4"
+reqwest = { version = "0.12.8", default-features = false, features = ["json", "rustls-tls-webpki-roots-no-provider"] }
+rustls = { version = "0.23.41", features = ["aws-lc-rs"] }
 schemars = "0.8.22"
 serde.workspace = true
 serde_bytes = "0.11.19"
-serde_json = "1.0.149"
+serde_json = "1.0.150"
 thiserror.workspace = true
-tokio = { version = "1.50.0", features = ["full"] }
-tower-http = { version = "0.6.8", features = ["compression-br", "trace", "timeout"] }
+tokio = { version = "1.52.3", features = ["full"] }
+tower-http = { version = "0.6.11", features = ["compression-br", "trace", "timeout"] }
 tracing = { version = "0.1.44", features = ["log"] }
-tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "json"] }
-uuid = { version = "1.21.0", default-features = false, features = ["v4"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json"] }
+uuid = { version = "1.23.4", default-features = false, features = ["v4"] }
 x509-parser = "0.18.1"
 
 [build-dependencies]
-chrono = "0.4.41"
+chrono = "0.4.45"
 
 [dev-dependencies]
 attestation-gateway = { path = ".", features = ["test-helpers"] }
 http-body-util = "0.1.3"
-hyper = "1.4.1"
+hyper = "1.10.1"
 mime = "0.3.17"
-mockito = "1.7.0"
-serial_test = "3.2.0"
-tower = { version = "0.5.2", features = ["util"] }
-tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
+mockito = "1.7.2"
+serial_test = "3.5.0"
+tower = { version = "0.5.3", features = ["util"] }
+tracing-test = { version = "0.2.6", features = ["no-env-filter"] }
 
