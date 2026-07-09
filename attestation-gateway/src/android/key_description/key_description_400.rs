@@ -9,7 +9,7 @@ pub struct KeyDescription400<'a> {
     pub _key_mint_version: u64,
     pub key_mint_security_level: asn1::Enumerated,
     pub attestation_challenge: &'a [u8],
-    pub _unique_id: &'a [u8],
+    pub unique_id: &'a [u8],
     pub software_enforced: AuthorizationList<'a>,
     pub hardware_enforced: AuthorizationList<'a>,
 }
@@ -28,11 +28,11 @@ impl<'a> KeyDescription400<'a> {
 #[derive(asn1::Asn1Read)]
 pub struct AuthorizationList<'a> {
     #[explicit(1)]
-    pub _purpose: Option<asn1::SetOf<'a, u64>>,
+    pub purpose: Option<asn1::SetOf<'a, u64>>,
     #[explicit(2)]
-    pub _algorithm: Option<u64>,
+    pub algorithm: Option<u64>,
     #[explicit(3)]
-    pub _key_size: Option<u64>,
+    pub key_size: Option<u64>,
     #[explicit(4)]
     pub _block_mode: Option<asn1::SetOf<'a, u64>>,
     #[explicit(5)]
@@ -44,7 +44,7 @@ pub struct AuthorizationList<'a> {
     #[explicit(8)]
     pub _min_mac_length: Option<u64>,
     #[explicit(10)]
-    pub _ec_curve: Option<u64>,
+    pub ec_curve: Option<u64>,
     #[explicit(200)]
     pub _rsa_public_exponent: Option<u64>,
     #[explicit(203)]
@@ -60,7 +60,7 @@ pub struct AuthorizationList<'a> {
     #[explicit(402)]
     pub _usage_expire_date_time: Option<u64>,
     #[explicit(405)]
-    pub _usage_count_limit: Option<u64>,
+    pub usage_count_limit: Option<u64>,
     #[explicit(502)]
     pub _user_secure_id: Option<u64>,
     #[explicit(503)]
@@ -78,43 +78,43 @@ pub struct AuthorizationList<'a> {
     #[explicit(509)]
     pub _unlocked_device_req: Option<asn1::Null>,
     #[explicit(701)]
-    pub _creation_date_time: Option<u64>,
+    pub creation_date_time: Option<u64>,
     #[explicit(702)]
     pub origin: Option<u64>,
     #[explicit(704)]
     pub root_of_trust: Option<RootOfTrust<'a>>,
     #[explicit(705)]
-    pub _os_version: Option<u64>,
+    pub os_version: Option<u64>,
     #[explicit(706)]
     pub os_patch_level: Option<u32>,
     #[explicit(709)]
     pub attestation_application_id: Option<&'a [u8]>,
     #[explicit(710)]
-    pub _attestation_id_brand: Option<&'a [u8]>,
+    pub attestation_id_brand: Option<&'a [u8]>,
     #[explicit(711)]
-    pub _attestation_id_device: Option<&'a [u8]>,
+    pub attestation_id_device: Option<&'a [u8]>,
     #[explicit(712)]
-    pub _attestation_id_product: Option<&'a [u8]>,
+    pub attestation_id_product: Option<&'a [u8]>,
     #[explicit(713)]
-    pub _attestation_id_serial: Option<&'a [u8]>,
+    pub attestation_id_serial: Option<&'a [u8]>,
     #[explicit(714)]
-    pub _attestation_id_imei: Option<&'a [u8]>,
+    pub attestation_id_imei: Option<&'a [u8]>,
     #[explicit(715)]
-    pub _attestation_id_meid: Option<&'a [u8]>,
+    pub attestation_id_meid: Option<&'a [u8]>,
     #[explicit(716)]
-    pub _attestation_id_manufacturer: Option<&'a [u8]>,
+    pub attestation_id_manufacturer: Option<&'a [u8]>,
     #[explicit(717)]
-    pub _attestation_id_model: Option<&'a [u8]>,
+    pub attestation_id_model: Option<&'a [u8]>,
     #[explicit(718)]
-    pub _vendor_patch_level: Option<u64>,
+    pub vendor_patch_level: Option<u64>,
     #[explicit(719)]
-    pub _boot_patch_level: Option<u64>,
+    pub boot_patch_level: Option<u64>,
     #[explicit(720)]
-    pub _device_unique_attestation: Option<asn1::Null>,
+    pub device_unique_attestation: Option<asn1::Null>,
     #[explicit(723)]
-    pub _attestation_id_second_imei: Option<&'a [u8]>,
+    pub attestation_id_second_imei: Option<&'a [u8]>,
     #[explicit(724)]
-    pub _module_hash: Option<&'a [u8]>,
+    pub module_hash: Option<&'a [u8]>,
 }
 
 /// Contents of authorization tag `709` (`attestation_application_id`). See
@@ -134,8 +134,8 @@ pub struct AttestationPackageInfo<'a> {
 
 #[derive(asn1::Asn1Read, Debug)]
 pub struct RootOfTrust<'a> {
-    pub _verified_boot_key: &'a [u8],
+    pub verified_boot_key: &'a [u8],
     pub device_locked: bool,
     pub verified_boot_state: asn1::Enumerated,
-    pub _verified_boot_hash: &'a [u8],
+    pub verified_boot_hash: &'a [u8],
 }
