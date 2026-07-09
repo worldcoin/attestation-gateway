@@ -10,6 +10,7 @@ use std::{env, fmt};
 
 mod android;
 mod apple;
+mod audience_authorizer;
 mod developer;
 mod keys;
 mod kinesis;
@@ -36,7 +37,7 @@ async fn main() {
 
     // Initialize logging
     match environment {
-        Environment::Production | Environment::Staging => {
+        Environment::Production | Environment::Sandbox | Environment::Staging => {
             set_up_metrics(environment)
                 .map_err(|e| {
                     tracing::error!(error = ?e, "Error setting up metrics");
@@ -80,6 +81,7 @@ async fn build_redis_pool(redis_url: String) -> redis::RedisResult<ConnectionMan
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Environment {
     Production,
+    Sandbox,
     Staging,
     Development,
 }
@@ -90,6 +92,7 @@ impl TryFrom<&str> for Environment {
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "production" => Ok(Self::Production),
+            "sandbox" => Ok(Self::Sandbox),
             "staging" => Ok(Self::Staging),
             "development" => Ok(Self::Development),
             _ => Err(format!("invalid `APP_ENV` environment variable: {s}").into()),
@@ -101,6 +104,7 @@ impl fmt::Display for Environment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let env_str = match self {
             Self::Production => "production",
+            Self::Sandbox => "sandbox",
             Self::Staging => "staging",
             Self::Development => "development",
         };
@@ -161,8 +165,9 @@ impl Environment {
         });
 
         assert!(
-            self != &Self::Production || redis_url.starts_with("rediss://"),
-            "For security reasons, TLS is required for Redis in production. Set `REDIS_USE_TLS` = `true` or the scheme of `REDIS_URL`."
+            self != &Self::Production && self != &Self::Sandbox
+                || redis_url.starts_with("rediss://"),
+            "For security reasons, TLS is required for Redis in sandbox or production. Set `REDIS_USE_TLS` = `true` or the scheme of `REDIS_URL`."
         );
 
         build_redis_pool(redis_url)

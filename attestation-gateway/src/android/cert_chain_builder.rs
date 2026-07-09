@@ -253,6 +253,8 @@ mod tests {
     #[allow(unused_imports)]
     use super::*;
 
+    use crate::android::intermediate_cert::IntermediateCert;
+
     #[test]
     fn test_certificate_order1() {
         let cert_chain_builder = CertChainBuilder::new_from_default_pem().unwrap();
@@ -270,6 +272,60 @@ mod tests {
             .build_chain_from_base64(&[cert1.clone(), cert3.clone(), cert2.clone()])
             .unwrap();
 
-        assert_eq!(cert_chain1.serials(), cert_chain2.serials());
+        assert_eq!(
+            cert_chain1.session_cert().serial(),
+            cert_chain2.session_cert().serial()
+        );
+        assert_eq!(
+            cert_chain1.device_cert().serial(),
+            cert_chain2.device_cert().serial()
+        );
+        assert_eq!(
+            cert_chain1
+                .intermediate_certs()
+                .iter()
+                .map(IntermediateCert::serial)
+                .collect::<Vec<_>>(),
+            cert_chain2
+                .intermediate_certs()
+                .iter()
+                .map(IntermediateCert::serial)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            cert_chain1.root_cert().serial(),
+            cert_chain2.root_cert().serial()
+        );
+    }
+
+    #[test]
+    fn test_cert_chain_json_serialization() {
+        let cert_chain_builder = CertChainBuilder::new_from_default_pem().unwrap();
+
+        let cert1 = "MIICzDCCAnCgAwIBAgIBATAMBggqhkjOPQQDAgUAMC8xGTAXBgNVBAUTEDkwZThkYTNjYWRmYzc4MjAxEjAQBgNVBAwMCVN0cm9uZ0JveDAiGA8yMDI2MDQyNzE3NDQzNVoYDzIwMzYwNDI3MTc0NDM0WjAfMR0wGwYDVQQDDBRBbmRyb2lkIEtleXN0b3JlIEtleTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABCiFp6QmDPOhqGzVxx5ca8SEdYRcoYEi7m/b9pATZFdbgc7uGwX9VdxQJMpTKU0JEUcg2LSlHmdWe0vtoTSf6m2jggGFMIIBgTAOBgNVHQ8BAf8EBAMCB4AwggFtBgorBgEEAdZ5AgERBIIBXTCCAVkCAQQKAQICASkKAQIELm49MzMyZDRkZTI4NWVhODBmMzU1NDQ1MDRlMjY4MzY2MDgsYXY9NC4wLjIxMDAEADByv4MRCAIGAedMacujv4MSCAIGAedMacujv4N9AgUAv4U9CAIGAZ3QCv/Qv4VFRARCMEAxGjAYBBFjb20ud29ybGRjb2luLmRldgIDPRE0MSIEIKNBbt/cqq7MXlkrnKoHu3jsxvMa7EQJ9Jym07Tf8dvgMIGkoQUxAwIBAqIDAgEDowQCAgEApQgxBgIBAAIBBKoDAgEBv4N3AgUAv4U+AwIBAL+FQEwwSgQgYf2hKzLthCFKnPE9Gv+3qoC9iiaKhh7Uu3oVFw8asAwBAf8KAQAEIMuBDKWKYbbA4RGjBGzOXFMM79ynwhOMxidq2r6VoXi6v4VBBQIDAdTAv4VCBQIDAxV+v4VOBgIEATRlPb+FTwYCBAE0ZT0wDAYIKoZIzj0EAwIFAANIADBFAiEAgLRAd8YV570NdhKFQprG4v5dnkPv8BrgOyeH5M4fQ+ICIG0XrkMh1PKlRvLjRcQqo6kTeXafMW1xhGwKR4WQEtT0".to_string();
+        let cert2 = "MIICMDCCAbegAwIBAgIKESM4JDRACGgBcTAKBggqhkjOPQQDAjAvMRkwFwYDVQQFExBjY2QxOGI5YjYwOGQ2NThlMRIwEAYDVQQMDAlTdHJvbmdCb3gwHhcNMTgwNTI1MjMyODUwWhcNMjgwNTIyMjMyODUwWjAvMRkwFwYDVQQFExA5MGU4ZGEzY2FkZmM3ODIwMRIwEAYDVQQMDAlTdHJvbmdCb3gwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATkV0TCsZ+vcIoXK0BLe4q4sQ1veBPE228LqldQCQPCb6IBCpM7rHDgKmsaviWtsA0anJyUpXHTVix0mdIy9Xcno4G6MIG3MB0GA1UdDgQWBBRvsbUxnba4hRW+z8AMdxqP51TqljAfBgNVHSMEGDAWgBS8W8vVecaU3BmPm59nU8zr5mLf3jAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwICBDBUBgNVHR8ETTBLMEmgR6BFhkNodHRwczovL2FuZHJvaWQuZ29vZ2xlYXBpcy5jb20vYXR0ZXN0YXRpb24vY3JsLzExMjMzODI0MzQ0MDA4NjgwMTcxMAoGCCqGSM49BAMCA2cAMGQCMFBzxlbrGJarX+e8d7UfD5M2Br3QxKUFAS1tfGxy9Lw72yfFn8v3jxNyCamglqpw8gIwYkzbZDvx/uU6vXIaB1y0PRGq5Jp5xIgKqUEJvsBuyMN8JdJsfzvHbkYyZUujU/SV".to_string();
+        let cert3 = "MIID1zCCAb+gAwIBAgIKA4gmZ2BliZaFmDANBgkqhkiG9w0BAQsFADAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MB4XDTE4MDYyMDIyMTQwMloXDTI4MDYxNzIyMTQwMlowLzEZMBcGA1UEBRMQY2NkMThiOWI2MDhkNjU4ZTESMBAGA1UEDAwJU3Ryb25nQm94MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEhO8/KkOtlIwEItY5zds+E2p/WG0wNet8fDHsooCiZi0MMzJZMGTlepRhYbnCBQlSi7TXjTzQQ8kAJmJFeHTlp7hBcpccDbCyicyvX5JjazVOiB3hwKzS0oKwSS9D3sUfo4G2MIGzMB0GA1UdDgQWBBS8W8vVecaU3BmPm59nU8zr5mLf3jAfBgNVHSMEGDAWgBQ2YeEAfIgFCVGLRGxH/xpMyepPEjAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwICBDBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwczovL2FuZHJvaWQuZ29vZ2xlYXBpcy5jb20vYXR0ZXN0YXRpb24vY3JsLzhGNjczNEM5RkE1MDQ3ODkwDQYJKoZIhvcNAQELBQADggIBAJOSNuBkQfic/SZf++OB6bXkbHmJpZaHxU/yVtnOZBrhAa4cLKIDg9A9A3nWtLw68x8VfI1s442+qHWfxGvVidhaCsLT+F2dpUme5VsgJSAK/6ZTLb5vhwskzS6G8YPUM/NzeFif7tkMu9cHkHlCFwJePPVWBg0iz51PFphdJGOG3e3CsRHG37Lk5RlvrVt3R5toRDrK5QV5V1RQ6OadRxHBxmmRC2owao8fU5yYkZ42bznwkyqCc0WsHmpqI0D/6jPaszAE7HlGPLMtGo/rVEaRjrjg9huEJMAHIsQAxhUDfZwAZ6tE4jEVf52o3AezZsvzDErcwWPB6ekUMBG9zuNLipcEhLKG9X4V0tJN+vwqvUWrzen9ZzvSoN6p5rQNjPFNvVtq0rVzPoPHjF6wN9r2qsQA8MVY31b3maOVq9n+WVOXxaZXtMmIKi8EgZAejeaq2ewAuxYaXoHsLI/9GPtF0k4mCbN6dffMwh/RJ8IWfZ3stwbyzcJ+sIrQ9IWX/Wsdi4vo3ZgRhf85pbGYM8SFYhnjUAbiyBHPYb0wltu+zwXMKXSuSCVhq3BnuTHS6sEkK5u9QBFY+U4AnP74MJ0tjP9S4YXm5/neTcE16yAdZlYY/8qZZoiukXl4TZTqlZA7/H5sdSx9ps+w/izJRS6CrFa72mB/tPtCd3jbMxVg".to_string();
+        let cert4 = "MIIFYDCCA0igAwIBAgIJAOj6GWMU0voYMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNVBAUTEGY5MjAwOWU4NTNiNmIwNDUwHhcNMTYwNTI2MTYyODUyWhcNMjYwNTI0MTYyODUyWjAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdSSxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggjnar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGqC4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQoVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+OJtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/EgsTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRiigHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+MRPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9EaDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5UmAGMCAwEAAaOBpjCBozAdBgNVHQ4EFgQUNmHhAHyIBQlRi0RsR/8aTMnqTxIwHwYDVR0jBBgwFoAUNmHhAHyIBQlRi0RsR/8aTMnqTxIwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cHM6Ly9hbmRyb2lkLmdvb2dsZWFwaXMuY29tL2F0dGVzdGF0aW9uL2NybC8wDQYJKoZIhvcNAQELBQADggIBACDIw41L3KlXG0aMiS//cqrG+EShHUGo8HNsw30W1kJtjn6UBwRM6jnmiwfBPb8VA91chb2vssAtX2zbTvqBJ9+LBPGCdw/E53Rbf86qhxKaiAHOjpvAy5Y3m00mqC0w/Zwvju1twb4vhLaJ5NkUJYsUS7rmJKHHBnETLi8GFqiEsqTWpG/6ibYCv7rYDBJDcR9W62BW9jfIoBQcxUCUJouMPH25lLNcDc1ssqvC2v7iUgI9LeoM1sNovqPmQUiG9rHli1vXxzCyaMTjwftkJLkf6724DFhuKug2jITV0QkXvaJWF4nUaHOTNA4uJU9WDvZLI1j83A+/xnAJUucIv/zGJ1AMH2boHqF8CY16LpsYgBt6tKxxWH00XcyDCdW2KlBCeqbQPcsFmWyWugxdcekhYsAWyoSf818NUsZdBWBaR/OukXrNLfkQ79IyZohZbvabO/X+MVT3rriAoKc8oE2Uws6DF+60PV7/WIPjNvXySdqspImSN78mflxDqwLqRBYkA3I75qppLGG9rp7UCdRjxMl8ZDBld+7yvHVgt1cVzJx9xnyGCC23UaicMDSXYrB4I4WHXPGjxhZuCuPBLTdOLU8YRvMYdEvYebWHMpvwGCF6bAx3JBpIeOQ1wDB5y0USicV3YgYGmi+NZfhA4URSh77Yd6uuJOJENRaNVTzk".to_string();
+
+        let cert_chain = cert_chain_builder
+            .build_chain_from_base64(&[cert1, cert2, cert3, cert4])
+            .unwrap();
+
+        let json = serde_json::to_value(&cert_chain).expect("cert chain should serialize to JSON");
+
+        assert!(json.get("session_cert").is_some());
+        assert!(json.pointer("/session_cert/serial/decimal").is_some());
+        assert!(
+            json.pointer("/session_cert/key_description/attestation_challenge")
+                .is_some()
+        );
+        assert_eq!(
+            json.pointer("/session_cert/key_description/attestation_security_level")
+                .and_then(|v| v.as_str()),
+            Some("StrongBox")
+        );
+        assert!(json.get("device_cert").is_some());
+        assert!(json.get("intermediate_certs").is_some());
+        assert!(json.get("root_cert").is_some());
     }
 }

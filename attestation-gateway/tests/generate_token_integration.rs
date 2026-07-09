@@ -88,16 +88,22 @@ fn get_global_config_extension_with_pem(
     // Required to load default env vars
     dotenvy::from_filename(".env.example").unwrap();
     let config = attestation_gateway::utils::GlobalConfig {
-        android_outer_jwe_private_key: std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").expect("`ANDROID_OUTER_JWE_PRIVATE_KEY` must be set for tests."),
-        android_inner_jws_public_key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/EScv4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==".to_string(),
+        android_default_keys: attestation_gateway::utils::AndroidResponseKeys {
+            outer_jwe_private_key: std::env::var("ANDROID_OUTER_JWE_PRIVATE_KEY").expect("`ANDROID_OUTER_JWE_PRIVATE_KEY` must be set for tests."),
+            inner_jws_public_key: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+D+pCqBGmautdPLe/D8ot+e0/EScv4MgiylljSWZUPzQU0npHMNTO8Z9meOTHa3rORO3c2s14gu+Wc5eKdvoHw==".to_string(),
+        },
+        android_world_app_keys: None,
+        android_world_id_keys: None,
         apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        enabled_bundle_identifiers: vec![BundleIdentifier::AndroidStageWorldApp, BundleIdentifier::AndroidDevWorldApp, BundleIdentifier::IOSStageWorldApp, BundleIdentifier::IOSProdWorldApp],
+        enabled_bundle_identifiers: vec![BundleIdentifier::ComWorldcoinStaging, BundleIdentifier::ComWorldcoinDev, BundleIdentifier::OrgWorldcoinInsightStaging, BundleIdentifier::OrgWorldcoinInsight],
         log_client_errors: false,
         kinesis_stream_arn: Some("arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports".to_string()),
         developer_inner_jwks_url: std::env::var("DEVELOPER_INNER_JWKS_URL").ok(),
         apple_root_ca_pem,
         aud_whitelist: vec!["relying-party.example.com".to_string()],
         jwt_issuer: "attestation.worldcoin.org".to_string(),
+        developer_portal_base_url: None,
+        aud_authorization_cache_ttl_secs: 60 * 60,
     };
     Extension(config)
 }
@@ -106,6 +112,18 @@ fn extension_nonce_db(
     redis: &redis::aio::ConnectionManager,
 ) -> Extension<attestation_gateway::nonces::NonceDb> {
     Extension(attestation_gateway::nonces::NonceDb::new(redis.clone()))
+}
+
+fn extension_audience_authorizer(
+    redis: &redis::aio::ConnectionManager,
+    global_config: &attestation_gateway::utils::GlobalConfig,
+) -> Extension<attestation_gateway::audience_authorizer::AudienceAuthorizer> {
+    Extension(
+        attestation_gateway::audience_authorizer::AudienceAuthorizer::from_config(
+            redis.clone(),
+            global_config,
+        ),
+    )
 }
 
 async fn extension_android_attestation(
@@ -130,6 +148,12 @@ async fn extension_android_attestation(
                 redis.clone(),
                 Some(10),
             ),
+            attestation_gateway::android::analytics_service::AnalyticsService::new(
+                "arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports"
+                    .to_string(),
+            )
+            .await
+            .unwrap(),
         ),
     )
 }
@@ -156,13 +180,34 @@ async fn get_kinesis_extension() -> Extension<aws_sdk_kinesis::Client> {
 
 async fn get_api_router() -> aide::axum::ApiRouter {
     let redis_ext = get_redis_extension().await;
+    let global_config_ext = get_global_config_extension();
     attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
-        .layer(get_global_config_extension())
+        .layer(global_config_ext.clone())
         .layer(extension_android_attestation(&redis_ext.0).await)
+        .layer(extension_audience_authorizer(
+            &redis_ext.0,
+            &global_config_ext.0,
+        ))
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
         .layer(get_kinesis_extension().await)
+}
+
+async fn get_challenge_router() -> (aide::axum::ApiRouter, redis::aio::ConnectionManager) {
+    let redis_ext = get_redis_extension().await;
+    let redis = redis_ext.0.clone();
+    let global_config_ext = get_global_config_extension();
+    let api_router = attestation_gateway::routes::handler()
+        .layer(global_config_ext.clone())
+        .layer(extension_audience_authorizer(
+            &redis_ext.0,
+            &global_config_ext.0,
+        ))
+        .layer(extension_nonce_db(&redis_ext.0))
+        .layer(redis_ext);
+
+    (api_router, redis)
 }
 
 /// Generates a valid Android integrity token (simulating what Play Store would generate)
@@ -251,6 +296,69 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
     jwe
 }
 
+// SECTION ------------------ challenge tests ------------------
+
+#[tokio::test]
+#[serial]
+async fn test_challenge_static_allowlist_succeeds() {
+    let (api_router, _redis) = get_challenge_router().await;
+
+    let response = api_router
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/c")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "aud": "relying-party.example.com" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response_body = response.collect().await.unwrap().to_bytes();
+    let response_json: Value = serde_json::from_slice(&response_body).unwrap();
+    assert!(
+        response_json["nonce"]
+            .as_str()
+            .is_some_and(|nonce| !nonce.is_empty())
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_challenge_unauthorized_audience_does_not_create_nonce() {
+    let (api_router, mut redis) = get_challenge_router().await;
+
+    let response = api_router
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/c")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "aud": "face.worldcoin.org" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let nonce_keys = redis::cmd("KEYS")
+        .arg("nonce:*")
+        .query_async::<Vec<String>>(&mut redis)
+        .await
+        .unwrap();
+    assert!(nonce_keys.is_empty());
+}
+
+// !SECTION ------------------ challenge tests ------------------
+
 // SECTION ------------------ android tests ------------------
 
 #[tokio::test]
@@ -263,13 +371,12 @@ async fn test_android_e2e_success() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinDev,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -408,13 +515,12 @@ async fn test_android_token_generation_with_invalid_attributes() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinDev,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -442,7 +548,7 @@ async fn test_android_token_generation_with_invalid_attributes() {
             "allowRetry": false,
             "error": {
                 "code": "bad_request",
-                "message": "`integrity_token` is required for this bundle identifier."
+                "message": "Could not infer platform from attestation fields."
             }
         })
     );
@@ -456,13 +562,12 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinDev,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -525,13 +630,12 @@ async fn test_request_hash_race_condition() {
         let token_generation_request = TokenGenerationRequest {
             integrity_token: Some(helper_generate_valid_token()),
             aud: "relying-party.example.com".to_string(),
-            bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+            bundle_identifier: BundleIdentifier::ComWorldcoinDev,
             request_hash: "i_am_a_sample_request_hash".to_string(), // note we use the same request hash for all requests
             client_error: None,
             apple_initial_attestation: None,
             apple_public_key: None,
             apple_assertion: None,
-            developer_token: None,
         };
 
         let handle = task::spawn(
@@ -587,13 +691,12 @@ async fn test_request_hash_is_released_if_request_fails() {
     let mut token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -617,7 +720,7 @@ async fn test_request_hash_is_released_if_request_fails() {
     assert_eq!(body["error"]["code"], "integrity_failed");
 
     // Subsequent request succeeds (request hash is freed up)
-    token_generation_request.bundle_identifier = BundleIdentifier::AndroidDevWorldApp;
+    token_generation_request.bundle_identifier = BundleIdentifier::ComWorldcoinDev;
     let body = serde_json::to_string(&token_generation_request).unwrap();
     let response = api_router
         .oneshot(
@@ -641,11 +744,14 @@ async fn test_server_error_is_properly_logged() {
     fn get_local_config_extension() -> Extension<attestation_gateway::utils::GlobalConfig> {
         let config = attestation_gateway::utils::GlobalConfig {
             // This is not a valid AES-256 key
-            android_outer_jwe_private_key: base64::engine::general_purpose::STANDARD
-                .encode("invalid"),
-            android_inner_jws_public_key: "irrelevant".to_string(),
+            android_default_keys: attestation_gateway::utils::AndroidResponseKeys {
+                outer_jwe_private_key: base64::engine::general_purpose::STANDARD.encode("invalid"),
+                inner_jws_public_key: "irrelevant".to_string(),
+            },
+            android_world_app_keys: None,
+            android_world_id_keys: None,
             apple_keys_dynamo_table_name: APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-            enabled_bundle_identifiers: vec![BundleIdentifier::AndroidDevWorldApp],
+            enabled_bundle_identifiers: vec![BundleIdentifier::ComWorldcoinDev],
             log_client_errors: false,
             kinesis_stream_arn: None,
             developer_inner_jwks_url: None,
@@ -653,16 +759,23 @@ async fn test_server_error_is_properly_logged() {
                 .to_vec(),
             aud_whitelist: vec!["relying-party.example.com".to_string()],
             jwt_issuer: "attestation.worldcoin.org".to_string(),
+            developer_portal_base_url: None,
+            aud_authorization_cache_ttl_secs: 60 * 60,
         };
         Extension(config)
     }
 
     async fn get_local_api_router() -> aide::axum::ApiRouter {
         let redis_ext = get_redis_extension().await;
+        let global_config_ext = get_local_config_extension();
         attestation_gateway::routes::handler()
             .layer(get_aws_config_extension().await)
-            .layer(get_local_config_extension())
+            .layer(global_config_ext.clone())
             .layer(extension_android_attestation(&redis_ext.0).await)
+            .layer(extension_audience_authorizer(
+                &redis_ext.0,
+                &global_config_ext.0,
+            ))
             .layer(extension_nonce_db(&redis_ext.0))
             .layer(redis_ext)
             .layer(get_kinesis_extension().await)
@@ -673,13 +786,12 @@ async fn test_server_error_is_properly_logged() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidDevWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinDev,
         request_hash: "test_server_error_is_properly_logged_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -722,16 +834,23 @@ async fn test_server_error_is_properly_logged() {
 #[tokio::test]
 #[serial]
 async fn test_apple_initial_attestation_e2e_success() {
-    let app_id = BundleIdentifier::IOSStageWorldApp.apple_app_id().unwrap();
+    let app_id = BundleIdentifier::OrgWorldcoinInsightStaging
+        .apple_app_id()
+        .unwrap();
     let request_hash = "e2e_test_request_hash";
     let test_data =
         apple::test_helpers::build_test_attestation(app_id, request_hash, "appattestdevelop");
 
     let redis_ext = get_redis_extension().await;
+    let global_config_ext = get_global_config_extension_with_pem(test_data.root_ca_pem);
     let api_router = attestation_gateway::routes::handler()
         .layer(get_aws_config_extension().await)
-        .layer(get_global_config_extension_with_pem(test_data.root_ca_pem))
+        .layer(global_config_ext.clone())
         .layer(extension_android_attestation(&redis_ext.0).await)
+        .layer(extension_audience_authorizer(
+            &redis_ext.0,
+            &global_config_ext.0,
+        ))
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
         .layer(get_kinesis_extension().await);
@@ -742,13 +861,12 @@ async fn test_apple_initial_attestation_e2e_success() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: request_hash.to_string(),
         client_error: None,
         apple_initial_attestation: Some(test_data.attestation_base64.clone()),
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -864,13 +982,12 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsight,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: Some("ou000000000000000000".to_string()),
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -918,7 +1035,7 @@ async fn test_apple_assertion_e2e_success() {
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -930,13 +1047,12 @@ async fn test_apple_assertion_e2e_success() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: TEST_REQUEST_HASH.to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1012,7 +1128,7 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -1024,13 +1140,12 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some("not_even_base64".to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1076,7 +1191,7 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -1088,14 +1203,13 @@ async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_clien
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         // Valid base64 but invalid CBOR message
         apple_assertion: Some("aW52YWxpZA".to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1138,13 +1252,12 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsight,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1171,7 +1284,7 @@ async fn test_apple_token_generation_with_invalid_attributes_for_assertion() {
             "allowRetry": false,
             "error": {
                 "code": "bad_request",
-                "message": "`apple_assertion` and `apple_public_key` are required for this bundle identifier when `apple_initial_attestation` is not provided."
+                "message": "`apple_assertion` and `apple_public_key` are required when inferring iOS platform."
             }
         })
     );
@@ -1185,13 +1298,12 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_id() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsight,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some("0x00000000000000000000000000000000".to_string()),
         apple_assertion: Some("0x00000000000000000000000000000000".to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1237,7 +1349,7 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -1249,13 +1361,12 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: "testhash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(invalid_assertion.to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1300,7 +1411,7 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSProdWorldApp, // <-- we also change this to test explicitly the `rp_id` check in the assertion
+        BundleIdentifier::OrgWorldcoinInsight, // <-- we also change this to test explicitly the `rp_id` check in the assertion
         TEST_ATTESTATION_KEY_ID.to_string(),
         // public key can also be retrieved from the assertion
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -1313,13 +1424,12 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
         // Notice the bundle identifier is different
-        bundle_identifier: BundleIdentifier::IOSProdWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsight,
         request_hash: TEST_REQUEST_HASH.to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1365,7 +1475,7 @@ async fn test_apple_token_generation_with_invalid_counter() {
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         // this assertion has a `counter = 1`
         TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
@@ -1392,13 +1502,12 @@ async fn test_apple_token_generation_with_invalid_counter() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+        bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
         request_hash: TEST_REQUEST_HASH.to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
         apple_assertion: Some(TEST_VALID_ASSERTION.to_string()),
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1447,7 +1556,7 @@ fn helper_generate_valid_assertion(
     // 0 - 32 bytes
     let mut hasher = Sha256::new();
     hasher.update(
-        BundleIdentifier::IOSStageWorldApp
+        BundleIdentifier::OrgWorldcoinInsightStaging
             .apple_app_id()
             .unwrap()
             .as_bytes(),
@@ -1509,7 +1618,7 @@ async fn test_apple_counter_race_condition() {
     apple::dynamo::insert_apple_public_key(
         &aws_config.0,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
-        BundleIdentifier::IOSStageWorldApp,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
         pk,
         "receipt".to_string(),
@@ -1529,13 +1638,12 @@ async fn test_apple_counter_race_condition() {
         let token_generation_request = TokenGenerationRequest {
             integrity_token: None,
             aud: "relying-party.example.com".to_string(),
-            bundle_identifier: BundleIdentifier::IOSStageWorldApp,
+            bundle_identifier: BundleIdentifier::OrgWorldcoinInsightStaging,
             request_hash: format!("testhash-{i}"),
             client_error: None,
             apple_initial_attestation: None,
             apple_public_key: Some(TEST_ATTESTATION_KEY_ID.to_string()),
             apple_assertion: Some(assertion.to_string()),
-            developer_token: None,
         };
 
         let handle = task::spawn(
@@ -1623,15 +1731,12 @@ fn generate_developer_certificate(
     payload.set_subject("foo.bar@relying-party.example.com");
     payload
         .set_claim(
-            "publicKey",
+            "public_key",
             Some(josekit::Value::String(client_public_key.to_string())),
         )
         .unwrap();
     payload
-        .set_claim(
-            "aud",
-            Some(josekit::Value::String("relying-party.certificate".into())),
-        )
+        .set_claim("aud", Some(josekit::Value::String("lp.certificate".into())))
         .unwrap();
 
     if let Some(extra) = extra {
@@ -1662,7 +1767,12 @@ fn generate_client_token(
     let mut payload = josekit::jwt::JwtPayload::new();
     payload.set_expires_at(&(SystemTime::now() + Duration::from_secs(60)));
     payload.set_issued_at(&SystemTime::now());
-    payload.set_jwt_id(request_hash);
+    payload
+        .set_claim(
+            "request_hash",
+            Some(josekit::Value::String(request_hash.clone())),
+        )
+        .unwrap();
     payload
         .set_claim(
             "certificate",
@@ -1756,17 +1866,17 @@ async fn test_developer_token_generation_e2e_success() {
     let generated_client_token =
         generate_client_token(&client_jwk, developer_certificate, &request_hash);
 
-    // Generate token generation request
+    // Generate token generation request (developer token now travels in the
+    // `Authorization: Bearer ...` header)
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash,
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: Some(generated_client_token),
     };
     let body = serde_json::to_string(&token_generation_request).unwrap();
 
@@ -1777,6 +1887,10 @@ async fn test_developer_token_generation_e2e_success() {
                 .uri("/g")
                 .method(http::Method::POST)
                 .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .header(
+                    http::header::AUTHORIZATION,
+                    format!("Bearer {generated_client_token}"),
+                )
                 .body(Body::from(body.clone()))
                 .unwrap(),
         )
@@ -1853,13 +1967,12 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash: expected_request_hash.clone(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: Some(generated_client_token),
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1871,6 +1984,10 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
                 .uri("/g")
                 .method(http::Method::POST)
                 .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
+                .header(
+                    http::header::AUTHORIZATION,
+                    format!("Bearer {generated_client_token}"),
+                )
                 .body(Body::from(body.clone()))
                 .unwrap(),
         )
@@ -1904,17 +2021,16 @@ async fn test_developer_token_generation_e2e_missing_token() {
 
     let api_router = get_api_router().await;
 
+    // note: no Authorization header and no attestation fields, so platform cannot be inferred
     let token_generation_request = TokenGenerationRequest {
-        integrity_token: None, // note the missing token
+        integrity_token: None,
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: None,
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        // note the missing developer_token
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -1942,7 +2058,7 @@ async fn test_developer_token_generation_e2e_missing_token() {
             "allowRetry": false,
             "error": {
                 "code": "bad_request",
-                "message": "`integrity_token` is required for this bundle identifier."
+                "message": "Could not infer platform from attestation fields."
             }
         })
     );
@@ -1986,13 +2102,12 @@ async fn test_client_error_gets_logged_to_kinesis() {
     let token_generation_request = TokenGenerationRequest {
         integrity_token: None, // note the missing token
         aud: "relying-party.example.com".to_string(),
-        bundle_identifier: BundleIdentifier::AndroidStageWorldApp,
+        bundle_identifier: BundleIdentifier::ComWorldcoinStaging,
         request_hash: "i_am_a_sample_request_hash".to_string(),
         client_error: Some("play_integrity_api_is_down".to_string()),
         apple_initial_attestation: None,
         apple_public_key: None,
         apple_assertion: None,
-        developer_token: None,
     };
 
     let body = serde_json::to_string(&token_generation_request).unwrap();
@@ -2053,7 +2168,7 @@ async fn test_client_error_gets_logged_to_kinesis() {
     assert!(!data_report.pass);
     assert_eq!(
         data_report.bundle_identifier,
-        BundleIdentifier::AndroidStageWorldApp
+        BundleIdentifier::ComWorldcoinStaging
     );
     assert_eq!(
         data_report.request_hash,

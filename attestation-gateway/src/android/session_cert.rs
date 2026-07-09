@@ -1,10 +1,13 @@
 use der_parser::asn1_rs::oid;
 use openssl::x509::X509;
+use serde::Serialize;
+use thiserror::Error;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
-use thiserror::Error;
-
-use crate::android::key_description::{KeyDescription, KeyDescriptionError};
+use crate::android::cert_chain::{CertSerial, CertSerialError};
+use crate::android::key_description::{
+    KeyDescription, KeyDescriptionError, SecurityLevel, VerifiedBootState,
+};
 
 #[derive(Debug, Error)]
 pub enum SessionCertError {
@@ -22,21 +25,34 @@ pub enum SessionCertError {
 
     #[error("missing attestation")]
     MissingAttestation,
+
+    #[error("serial: {0}")]
+    Serial(#[source] CertSerialError),
 }
 
+#[derive(Serialize)]
 pub struct SessionCert {
+    #[serde(with = "crate::android::serde_hex")]
     public_key: Vec<u8>,
     key_description: KeyDescription,
+    serial: CertSerial,
 }
 
 impl SessionCert {
-    pub fn from_x509(x509: &X509) -> Result<Self, SessionCertError> {
-        let der = x509.to_der().map_err(|_| SessionCertError::DerEncoding)?;
+    pub fn from_der(der: &[u8]) -> Result<Self, SessionCertError> {
+        let x509 = X509::from_der(der).map_err(|_| SessionCertError::DerDecoding)?;
 
-        Self::from_der(&der)
+        Self::from_x509(&x509)
     }
 
-    pub fn from_der(der: &[u8]) -> Result<Self, SessionCertError> {
+    pub fn from_x509(x509: &X509) -> Result<Self, SessionCertError> {
+        let serial = CertSerial::from_x509(x509).map_err(SessionCertError::Serial)?;
+        let der = x509.to_der().map_err(|_| SessionCertError::DerEncoding)?;
+
+        Self::from_der_with_serial(&der, serial)
+    }
+
+    fn from_der_with_serial(der: &[u8], serial: CertSerial) -> Result<Self, SessionCertError> {
         let (_, cert) =
             X509Certificate::from_der(der).map_err(|_| SessionCertError::DerDecoding)?;
 
@@ -53,7 +69,12 @@ impl SessionCert {
         Ok(Self {
             public_key,
             key_description,
+            serial,
         })
+    }
+
+    pub const fn serial(&self) -> &CertSerial {
+        &self.serial
     }
 
     pub fn public_key(&self) -> Vec<u8> {
@@ -64,38 +85,50 @@ impl SessionCert {
         self.key_description.attestation_challenge.clone()
     }
 
-    pub const fn attestation_security_level(&self) -> u32 {
-        self.key_description.attestation_security_level
+    pub fn attestation_security_level(&self) -> SecurityLevel {
+        self.key_description.attestation_security_level.clone()
     }
 
-    pub const fn key_mint_security_level(&self) -> u32 {
-        self.key_description.key_mint_security_level
+    pub fn key_mint_security_level(&self) -> SecurityLevel {
+        self.key_description.key_security_level.clone()
     }
 
     pub const fn os_patch_level(&self) -> Option<u32> {
-        self.key_description.os_patch_level
+        self.key_description.hardware_enforced.os_patch_level
     }
 
-    pub const fn device_locked(&self) -> Option<bool> {
-        self.key_description.device_locked
+    pub fn device_locked(&self) -> Option<bool> {
+        self.key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.device_locked)
     }
 
-    pub const fn verified_boot_state(&self) -> Option<u32> {
-        self.key_description.verified_boot_state
+    pub fn verified_boot_state(&self) -> Option<VerifiedBootState> {
+        self.key_description
+            .hardware_enforced
+            .root_of_trust
+            .as_ref()
+            .map(|r| r.verified_boot_state.clone())
     }
 
     pub const fn key_origin(&self) -> Option<u64> {
-        self.key_description.key_origin
+        self.key_description.hardware_enforced.origin
     }
 
-    pub fn attestation_signature_digests(&self) -> Option<&[Vec<u8>]> {
+    pub fn contains_attestation_signature_digests(&self, digest: &[u8]) -> bool {
         self.key_description
-            .attestation_signature_digests
-            .as_deref()
+            .attestation_application_id()
+            .map(|aid| aid.signature_digests.contains(&digest.to_vec()))
+            .unwrap_or(false)
     }
 
-    pub fn package_names(&self) -> &[String] {
-        &self.key_description.package_names
+    pub fn contains_package_name(&self, package_name: &str) -> bool {
+        self.key_description
+            .attestation_application_id()
+            .map(|aid| aid.package_names().contains(&package_name.to_string()))
+            .unwrap_or(false)
     }
 }
 
@@ -109,12 +142,13 @@ impl SessionCertError {
             Self::AttestationParsing(e) => {
                 format!("attestation_parsing_{}", e.reason_tag())
             }
+            Self::Serial(e) => format!("serial_{}", e.reason_tag()),
         }
     }
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::AttestationParsing(e) => e.is_internal_error(),
+            Self::AttestationParsing(_) | Self::Serial(_) => false,
             Self::DerEncoding | Self::DerDecoding => true,
             Self::AttestationExtraction | Self::MissingAttestation => false,
         }
@@ -139,7 +173,7 @@ mod tests {
         );
 
         assert!(cert.public_key().len() > 0);
-        assert_eq!(cert.package_names(), ["com.worldcoin.dev"]);
+        assert!(cert.contains_package_name("com.worldcoin.dev"));
     }
 
     #[test]
@@ -149,7 +183,7 @@ mod tests {
         );
 
         assert!(cert.public_key().len() > 0);
-        assert!(cert.attestation_security_level() == 2);
+        assert!(cert.attestation_security_level() == SecurityLevel::StrongBox);
         assert_eq!(cert.device_locked(), Some(false));
 
         assert_eq!(
@@ -165,7 +199,7 @@ mod tests {
         );
 
         assert!(cert.public_key().len() > 0);
-        assert!(cert.attestation_security_level() == 1);
+        assert!(cert.attestation_security_level() == SecurityLevel::TrustedEnvironment);
         assert_eq!(cert.device_locked(), Some(true));
         assert_eq!(cert.os_patch_level(), Some(202503));
     }
@@ -177,7 +211,7 @@ mod tests {
         );
 
         assert!(cert.public_key().len() > 0);
-        assert!(cert.attestation_security_level() == 1);
+        assert!(cert.attestation_security_level() == SecurityLevel::TrustedEnvironment);
         assert_eq!(cert.device_locked(), Some(true));
     }
 

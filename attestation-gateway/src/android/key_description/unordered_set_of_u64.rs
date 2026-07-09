@@ -25,3 +25,9 @@ impl<'a> asn1::Asn1Readable<'a> for UnorderedSetOfU64 {
         tag == <asn1::SetOf<'_, u64> as asn1::SimpleAsn1Readable<'_>>::TAG
     }
 }
+
+impl Into<Vec<u64>> for UnorderedSetOfU64 {
+    fn into(self) -> Vec<u64> {
+        self.0
+    }
+}

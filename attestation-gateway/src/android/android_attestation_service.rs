@@ -1,10 +1,15 @@
-use std::time::SystemTime;
+use std::{collections::HashMap, time::SystemTime};
 
 use crate::{
     android::{
+        analytics_service::{
+            AnalyticsService, AnalyticsServiceNewError, AndroidAttestationAnalyticsEvent,
+        },
+        cert_chain::CertChain,
         cert_chain_builder::{
             CertChainBuilder, CertChainBuilderBuildChainError, CertChainBuilderNewError,
         },
+        key_description::{SecurityLevel, VerifiedBootState},
         rate_limit_service::{RateLimitService, RateLimitServiceTryIncrError},
         revocation_list::{RevocationList, RevocationListError},
     },
@@ -14,15 +19,6 @@ use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::{DateTime, Datelike, Utc};
 use redis::aio::ConnectionManager;
 use thiserror::Error;
-
-/// Android `KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT` — `KeyMint` / Keymaster in the TEE.
-const KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT: u32 = 1;
-
-/// Android `KM_SECURITY_LEVEL_STRONG_BOX` — `KeyMint` / Keymaster in `StrongBox`.
-const KM_SECURITY_LEVEL_STRONG_BOX: u32 = 2;
-
-/// Android `KM_VERIFIED_BOOT_VERIFIED` — verified boot succeeded (boot hash matches expected).
-const KM_VERIFIED_BOOT_VERIFIED: u32 = 0;
 
 /// Android `KM_ORIGIN_GENERATED` — key generated inside secure `KeyMint` / Keymaster (TEE / `StrongBox`), not imported.
 const KM_ORIGIN_GENERATED: u64 = 0;
@@ -34,6 +30,9 @@ pub enum AndroidAttestationError {
 
     #[error("cert chain builder new error: {0}")]
     CertChainBuilderNew(#[source] CertChainBuilderNewError),
+
+    #[error("analytics service new error: {0}")]
+    AnalyticsServiceNew(#[source] AnalyticsServiceNewError),
 
     #[error("revocation list: {0}")]
     RevocationList(#[source] RevocationListError),
@@ -65,14 +64,8 @@ pub enum AndroidAttestationError {
     #[error("missing key origin")]
     MissingKeyOrigin,
 
-    #[error("missing attestation signature digests")]
-    MissingAttestationSignatureDigests,
-
     #[error("invalid attestation signature digest")]
     InvalidAttestationSignatureDigest,
-
-    #[error("missing package name")]
-    MissingPackageName,
 
     #[error("invalid package name")]
     InvalidPackageName,
@@ -100,19 +93,22 @@ pub struct AndroidAttestationService {
     cert_chain_builder: CertChainBuilder,
     revocation_list: RevocationList,
     rate_limit_service: RateLimitService,
+    analytics_service: AnalyticsService,
 }
 
 impl AndroidAttestationService {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         cert_chain_builder: CertChainBuilder,
         revocation_list: RevocationList,
         rate_limit_service: RateLimitService,
+        analytics_service: AnalyticsService,
     ) -> Self {
         Self {
             cert_chain_builder,
             revocation_list,
             rate_limit_service,
+            analytics_service,
         }
     }
 
@@ -120,6 +116,7 @@ impl AndroidAttestationService {
     pub async fn from_defaults(
         redis: ConnectionManager,
         limit_per_day: Option<isize>,
+        analytics_kinesis_stream_arn: String,
     ) -> Result<Self, AndroidAttestationError> {
         let cert_chain_builder = CertChainBuilder::new_from_default_pem()
             .map_err(AndroidAttestationError::CertChainBuilderNew)?;
@@ -129,11 +126,15 @@ impl AndroidAttestationService {
             .map_err(AndroidAttestationError::RevocationList)?;
 
         let rate_limit_service = RateLimitService::new(redis, limit_per_day);
+        let analytics_service = AnalyticsService::new(analytics_kinesis_stream_arn)
+            .await
+            .map_err(AndroidAttestationError::AnalyticsServiceNew)?;
 
         Ok(Self::new(
             cert_chain_builder,
             revocation_list,
             rate_limit_service,
+            analytics_service,
         ))
     }
 
@@ -150,27 +151,52 @@ impl AndroidAttestationService {
         nonce: &String,
         app_version: &String,
         bundle_identifier: &BundleIdentifier,
+        request_headers: HashMap<String, String>,
+        device_model: Option<String>,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
-        let cert_chain = self
+        let build_result = self
             .cert_chain_builder
-            .build_chain_from_base64(base64_cert_chain)
-            .map_err(AndroidAttestationError::CertChainBuilderBuildChain)?;
+            .build_chain_from_base64(base64_cert_chain);
 
-        let rate_limit_passed = self
-            .rate_limit_service
-            .try_incr(aud, &cert_chain)
-            .await
-            .map_err(AndroidAttestationError::InternalRateLimitServiceTryIncr)?;
+        let (cert_chain, verify_result) = match build_result {
+            Err(e) => (
+                None,
+                Err(AndroidAttestationError::CertChainBuilderBuildChain(e)),
+            ),
+            Ok(chain) => {
+                let verify_result = self
+                    .verify_chain(&chain, aud, nonce, app_version, bundle_identifier)
+                    .await;
+                (Some(chain), verify_result)
+            }
+        };
 
-        if !rate_limit_passed {
-            return Err(AndroidAttestationError::RateLimitExceeded);
-        }
+        self.analytics_service
+            .spawn_record(AndroidAttestationAnalyticsEvent {
+                base64_cert_chain: base64_cert_chain.to_vec(),
+                aud: aud.to_string(),
+                nonce: nonce.clone(),
+                app_version: app_version.clone(),
+                bundle_identifier: bundle_identifier.clone(),
+                cert_chain,
+                error: verify_result.as_ref().err().map(ToString::to_string),
+                request_headers,
+                device_model,
+                timestamp: SystemTime::now(),
+            });
 
-        if cert_chain
-            .serials()
-            .iter()
-            .any(|s| s.is_revoked(&self.revocation_list))
-        {
+        verify_result
+    }
+
+    async fn verify_chain(
+        &mut self,
+        cert_chain: &CertChain,
+        aud: &str,
+        nonce: &String,
+        app_version: &String,
+        bundle_identifier: &BundleIdentifier,
+    ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
+        if cert_chain.any_serial_revoked(&self.revocation_list) {
             return Err(AndroidAttestationError::CertificateRevoked);
         }
 
@@ -182,7 +208,7 @@ impl AndroidAttestationService {
 
         if !matches!(
             cert_chain.session_cert().attestation_security_level(),
-            KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT | KM_SECURITY_LEVEL_STRONG_BOX
+            SecurityLevel::TrustedEnvironment | SecurityLevel::StrongBox
         ) {
             return Err(AndroidAttestationError::LowSecurityLevel);
         }
@@ -198,7 +224,7 @@ impl AndroidAttestationService {
             .verified_boot_state()
             .ok_or(AndroidAttestationError::MissingRootOfTrust)?;
 
-        if verified_boot_state != KM_VERIFIED_BOOT_VERIFIED {
+        if verified_boot_state != VerifiedBootState::Verified {
             return Err(AndroidAttestationError::BootNotVerified);
         }
 
@@ -220,30 +246,25 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::KeyNotGeneratedInSecureHardware);
         }
 
-        let attestation_signature_digests = cert_chain
-            .session_cert()
-            .attestation_signature_digests()
-            .ok_or(AndroidAttestationError::MissingAttestationSignatureDigests)?;
-
         let expected_attestation_signature_digest = bundle_identifier
-            .certificate_sha256_digest_base64()
+            .android_certificate_sha256_digest_base64()
             .ok_or(AndroidAttestationError::MissingCertificateDigest)?;
 
         let expected_attestation_signature_digest = Base64
             .decode(expected_attestation_signature_digest)
             .map_err(AndroidAttestationError::BadCertificateDigestEncoding)?;
 
-        if !attestation_signature_digests.contains(&expected_attestation_signature_digest) {
+        if !cert_chain
+            .session_cert()
+            .contains_attestation_signature_digests(&expected_attestation_signature_digest)
+        {
             return Err(AndroidAttestationError::InvalidAttestationSignatureDigest);
         }
 
-        let package_names = cert_chain.session_cert().package_names();
-        if package_names.is_empty() {
-            return Err(AndroidAttestationError::MissingPackageName);
-        }
-
-        let expected = bundle_identifier.to_string();
-        if !package_names.iter().any(|name| name == &expected) {
+        if !cert_chain
+            .session_cert()
+            .contains_package_name(&bundle_identifier.to_string())
+        {
             return Err(AndroidAttestationError::InvalidPackageName);
         }
 
@@ -256,6 +277,16 @@ impl AndroidAttestationService {
                     let now = now.year_ce().1 * 100 + now.month();
                     now - os_patch_level
                 });
+
+        let rate_limit_passed = self
+            .rate_limit_service
+            .try_incr(aud, cert_chain)
+            .await
+            .map_err(AndroidAttestationError::InternalRateLimitServiceTryIncr)?;
+
+        if !rate_limit_passed {
+            return Err(AndroidAttestationError::RateLimitExceeded);
+        }
 
         Ok(AndroidAttestationOutput {
             device_public_key: cert_chain.session_cert().public_key(),
@@ -271,6 +302,9 @@ impl AndroidAttestationError {
                 format!("rate_limit_service_try_incr_{}", e.reason_tag())
             }
             Self::CertChainBuilderNew(_) => "cert_chain_builder_new".to_string(),
+            Self::AnalyticsServiceNew(e) => {
+                format!("analytics_service_new_{}", e.reason_tag())
+            }
             Self::RevocationList(e) => {
                 format!("revocation_list_{}", e.reason_tag())
             }
@@ -285,13 +319,9 @@ impl AndroidAttestationError {
             }
             Self::MissingRootOfTrust => "missing_root_of_trust".to_string(),
             Self::MissingKeyOrigin => "missing_key_origin".to_string(),
-            Self::MissingAttestationSignatureDigests => {
-                "missing_attestation_signature_digests".to_string()
-            }
             Self::InvalidAttestationSignatureDigest => {
                 "invalid_attestation_signature_digest".to_string()
             }
-            Self::MissingPackageName => "missing_package_name".to_string(),
             Self::InvalidPackageName => "invalid_package_name".to_string(),
             Self::CertificateRevoked => "certificate_revoked".to_string(),
             Self::MissingCertificateDigest => "missing_certificate_digest".to_string(),
@@ -304,7 +334,9 @@ impl AndroidAttestationError {
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::InternalRateLimitServiceTryIncr(_) | Self::CertChainBuilderNew(_) => true,
+            Self::InternalRateLimitServiceTryIncr(_)
+            | Self::CertChainBuilderNew(_)
+            | Self::AnalyticsServiceNew(_) => true,
             Self::RevocationList(e) => e.is_internal_error(),
             Self::CertChainBuilderBuildChain(e) => e.is_internal_error(),
             Self::RateLimitExceeded
@@ -316,9 +348,7 @@ impl AndroidAttestationError {
             | Self::KeyNotGeneratedInSecureHardware
             | Self::MissingRootOfTrust
             | Self::MissingKeyOrigin
-            | Self::MissingAttestationSignatureDigests
             | Self::InvalidAttestationSignatureDigest
-            | Self::MissingPackageName
             | Self::InvalidPackageName
             | Self::CertificateRevoked => false,
             Self::MissingCertificateDigest | Self::BadCertificateDigestEncoding(_) => true,

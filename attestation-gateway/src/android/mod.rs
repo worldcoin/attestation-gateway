@@ -4,6 +4,7 @@ pub use integrity_token_data::PlayIntegrityToken;
 use josekit::jwe::{self, A256KW};
 use josekit::jws::ES256;
 
+pub mod analytics_service;
 mod android_attestation_service;
 mod cert_chain;
 mod cert_chain_builder;
@@ -13,6 +14,7 @@ mod key_description;
 pub mod rate_limit_service;
 mod revocation_list;
 mod root_cert;
+mod serde_hex;
 mod session_cert;
 
 pub use android_attestation_service::AndroidAttestationService;
@@ -143,7 +145,7 @@ mod tests {
 
         let error_report = verify(
             &test_jwe,
-            &BundleIdentifier::AndroidStageWorldApp,
+            &BundleIdentifier::ComWorldcoinStaging,
             "test",
             jwe_sk,
             jws_pk,
@@ -178,7 +180,7 @@ mod tests {
 
         let error_report = verify(
             &test_jwe,
-            &BundleIdentifier::AndroidStageWorldApp,
+            &BundleIdentifier::ComWorldcoinStaging,
             "test",
             jwe_sk,
             jws_pk,

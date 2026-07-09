@@ -1,6 +1,8 @@
 use std::{env, net::SocketAddr, time::Duration};
 
-use crate::{android::AndroidAttestationService, nonces::NonceDb};
+use crate::{
+    android::AndroidAttestationService, audience_authorizer::AudienceAuthorizer, nonces::NonceDb,
+};
 use aide::openapi::{Info, OpenApi};
 use aws_sdk_kinesis::Client as KinesisClient;
 use axum::Extension;
@@ -35,16 +37,23 @@ pub async fn start(
     };
 
     let nonce_db = NonceDb::new(redis.clone());
+    let audience_authorizer = AudienceAuthorizer::from_config(redis.clone(), &global_config);
 
     let android_rate_limit_per_day = env::var("ANDROID_RATE_LIMIT_PER_DAY").ok().map(|v| {
         v.parse()
             .expect("ANDROID_RATE_LIMIT_PER_DAY must be a valid isize")
     });
 
-    let android_attestation_service =
-        AndroidAttestationService::from_defaults(redis.clone(), android_rate_limit_per_day)
-            .await
-            .expect("failed to construct Android attestation service");
+    let android_analytics_kinesis_stream_arn =
+        env::var("KINESIS_STREAM_V1_ARN").expect("KINESIS_STREAM_V1_ARN is required");
+
+    let android_attestation_service = AndroidAttestationService::from_defaults(
+        redis.clone(),
+        android_rate_limit_per_day,
+        android_analytics_kinesis_stream_arn,
+    )
+    .await
+    .expect("failed to construct Android attestation service");
 
     #[expect(clippy::let_underscore_future)] // do not await, it's a handler for background tasks
     let _ = android_attestation_service.spawn_refresh_loop();
@@ -52,6 +61,7 @@ pub async fn start(
     let app = routes::handler()
         .finish_api(&mut openapi)
         .layer(Extension(nonce_db))
+        .layer(Extension(audience_authorizer))
         .layer(Extension(redis))
         .layer(Extension(openapi))
         .layer(Extension(aws_config))

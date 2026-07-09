@@ -35,10 +35,17 @@ pub struct RecentDeviceActivity {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DeviceAttributes {
+    pub sdk_version: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceIntegrity {
     pub device_recognition_verdict: Option<Vec<String>>,
     pub legacy_device_recognition_verdict: Option<Vec<String>>,
     pub recent_device_activity: Option<RecentDeviceActivity>,
+    pub device_attributes: Option<DeviceAttributes>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -222,7 +229,7 @@ impl PlayIntegrityToken {
     }
 
     fn validate_app_integrity(&self, bundle_identifier: &BundleIdentifier) -> eyre::Result<()> {
-        if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
+        if bundle_identifier.requires_play_store_prod_checks() {
             // Only in Production: App should come from Play Store
             if self.app_integrity.app_recognition_verdict != AppIntegrityVerdict::PlayRecognized {
                 return Err(eyre::eyre!(ClientException {
@@ -258,7 +265,7 @@ impl PlayIntegrityToken {
             }));
         }
 
-        if let Some(digest) = bundle_identifier.certificate_sha256_digest() {
+        if let Some(digest) = bundle_identifier.android_certificate_sha256_digest() {
             if let Some(certificate_sha_256_digest) = &self.app_integrity.certificate_sha_256_digest
             {
                 if !certificate_sha_256_digest.contains(&digest.to_string()) {
@@ -317,7 +324,7 @@ impl PlayIntegrityToken {
     }
 
     fn validate_account_details(&self, bundle_identifier: &BundleIdentifier) -> eyre::Result<()> {
-        if bundle_identifier == &BundleIdentifier::AndroidProdWorldApp {
+        if bundle_identifier.requires_play_store_prod_checks() {
             // Only in Production: App should come from Play Store
             if self.account_details.app_licensing_verdict != AppLicensingVerdict::Licensed {
                 return Err(eyre::eyre!(ClientException {
@@ -350,8 +357,8 @@ impl PlayIntegrityToken {
 
             // For staging & dev apps, allow empty apps_detected, while we're debugging an issue.
             let allow_empty_apps_detected = [
-                BundleIdentifier::AndroidStageWorldApp,
-                BundleIdentifier::AndroidDevWorldApp,
+                BundleIdentifier::ComWorldcoinStaging,
+                BundleIdentifier::ComWorldcoinDev,
             ]
             .contains(bundle_identifier);
             if value.app_access_risk_verdict.apps_detected.is_none() && !allow_empty_apps_detected {
@@ -398,6 +405,7 @@ mod tests {
                 device_recognition_verdict: Some(vec!["MEETS_DEVICE_INTEGRITY".to_string()]),
                 legacy_device_recognition_verdict: None,
                 recent_device_activity: None,
+                device_attributes: None,
             },
             environment_details: Some(EnvironmentDetails {
                 app_access_risk_verdict: AppAccessRiskVerdict {
@@ -412,7 +420,7 @@ mod tests {
     fn parse_and_validate_a_valid_token() {
         let token = create_test_token();
         token
-            .validate_all_claims(&BundleIdentifier::AndroidStageWorldApp, "valid_nonce")
+            .validate_all_claims(&BundleIdentifier::ComWorldcoinStaging, "valid_nonce")
             .unwrap();
     }
 
@@ -461,7 +469,7 @@ mod tests {
         let token = PlayIntegrityToken::from_json(&token_payload_str).unwrap();
 
         let result = token.validate_all_claims(
-            &BundleIdentifier::AndroidStageWorldApp,
+            &BundleIdentifier::ComWorldcoinStaging,
             "invalid_nonce", // <-- This nonce is invalid, it will not match request_details.nonce
         );
 
@@ -506,13 +514,13 @@ mod tests {
 
         assert!(
             token
-                .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "valid_nonce")
+                .validate_request_details(&BundleIdentifier::ComWorldcoinStaging, "valid_nonce")
                 .is_ok()
         );
 
         // Test invalid package name
         let error = token
-            .validate_request_details(&BundleIdentifier::AndroidProdWorldApp, "valid_nonce")
+            .validate_request_details(&BundleIdentifier::ComWorldcoin, "valid_nonce")
             .unwrap_err();
 
         assert_eq!(
@@ -527,7 +535,7 @@ mod tests {
         let mut expired_token = create_test_token();
         expired_token.request_details.timestamp_millis = UNIX_EPOCH + Duration::from_secs(0);
         let error = expired_token
-            .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "valid_nonce")
+            .validate_request_details(&BundleIdentifier::ComWorldcoinStaging, "valid_nonce")
             .unwrap_err();
         assert_eq!(
             error.downcast::<ClientException>().unwrap(),
@@ -540,7 +548,7 @@ mod tests {
 
         // Test invalid nonce
         let error = token
-            .validate_request_details(&BundleIdentifier::AndroidStageWorldApp, "invalid_nonce")
+            .validate_request_details(&BundleIdentifier::ComWorldcoinStaging, "invalid_nonce")
             .unwrap_err();
         assert_eq!(
             error.downcast::<ClientException>().unwrap(),
@@ -559,13 +567,13 @@ mod tests {
         // Test valid app integrity
         assert!(
             token
-                .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+                .validate_app_integrity(&BundleIdentifier::ComWorldcoinStaging)
                 .is_ok()
         );
 
         // Test invalid package name (passing a different bundle identifier)
         let error = token
-            .validate_app_integrity(&BundleIdentifier::AndroidProdWorldApp)
+            .validate_app_integrity(&BundleIdentifier::ComWorldcoin)
             .unwrap_err();
         assert_eq!(
             error.downcast::<ClientException>().unwrap(),
@@ -582,7 +590,7 @@ mod tests {
         invalid_token.app_integrity.certificate_sha_256_digest =
             Some(vec!["different_sha_256".to_string()]);
         let error = invalid_token
-            .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+            .validate_app_integrity(&BundleIdentifier::ComWorldcoinStaging)
             .unwrap_err();
         assert_eq!(
             error.downcast::<ClientException>().unwrap(),
@@ -597,7 +605,7 @@ mod tests {
         let mut invalid_token = create_test_token();
         invalid_token.app_integrity.certificate_sha_256_digest = None;
         let error = invalid_token
-            .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+            .validate_app_integrity(&BundleIdentifier::ComWorldcoinStaging)
             .unwrap_err();
         assert_eq!(
             error.downcast::<ClientException>().unwrap(),
@@ -611,7 +619,7 @@ mod tests {
         let mut invalid_token = create_test_token();
         invalid_token.app_integrity.certificate_sha_256_digest = Some(vec![]);
         let error = invalid_token
-            .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+            .validate_app_integrity(&BundleIdentifier::ComWorldcoinStaging)
             .unwrap_err();
         assert_eq!(
             error.downcast::<ClientException>().unwrap(),
@@ -626,7 +634,7 @@ mod tests {
         let mut invalid_token = create_test_token();
         invalid_token.app_integrity.package_name = None;
         let error = invalid_token
-            .validate_app_integrity(&BundleIdentifier::AndroidStageWorldApp)
+            .validate_app_integrity(&BundleIdentifier::ComWorldcoinStaging)
             .unwrap_err();
         assert_eq!(
             error.downcast::<ClientException>().unwrap(),
@@ -671,10 +679,56 @@ mod tests {
         );
     }
 
+    fn create_org_world_id_prod_token() -> PlayIntegrityToken {
+        PlayIntegrityToken {
+            app_integrity: AppIntegrity {
+                package_name: Some("org.world.id".to_string()),
+                version_code: Some("100".to_string()),
+                // cspell:disable-next-line
+                certificate_sha_256_digest: Some(vec![
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8".to_string(),
+                ]),
+                app_recognition_verdict: AppIntegrityVerdict::PlayRecognized,
+            },
+            account_details: AccountDetails {
+                app_licensing_verdict: AppLicensingVerdict::Licensed,
+            },
+            request_details: RequestDetails {
+                nonce: "valid_nonce".to_string(),
+                timestamp_millis: SystemTime::now(),
+                request_package_name: "org.world.id".to_string(),
+            },
+            device_integrity: DeviceIntegrity {
+                device_recognition_verdict: Some(vec!["MEETS_DEVICE_INTEGRITY".to_string()]),
+                legacy_device_recognition_verdict: None,
+                recent_device_activity: None,
+                device_attributes: None,
+            },
+            environment_details: Some(EnvironmentDetails {
+                app_access_risk_verdict: AppAccessRiskVerdict {
+                    apps_detected: Some(vec![]),
+                },
+                play_protect_verdict: Some(PlayProtectVerdict::NoIssues),
+            }),
+        }
+    }
+
+    #[test]
+    fn org_world_id_prod_android_requires_play_store_checks() {
+        let token = create_org_world_id_prod_token();
+        let bundle = BundleIdentifier::OrgWorldId;
+        assert!(token.validate_app_integrity(&bundle).is_ok());
+        assert!(token.validate_account_details(&bundle).is_ok());
+
+        let mut unlicensed = create_org_world_id_prod_token();
+        unlicensed.account_details.app_licensing_verdict = AppLicensingVerdict::Unlicensed;
+        assert!(unlicensed.validate_account_details(&bundle).is_err());
+    }
+
     #[test]
     fn test_validate_account_details() {
         let token = create_test_token();
-        let bundle_identifier = BundleIdentifier::AndroidProdWorldApp;
+        let bundle_identifier = BundleIdentifier::ComWorldcoin;
 
         // Test valid account details
         assert!(token.validate_account_details(&bundle_identifier).is_ok());
@@ -698,7 +752,7 @@ mod tests {
     #[tracing_test::traced_test]
     fn test_validate_environment_details() {
         let token = create_test_token();
-        let bundle_identifier = BundleIdentifier::AndroidProdWorldApp;
+        let bundle_identifier = BundleIdentifier::ComWorldcoin;
 
         // Test valid environment details
         assert!(
@@ -761,7 +815,7 @@ mod tests {
         });
         assert!(
             valid_token
-                .validate_environment_details(&BundleIdentifier::AndroidStageWorldApp)
+                .validate_environment_details(&BundleIdentifier::ComWorldcoinStaging)
                 .is_ok()
         );
     }
@@ -798,6 +852,121 @@ mod tests {
         assert_eq!(no_apps_detected.app_access_risk_verdict.apps_detected, None);
     }
 
+    /// Tests parsing of the three optional Play Integrity verdict fields that are opt-in via the
+    /// Play Console: `deviceIntegrity.recentDeviceActivity.deviceActivityLevel`,
+    /// `deviceIntegrity.deviceAttributes.sdkVersion`, and `environmentDetails.playProtectVerdict`.
+    ///
+    /// Reference: <https://developer.android.com/google/play/integrity/verdicts#optional-device-information>
+    #[test]
+    fn test_optional_verdict_fields_parsed_as_expected() {
+        // cspell:disable
+        let token_payload_str = r#"
+        {
+            "requestDetails": {
+                "requestPackageName": "com.worldcoin.staging",
+                "nonce": "i_am_a_sample_request_hash",
+                "timestampMillis": "1745276275999"
+            },
+            "appIntegrity": {
+                "appRecognitionVerdict": "PLAY_RECOGNIZED",
+                "packageName": "com.worldcoin.staging",
+                "certificateSha256Digest": [
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"
+                ],
+                "versionCode": "25700"
+            },
+            "deviceIntegrity": {
+                "deviceRecognitionVerdict": [
+                    "MEETS_DEVICE_INTEGRITY",
+                    "MEETS_STRONG_INTEGRITY"
+                ],
+                "recentDeviceActivity": {
+                    "deviceActivityLevel": "LEVEL_2"
+                },
+                "deviceAttributes": {
+                    "sdkVersion": 33
+                }
+            },
+            "accountDetails": {
+                "appLicensingVerdict": "LICENSED"
+            },
+            "environmentDetails": {
+                "appAccessRiskVerdict": {
+                    "appsDetected": [
+                        "KNOWN_INSTALLED",
+                        "UNKNOWN_INSTALLED"
+                    ]
+                },
+                "playProtectVerdict": "NO_ISSUES"
+            }
+        }"#;
+        // cspell:enable
+
+        let token = PlayIntegrityToken::from_json(token_payload_str).unwrap();
+
+        let activity = token
+            .device_integrity
+            .recent_device_activity
+            .expect("recent_device_activity should be present");
+        assert_eq!(activity.device_activity_level, "LEVEL_2");
+
+        let attributes = token
+            .device_integrity
+            .device_attributes
+            .expect("device_attributes should be present");
+        assert_eq!(attributes.sdk_version, Some(33));
+
+        let env = token
+            .environment_details
+            .expect("environment_details should be present");
+        assert_eq!(env.play_protect_verdict, Some(PlayProtectVerdict::NoIssues));
+    }
+
+    /// Tests that the optional verdict fields are absent before opt-in (current production state)
+    /// and that the absence does not break parsing.
+    #[test]
+    fn test_optional_verdict_fields_absent_parses_cleanly() {
+        let token_payload_str = r#"
+        {
+            "requestDetails": {
+                "requestPackageName": "com.worldcoin.staging",
+                "nonce": "i_am_a_sample_request_hash",
+                "timestampMillis": "1745276275999"
+            },
+            "appIntegrity": {
+                "appRecognitionVerdict": "PLAY_RECOGNIZED",
+                "packageName": "com.worldcoin.staging",
+                "certificateSha256Digest": [
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"
+                ],
+                "versionCode": "25700"
+            },
+            "deviceIntegrity": {
+                "deviceRecognitionVerdict": ["MEETS_DEVICE_INTEGRITY"]
+            },
+            "accountDetails": {
+                "appLicensingVerdict": "LICENSED"
+            },
+            "environmentDetails": {
+                "appAccessRiskVerdict": {
+                    "appsDetected": ["KNOWN_INSTALLED", "UNKNOWN_INSTALLED"]
+                }
+            }
+        }"#;
+
+        let token = PlayIntegrityToken::from_json(token_payload_str).unwrap();
+
+        assert!(token.device_integrity.recent_device_activity.is_none());
+        assert!(token.device_integrity.device_attributes.is_none());
+        assert!(
+            token
+                .environment_details
+                .unwrap()
+                .play_protect_verdict
+                .is_none()
+        );
+    }
+
     /// Tests that a token with an `unevaluated` verdict is properly parsed and integrity failure is logged as such.
     /// This verifies a very specific pattern provided by Google when integrity cannot be evaluated.
     #[test]
@@ -827,7 +996,7 @@ mod tests {
         let token = PlayIntegrityToken::from_json(&token_payload_str).unwrap();
 
         let result = token.validate_all_claims(
-            &BundleIdentifier::AndroidStageWorldApp,
+            &BundleIdentifier::ComWorldcoinStaging,
             "i_am_a_sample_request_hash",
         );
 
