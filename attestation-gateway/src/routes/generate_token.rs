@@ -1,0 +1,572 @@
+use aws_sdk_kinesis::Client as KinesisClient;
+use axum::{
+    Extension,
+    http::{HeaderMap, header},
+};
+use axum_jsonschema::Json;
+use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::ConnectionManager};
+use std::time::SystemTime;
+
+use crate::{
+    android, apple, developer,
+    keys::fetch_active_key,
+    kinesis::send_kinesis_stream_event,
+    kms_jws,
+    utils::{
+        BundleIdentifier, CheckType, ClientException, DataReport, ErrorCode, GlobalConfig,
+        IntegrityVerificationInput, OutEnum, OutputTokenPayload, Platform, RequestError,
+        TokenGenerationRequest, TokenGenerationResponse, handle_redis_error,
+    },
+};
+
+const REQUEST_HASH_REDIS_KEY_PREFIX: &str = "request_hash:";
+const REQUEST_HASH_CACHE_TTL: u64 = 60 * 60 * 24; // 24 hours
+
+fn infer_platform(request: &TokenGenerationRequest) -> Result<Platform, RequestError> {
+    let has_integrity_token = request.integrity_token.is_some();
+    let has_apple_initial = request.apple_initial_attestation.is_some();
+    let has_apple_assertion = request.apple_assertion.is_some();
+    let has_apple_public_key = request.apple_public_key.is_some();
+
+    if has_integrity_token && (has_apple_initial || has_apple_assertion || has_apple_public_key) {
+        return Err(RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("Conflicting attestation fields for platform inference.".to_string()),
+        });
+    }
+
+    if has_integrity_token {
+        return Ok(Platform::Android);
+    }
+
+    if has_apple_initial {
+        if has_apple_assertion || has_apple_public_key {
+            return Err(RequestError {
+                code: ErrorCode::BadRequest,
+                details: Some(
+                    "For initial attestations, `apple_assertion` and `apple_public_key` attributes are not allowed."
+                        .to_string(),
+                ),
+            });
+        }
+        return Ok(Platform::AppleIOS);
+    }
+
+    if has_apple_assertion || has_apple_public_key {
+        if has_apple_assertion && has_apple_public_key {
+            return Ok(Platform::AppleIOS);
+        }
+        return Err(RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some(
+                "`apple_assertion` and `apple_public_key` are required when inferring iOS platform."
+                    .to_string(),
+            ),
+        });
+    }
+
+    Err(RequestError {
+        code: ErrorCode::BadRequest,
+        details: Some("Could not infer platform from attestation fields.".to_string()),
+    })
+}
+
+// NOTE: Integration tests for route handlers are in the `/tests` module
+
+pub async fn handler(
+    Extension(aws_config): Extension<aws_config::SdkConfig>,
+    Extension(mut redis): Extension<ConnectionManager>,
+    Extension(global_config): Extension<GlobalConfig>,
+    Extension(kinesis_client): Extension<KinesisClient>,
+    headers: HeaderMap,
+    Json(request): Json<TokenGenerationRequest>,
+) -> Result<Json<TokenGenerationResponse>, RequestError> {
+    let aud = request.aud.clone();
+    let request_hash = request.request_hash.clone();
+
+    let my_span = tracing::span!(
+        tracing::Level::DEBUG,
+        "generate_token",
+        request_hash = %request_hash,
+        endpoint = "/g"
+    );
+
+    let _enter = my_span.enter();
+
+    // Laissez-passer token (a.k.a. developer token) is transported in the
+    // `Authorization: Bearer ...` header. When present, it bypasses platform
+    // attestation and is verified against the issuer JWKS instead.
+    let laissez_passer_token = extract_bearer_token(&headers)?;
+
+    let platform = if request.client_error.is_some() || laissez_passer_token.is_some() {
+        None
+    } else {
+        Some(infer_platform(&request)?)
+    };
+
+    let integrity_verification_input =
+        IntegrityVerificationInput::from_request(&request, laissez_passer_token, platform)?;
+
+    handle_client_error_if_applicable(
+        &integrity_verification_input,
+        &request,
+        &kinesis_client,
+        global_config.kinesis_stream_arn.as_deref().unwrap_or(""),
+        global_config.log_client_errors,
+    )
+    .await?;
+
+    if !global_config
+        .enabled_bundle_identifiers
+        .contains(&request.bundle_identifier)
+    {
+        return Err(RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some("This bundle identifier is currently unavailable.".to_string()),
+        });
+    }
+
+    metrics::counter!("generate_token",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
+
+    // Lock the `request_hash` in Redis to prevent duplicate requests and race conditions
+    let lock_set = set_redis_lock(request_hash.clone(), &mut redis).await?;
+    if !lock_set {
+        return Err(RequestError {
+            code: ErrorCode::DuplicateRequestHash,
+            details: None,
+        });
+    }
+
+    // Captured before the input is moved into `verify_android_or_apple_integrity`
+    // so error logs below can be filtered by `check_type:Developer` etc.
+    let check_type = integrity_verification_input.check_type();
+
+    // REVIEW: failures from DataReport.pass vs. ClientException
+    let report = verify_android_or_apple_integrity(
+        integrity_verification_input,
+        request_hash.clone(),
+        request.bundle_identifier.clone(),
+        &request.aud,
+        request.client_error,
+        global_config.clone(),
+        &aws_config,
+    )
+    .await
+    .map_err(|e| {
+        // Check if we have a `ClientException` in the error chain and return to the client without further logging
+        if let Some(client_error) = e.downcast_ref::<ClientException>() {
+            if global_config.log_client_errors {
+                tracing::info!(error = ?e, request_hash = request_hash, bundle_identifier = %request.bundle_identifier, check_type = ?check_type, "Client exception verifying Android or Apple integrity");
+            }else {
+                tracing::debug!(error = ?e, check_type = ?check_type, "Client exception verifying Android or Apple integrity");
+            }
+
+            metrics::counter!("generate_token.client_exception",  "bundle_identifier" => request.bundle_identifier.to_string(), "error_code" => client_error.code.to_string()).increment(1);
+
+            return RequestError {
+                code: client_error.code,
+                details: None,
+            };
+        }
+
+        tracing::error!(error = ?e, check_type = ?check_type, "Error verifying Android or Apple integrity");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    });
+
+    // If the report is an error, release the request hash to allow re-use and return the error
+    let report = match report {
+        Err(e) => {
+            let _ = release_request_hash(request_hash, &mut redis).await;
+            return Err(e);
+        }
+        Ok(value) => value,
+    };
+
+    let response = match process_and_finalize_report(
+        &global_config,
+        report,
+        request_hash.clone(),
+        aud,
+        &mut redis,
+        aws_config,
+        &kinesis_client,
+        global_config.kinesis_stream_arn.as_deref().unwrap_or(""),
+    )
+    .await
+    {
+        Ok(res) => res,
+        Err(err) => {
+            let _ = release_request_hash(request_hash, &mut redis).await;
+            return Err(err);
+        }
+    };
+
+    metrics::counter!("generate_token.success",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
+
+    Ok(Json(response))
+}
+
+async fn set_redis_lock(
+    request_hash: String,
+    redis: &mut ConnectionManager,
+) -> Result<bool, RequestError> {
+    let request_hash_lock_options = SetOptions::default()
+        .conditional_set(ExistenceCheck::NX)
+        .with_expiration(SetExpiry::EX(REQUEST_HASH_CACHE_TTL));
+
+    let lock_set = redis
+        .set_options::<String, bool, bool>(
+            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:}", request_hash.clone()),
+            true,
+            request_hash_lock_options,
+        )
+        .await
+        .map_err(handle_redis_error)?;
+
+    Ok(lock_set)
+}
+
+async fn verify_android_or_apple_integrity(
+    verification_input: IntegrityVerificationInput,
+    request_hash: String,
+    bundle_identifier: BundleIdentifier,
+    aud: &str,
+    client_error: Option<String>,
+    config: GlobalConfig,
+    aws_config: &aws_config::SdkConfig,
+) -> eyre::Result<DataReport> {
+    // Prepare output report for logging (analytics & debugging)
+    // Only integrity failures and successes are logged to Kinesis. Client and server errors are logged regularly to Datadog.
+    let mut report = DataReport {
+        pass: false,
+        out: OutEnum::Fail,
+        timestamp: SystemTime::now(),
+        request_hash: request_hash.clone(),
+        bundle_identifier: bundle_identifier.clone(),
+        client_error: client_error.clone(),
+        aud: aud.to_string(),
+        internal_debug_info: None,
+        play_integrity: None,
+        app_version: None,
+        check_type: None,
+        dev_check_sub: None,
+        extra: None,
+    };
+
+    let verify_result = match verification_input {
+        IntegrityVerificationInput::Android { integrity_token } => {
+            report.check_type = Some(CheckType::Android);
+            let keys = config.android_response_keys(&bundle_identifier);
+            android::verify(
+                &integrity_token,
+                &bundle_identifier,
+                &request_hash,
+                keys.outer_jwe_private_key.clone(),
+                keys.inner_jws_public_key.clone(),
+            )?
+        }
+        IntegrityVerificationInput::AppleInitialAttestation {
+            apple_initial_attestation,
+        } => {
+            report.check_type = Some(CheckType::Apple);
+            apple::verify_initial_attestation(
+                apple_initial_attestation,
+                bundle_identifier,
+                request_hash,
+                aws_config,
+                &config.apple_keys_dynamo_table_name,
+                &config.apple_root_ca_pem,
+            )
+            .await?
+        }
+
+        IntegrityVerificationInput::AppleAssertion {
+            apple_assertion,
+            apple_public_key,
+        } => {
+            report.check_type = Some(CheckType::Apple);
+            apple::verify(
+                apple_assertion,
+                apple_public_key,
+                &bundle_identifier,
+                &request_hash,
+                aws_config,
+                &config.apple_keys_dynamo_table_name,
+            )
+            .await?
+        }
+
+        IntegrityVerificationInput::Developer { developer_token } => {
+            report.check_type = Some(CheckType::Developer);
+            developer::verify(
+                &developer_token,
+                config.developer_inner_jwks_url.as_deref(),
+                &request_hash,
+            )
+            .await?
+        }
+
+        IntegrityVerificationInput::ClientError { client_error: _ } => {
+            eyre::bail!("Unexpected variant reached in verify_android_or_apple_integrity.");
+        }
+    };
+
+    report.play_integrity = verify_result.parsed_play_integrity_token;
+    report.pass = verify_result.success;
+    report.app_version = verify_result.app_version;
+    report.out = if verify_result.success {
+        OutEnum::Pass
+    } else {
+        OutEnum::Fail
+    };
+    report.internal_debug_info = verify_result
+        .client_exception
+        .map(|err| err.internal_debug_info);
+    if let Some(developer_token) = verify_result.developer_token {
+        // `sub` is optional — some certificate roles carry the issuer identity
+        // in `extra.issuer_email` instead.
+        report.dev_check_sub = developer_token.sub;
+        report.extra = developer_token.extra;
+    }
+
+    Ok(report)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_and_finalize_report(
+    global_config: &GlobalConfig,
+    report: DataReport,
+    request_hash: String,
+    aud: String,
+    redis: &mut ConnectionManager,
+    aws_config: aws_config::SdkConfig,
+    kinesis_client: &KinesisClient,
+    kinesis_stream_arn: &str,
+) -> Result<TokenGenerationResponse, RequestError> {
+    // Report result to Kinesis
+    if !kinesis_stream_arn.is_empty()
+        && let Err(e) = send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report).await
+    {
+        tracing::error!("Failed to send Kinesis event: {:?}", e);
+    }
+
+    // TODO: Initial roll out does not include generating failure tokens
+    if !report.pass {
+        if global_config.log_client_errors {
+            tracing::info!(
+                request_hash = request_hash,
+                bundle_identifier = %report.bundle_identifier,
+                // `check_type` is a top-level field so queries like
+                // `check_type:Developer` filter LP/dev traffic without
+                // parsing the nested payload.
+                check_type = ?report.check_type,
+                message = "Integrity verification failed",
+                internal_debug_info = report.internal_debug_info
+            );
+        }
+        return Err(RequestError {
+            code: ErrorCode::IntegrityFailed,
+            details: None,
+        });
+    }
+    // Generate output attestation token
+    let output_token_payload = OutputTokenPayload {
+        issuer: global_config.jwt_issuer.clone(),
+        aud,
+        bundle_identifier: report.bundle_identifier.clone(),
+        request_hash: request_hash.clone(),
+        pass: report.pass,
+        out: report.out,
+        error: None, // TODO: Implement in the future (see L76)
+        app_version: report.app_version.clone(),
+        check_type: report.check_type.clone(),
+        extra: report.extra.clone(),
+    }
+    .generate()?;
+
+    tracing::info!(
+        // Promoted so this log can be filtered by `check_type:Developer`
+        // to triage LP-specific traffic. The full payload is still attached
+        // via `output_token_payload` for callers that need the body.
+        check_type = ?report.check_type,
+        output_token_payload = ?output_token_payload,
+        "Output token payload",
+    );
+
+    let key = fetch_active_key(redis, &aws_config).await.map_err(|e| {
+        tracing::error!(error = ?e, "Error fetching active key");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    })?;
+
+    let attestation_gateway_token =
+        kms_jws::generate_output_token(&aws_config, key.key_definition.arn, output_token_payload)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = ?e, "Error generating output token");
+                RequestError {
+                    code: ErrorCode::InternalServerError,
+                    details: None,
+                }
+            })?;
+
+    let response = TokenGenerationResponse {
+        attestation_gateway_token,
+    };
+
+    Ok(response)
+}
+
+async fn release_request_hash(
+    request_hash: String,
+    redis: &mut ConnectionManager,
+) -> Result<(), RequestError> {
+    redis
+        .del::<String, usize>(format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"))
+        .await
+        .map_err(handle_redis_error)?;
+    Ok(())
+}
+
+/// If the request comes with a `client_error` from the mobile apps, log it and return an integrity failed response. Note the request hash is not locked.
+async fn handle_client_error_if_applicable(
+    integrity_verification_input: &IntegrityVerificationInput,
+    request: &TokenGenerationRequest,
+    kinesis_client: &KinesisClient,
+    kinesis_stream_arn: &str,
+    log_client_errors: bool,
+) -> Result<(), RequestError> {
+    if let IntegrityVerificationInput::ClientError { client_error } = integrity_verification_input {
+        let report = DataReport::from_client_error(
+            client_error.clone(),
+            request.request_hash.clone(),
+            request.bundle_identifier.clone(),
+            request.aud.clone(),
+            Some("`client_error` provided in the request".to_string()),
+        );
+
+        send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to send `client_error` to Kinesis: {:?}", e);
+                RequestError {
+                    code: ErrorCode::InternalServerError,
+                    details: None,
+                }
+            })?;
+
+        if log_client_errors {
+            tracing::info!(
+                client_error = client_error,
+                bundle_identifier = ?request.bundle_identifier,
+                request_hash = request.request_hash,
+                "Client error provided in the request",
+            );
+        }
+
+        return Err(RequestError {
+            code: ErrorCode::IntegrityFailed,
+            details: None,
+        });
+    }
+
+    Ok(())
+}
+
+/// Extracts a laissez-passer bearer token from the `Authorization` header.
+///
+/// Returns `Ok(None)` when the header is absent (i.e. a regular Android/Apple attestation
+/// request). Returns `Ok(Some(token))` for a well-formed `Authorization: Bearer <token>`.
+/// Returns `RequestError` with [`ErrorCode::InvalidDeveloperToken`] if the header is present
+/// but malformed (non-ASCII, missing scheme, missing token, or wrong scheme).
+///
+/// The auth scheme name is matched case-insensitively, per RFC 7235 §2.1.
+fn extract_bearer_token(headers: &HeaderMap) -> Result<Option<String>, RequestError> {
+    let Some(value) = headers.get(header::AUTHORIZATION) else {
+        return Ok(None);
+    };
+
+    let raw = value.to_str().map_err(|_| RequestError {
+        code: ErrorCode::InvalidDeveloperToken,
+        details: Some("Invalid `Authorization` header value.".to_string()),
+    })?;
+
+    let (scheme, token) = raw.split_once(char::is_whitespace).ok_or(RequestError {
+        code: ErrorCode::InvalidDeveloperToken,
+        details: Some("`Authorization` header must use the `Bearer` scheme.".to_string()),
+    })?;
+
+    if !scheme.eq_ignore_ascii_case("Bearer") {
+        return Err(RequestError {
+            code: ErrorCode::InvalidDeveloperToken,
+            details: Some("`Authorization` header must use the `Bearer` scheme.".to_string()),
+        });
+    }
+
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(RequestError {
+            code: ErrorCode::InvalidDeveloperToken,
+            details: Some("`Authorization: Bearer` token is empty.".to_string()),
+        });
+    }
+
+    Ok(Some(token.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::TokenGenerationRequest;
+
+    fn base_request() -> TokenGenerationRequest {
+        TokenGenerationRequest {
+            integrity_token: None,
+            client_error: None,
+            aud: "test".to_string(),
+            bundle_identifier: BundleIdentifier::OrgWorldId,
+            request_hash: "hash".to_string(),
+            apple_initial_attestation: None,
+            apple_public_key: None,
+            apple_assertion: None,
+        }
+    }
+
+    #[test]
+    fn infer_platform_android_from_integrity_token() {
+        let mut request = base_request();
+        request.integrity_token = Some("token".to_string());
+        assert_eq!(infer_platform(&request).unwrap(), Platform::Android);
+    }
+
+    #[test]
+    fn infer_platform_ios_from_apple_initial_attestation() {
+        let mut request = base_request();
+        request.apple_initial_attestation = Some("attestation".to_string());
+        assert_eq!(infer_platform(&request).unwrap(), Platform::AppleIOS);
+    }
+
+    #[test]
+    fn infer_platform_ios_from_apple_assertion_pair() {
+        let mut request = base_request();
+        request.apple_assertion = Some("assertion".to_string());
+        request.apple_public_key = Some("key".to_string());
+        assert_eq!(infer_platform(&request).unwrap(), Platform::AppleIOS);
+    }
+
+    #[test]
+    fn infer_platform_rejects_conflicting_fields() {
+        let mut request = base_request();
+        request.integrity_token = Some("token".to_string());
+        request.apple_initial_attestation = Some("attestation".to_string());
+        assert_eq!(
+            infer_platform(&request).unwrap_err().code,
+            ErrorCode::BadRequest
+        );
+    }
+}

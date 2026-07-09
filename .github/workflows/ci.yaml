@@ -11,15 +11,14 @@ env:
 jobs:
   lint:
     name: Format, Clippy & Build
-    runs-on: ubuntu-latest
+    runs-on: arc-public-large-amd64-runner
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Rust
-        run: |
-          rustup update stable && rustup default stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -55,22 +54,21 @@ jobs:
         run: cargo clippy
 
       - name: Check cargo-sort
-        run: cargo sort --check
+        run: cargo sort --check --workspace
 
       - name: Build the project
         run: cargo build --release
 
   test:
     name: Tests
-    runs-on: ubuntu-latest
+    runs-on: arc-public-2xlarge-amd64-runner
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Rust
-        run: |
-          rustup update stable && rustup default stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -101,12 +99,12 @@ jobs:
 
       - name: Run local service dependencies
         run: |
-          docker compose -f tests/docker-compose.test.yml up -d
+          docker compose -f attestation-gateway/tests/docker-compose.test.yml up -d
 
           # Wait for the application to start
           sleep 10
 
-          docker logs localstack
+          docker logs attestation-gateway-localstack
 
       - name: Run tests
         run: |
@@ -114,10 +112,10 @@ jobs:
 
   docker-build:
     name: Test docker build
-    runs-on: ubuntu-latest
+    runs-on: arc-public-large-amd64-runner
     services:
       redis:
-        image: redis
+        image: public.ecr.aws/docker/library/redis:alpine
         ports:
           - 6379:6379
         # Set health checks to wait until postgres has started
@@ -131,10 +129,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Cache Docker layers
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/docker
+            /var/lib/docker
           key: ${{ runner.os }}-docker-${{ hashFiles('**/Dockerfile') }}
 
       - name: Build Docker image
@@ -159,10 +158,13 @@ jobs:
           docker rm attestation-gateway-ci-container
   deny:
     name: Cargo deny
-    runs-on: ubuntu-latest
+    runs-on: arc-public-large-amd64-runner
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - uses: EmbarkStudios/cargo-deny-action@v1
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
