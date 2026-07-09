@@ -17,7 +17,10 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    android::AndroidAttestationService,
+    android::{
+        AndroidAttestationService,
+        keybox_defense::{KeyboxDefense, KeyboxDefenseConfig},
+    },
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
@@ -159,6 +162,8 @@ pub async fn handler(
     let challenge = format!("n={},av={}", request.nonce, request.app_version);
     let platform = request.bundle_identifier.platform();
 
+    let mut android_batch_cert_fingerprint: Option<String> = None;
+
     let device_public_key = match platform {
         Platform::AppleIOS => {
             let apple_attestation = request.apple_attestation.ok_or_else(|| RequestError {
@@ -243,6 +248,7 @@ pub async fn handler(
                 }
             }
 
+            android_batch_cert_fingerprint = attestation_output.batch_cert_fingerprint.clone();
             attestation_output.device_public_key
         }
     };
@@ -276,6 +282,37 @@ pub async fn handler(
         exp_max = token_details.exp_max,
         "/a handler: nonce consumed successfully"
     );
+
+    if let Some(ref fp) = android_batch_cert_fingerprint {
+        let defense = KeyboxDefense::new(KeyboxDefenseConfig::from_env());
+        match defense.evaluate(&mut redis, fp, &token_details.aud).await {
+            Ok(verdict) => {
+                tracing::info!(
+                    fingerprint = %fp,
+                    aud = %token_details.aud,
+                    risk_level = ?verdict.risk_level,
+                    request_count = verdict.request_count,
+                    blocklisted = verdict.blocklisted,
+                    enforce = verdict.enforce,
+                    "/a handler: keybox defense verdict"
+                );
+                if verdict.should_reject() {
+                    let reason = if verdict.blocklisted {
+                        "certificate blocklisted"
+                    } else {
+                        "rate limit exceeded for attestation certificate"
+                    };
+                    return Err(RequestError {
+                        code: ErrorCode::BadRequest,
+                        details: Some(reason.to_string()),
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, "/a handler: keybox defense evaluation failed (non-blocking)");
+            }
+        }
+    }
 
     let exp = match request.exp {
         Some(exp) => {
