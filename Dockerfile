@@ -1,7 +1,7 @@
 ####################################################################################################
 ## Base image
 ####################################################################################################
-FROM public.ecr.aws/docker/library/rust:1.93.1-slim AS chef
+FROM public.ecr.aws/docker/library/rust:1.96.1-slim AS chef
 USER root
 WORKDIR /app
 
