@@ -17,7 +17,7 @@ mod root_cert;
 mod serde_hex;
 mod session_cert;
 
-pub use android_attestation_service::AndroidAttestationService;
+pub use android_attestation_service::{AndroidAttestationError, AndroidAttestationService};
 
 #[allow(unused_imports)]
 pub use cert_chain_builder::CertChainBuilder;
