@@ -575,6 +575,7 @@ impl std::error::Error for RequestError {}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ErrorCode {
+    AttestationRejected,
     BadRequest,
     DuplicateRequestHash,
     ExpiredToken,
@@ -585,11 +586,13 @@ pub enum ErrorCode {
     InvalidPublicKey,
     InvalidToken,
     InvalidDeveloperToken,
+    NonceNotFound,
 }
 
 impl std::fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::AttestationRejected => write!(f, "attestation_rejected"),
             Self::BadRequest => write!(f, "bad_request"),
             Self::DuplicateRequestHash => write!(f, "duplicate_request_hash"),
             Self::ExpiredToken => write!(f, "expired_token"),
@@ -600,6 +603,7 @@ impl std::fmt::Display for ErrorCode {
             Self::InvalidPublicKey => write!(f, "invalid_public_key"),
             Self::InvalidToken => write!(f, "invalid_token"),
             Self::InvalidDeveloperToken => write!(f, "invalid_developer_token"),
+            Self::NonceNotFound => write!(f, "nonce_not_found"),
         }
     }
 }
@@ -609,19 +613,25 @@ impl ErrorCode {
         match self {
             Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
-            Self::BadRequest
+            Self::AttestationRejected
+            | Self::BadRequest
             | Self::ExpiredToken
             | Self::IntegrityFailed
             | Self::InvalidAttestationForApp
             | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
             | Self::InvalidToken
-            | Self::InvalidDeveloperToken => axum::http::StatusCode::BAD_REQUEST,
+            | Self::InvalidDeveloperToken
+            | Self::NonceNotFound => axum::http::StatusCode::BAD_REQUEST,
         }
     }
 
     const fn into_default_error_message(self) -> &'static str {
         match self {
+            Self::AttestationRejected => "Device attestation could not be verified.",
+            Self::NonceNotFound => {
+                "The challenge nonce is unknown or has expired. Request a new challenge."
+            }
             Self::BadRequest => "The request is malformed.",
             Self::DuplicateRequestHash => "The `request_hash` has already been used.",
             Self::ExpiredToken => "The integrity token has expired. Please generate a new one.",
@@ -643,7 +653,8 @@ impl ErrorCode {
     const fn into_allow_retry(self) -> bool {
         match self {
             Self::InternalServerError => true,
-            Self::BadRequest
+            Self::AttestationRejected
+            | Self::BadRequest
             | Self::ExpiredToken
             | Self::IntegrityFailed
             | Self::InvalidAttestationForApp
@@ -651,7 +662,8 @@ impl ErrorCode {
             | Self::InvalidPublicKey
             | Self::InvalidToken
             | Self::InvalidDeveloperToken
-            | Self::DuplicateRequestHash => false,
+            | Self::DuplicateRequestHash
+            | Self::NonceNotFound => false,
         }
     }
 }

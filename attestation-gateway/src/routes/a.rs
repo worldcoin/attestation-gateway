@@ -15,7 +15,7 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    android::AndroidAttestationService,
+    android::{AndroidAttestationError, AndroidAttestationService},
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
     utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
@@ -119,6 +119,27 @@ impl IntegrityTokenPayload {
     }
 }
 
+fn map_android_attestation_error(e: &AndroidAttestationError) -> RequestError {
+    metrics::counter!("attestation_gateway.android_error", "reason" => e.reason_tag()).increment(1);
+
+    if e.is_internal_error() {
+        tracing::error!(error = ?e, "Error validating Android attestation");
+
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    } else {
+        // The precise verify failure stays server-side; the client gets only the coarse
+        // default message so rejection reasons don't aid attestation probing.
+        tracing::error!(endpoint = "/a", message = %e);
+        RequestError {
+            code: ErrorCode::AttestationRejected,
+            details: None,
+        }
+    }
+}
+
 fn infer_platform(request: &Request) -> Result<Platform, RequestError> {
     let has_android = request.android_attestation.is_some();
     let has_apple = request.apple_attestation.is_some();
@@ -165,7 +186,11 @@ pub async fn handler(
 
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
         if matches!(e, NonceDbError::NonceNotFound) {
-            bad_request("Nonce not found")
+            tracing::error!(endpoint = "/a", message = "Nonce not found");
+            RequestError {
+                code: ErrorCode::NonceNotFound,
+                details: None,
+            }
         } else {
             tracing::error!(error = ?e, "Error consuming token nonce");
 
@@ -209,24 +234,8 @@ pub async fn handler(
                 )
                 .await;
 
-            let attestation_output = match attestation_result {
-                Ok(attestation_output) => Ok(attestation_output),
-                Err(e) => {
-                    metrics::counter!("attestation_gateway.android_error",  "reason" => e.reason_tag())
-                        .increment(1);
-
-                    if e.is_internal_error() {
-                        tracing::error!(error = ?e, "Error validating Android attestation");
-
-                        Err(RequestError {
-                            code: ErrorCode::InternalServerError,
-                            details: None,
-                        })
-                    } else {
-                        Err(bad_request(e.to_string()))
-                    }
-                }
-            }?;
+            let attestation_output =
+                attestation_result.map_err(|e| map_android_attestation_error(&e))?;
 
             if let Some(os_patch_level_delta) = attestation_output.os_patch_level_delta {
                 metrics::gauge!("attestation_gateway.android_os_patch_level_delta")
