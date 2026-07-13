@@ -1,10 +1,10 @@
-use axum::{Extension, Json};
+use axum::{Extension, Json, http::HeaderMap};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 
 use crate::audience_authorizer::{AudienceAuthorizationError, AudienceAuthorizer};
 use crate::nonces::{NonceDb, TokenDetails};
-use crate::utils::{ErrorCode, RequestError};
+use crate::utils::{ErrorCode, RequestError, client_session_id};
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct Request {
@@ -41,13 +41,33 @@ pub struct Response {
 pub async fn handler(
     Extension(mut nonce_db): Extension<NonceDb>,
     Extension(audience_authorizer): Extension<AudienceAuthorizer>,
+    headers: HeaderMap,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
-    let tracing_span =
-        tracing::span!(tracing::Level::DEBUG, "c", aud = %request.aud, endpoint = "/c");
+    let session_id = client_session_id(&headers);
+    let tracing_span = tracing::span!(
+        tracing::Level::DEBUG,
+        "c",
+        aud = %request.aud,
+        endpoint = "/c",
+        session_id = %session_id
+    );
     let _enter = tracing_span.enter();
 
-    audience_authorizer.ensure_authorized(&request.aud).await?;
+    audience_authorizer
+        .ensure_authorized(&request.aud)
+        .await
+        .map_err(|error| {
+            if matches!(error, AudienceAuthorizationError::NotAuthorized) {
+                tracing::error!(
+                    aud = %request.aud,
+                    endpoint = "/c",
+                    session_id = %session_id,
+                    message = "Audience is not authorized"
+                );
+            }
+            RequestError::from(error)
+        })?;
 
     let token_details = TokenDetails::from_aud(request.aud.clone());
     let nonce = nonce_db.generate_nonce(&token_details).await.map_err(|e| {

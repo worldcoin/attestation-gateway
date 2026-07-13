@@ -573,6 +573,19 @@ impl IntoResponse for RequestError {
 
 impl std::error::Error for RequestError {}
 
+/// Session identifier World App sends in the `sessionId` header on every request.
+///
+/// Used only to correlate gateway logs with client-side Datadog logs (which carry the same value
+/// as `SessionID`); it is client-controlled and must not be trusted for anything
+/// security-relevant.
+#[must_use]
+pub fn client_session_id(headers: &axum::http::HeaderMap) -> &str {
+    headers
+        .get("sessionId")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown")
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ErrorCode {
     AttestationRejected,
