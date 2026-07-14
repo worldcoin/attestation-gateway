@@ -18,7 +18,7 @@ use crate::{
     android::{AndroidAttestationError, AndroidAttestationService},
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
-    utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
+    utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError, client_session_id},
 };
 
 fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
@@ -119,7 +119,7 @@ impl IntegrityTokenPayload {
     }
 }
 
-fn map_android_attestation_error(e: &AndroidAttestationError) -> RequestError {
+fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) -> RequestError {
     metrics::counter!("attestation_gateway.android_error", "reason" => e.reason_tag()).increment(1);
 
     if e.is_internal_error() {
@@ -132,7 +132,7 @@ fn map_android_attestation_error(e: &AndroidAttestationError) -> RequestError {
     } else {
         // The precise verify failure stays server-side; the client gets only the coarse
         // default message so rejection reasons don't aid attestation probing.
-        tracing::error!(endpoint = "/a", message = %e);
+        tracing::error!(endpoint = "/a", session_id = %session_id, message = %e);
         RequestError {
             code: ErrorCode::AttestationRejected,
             details: None,
@@ -172,7 +172,9 @@ pub async fn handler(
     headers: HeaderMap,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
-    let tracing_span = tracing::span!(tracing::Level::DEBUG, "a", endpoint = "/a");
+    let session_id = client_session_id(&headers);
+    let tracing_span =
+        tracing::span!(tracing::Level::DEBUG, "a", endpoint = "/a", session_id = %session_id);
     let _enter = tracing_span.enter();
 
     if !global_config
@@ -186,7 +188,7 @@ pub async fn handler(
 
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
         if matches!(e, NonceDbError::NonceNotFound) {
-            tracing::error!(endpoint = "/a", message = "Nonce not found");
+            tracing::error!(endpoint = "/a", session_id = %session_id, message = "Nonce not found");
             RequestError {
                 code: ErrorCode::NonceNotFound,
                 details: None,
@@ -235,7 +237,7 @@ pub async fn handler(
                 .await;
 
             let attestation_output =
-                attestation_result.map_err(|e| map_android_attestation_error(&e))?;
+                attestation_result.map_err(|e| map_android_attestation_error(&e, session_id))?;
 
             if let Some(os_patch_level_delta) = attestation_output.os_patch_level_delta {
                 metrics::gauge!("attestation_gateway.android_os_patch_level_delta")
