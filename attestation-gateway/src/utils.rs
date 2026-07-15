@@ -279,20 +279,28 @@ impl BundleIdentifier {
         }
     }
 
-    /// Expected app signing-certificate digest (hex) for Android Play Integrity (`POST /g`).
+    /// Expected app signing-certificate digest(s) (hex) for Android Play Integrity (`POST /g`).
+    ///
+    /// Returns all digests accepted for the bundle identifier; a response listing any one of
+    /// them is considered valid.
     #[must_use]
-    pub const fn android_certificate_sha256_digest(&self) -> Option<&str> {
+    pub const fn android_certificate_sha256_digest(&self) -> Option<&'static [&'static str]> {
         match self {
             Self::ComWorldcoin
             | Self::ComWorldcoinStaging
             | Self::ComWorldcoinSandbox
             | Self::OrgWorldId
-            | Self::OrgWorldIdStaging
-            | Self::OrgWorldIdSandbox => {
+            | Self::OrgWorldIdStaging => {
                 // cspell:disable-next-line
-                Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
+                Some(&["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"])
             }
-            Self::ComWorldcoinDev | Self::OrgWorldIdDev => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
+            Self::OrgWorldIdSandbox => Some(&[
+                // cspell:disable-next-line
+                "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
+                // cspell:disable-next-line
+                "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ",
+            ]),
+            Self::ComWorldcoinDev | Self::OrgWorldIdDev => Some(&["6a6a1474b5cbbb2b1aa57e0bc3"]),
             Self::OrgWorldcoinInsight
             | Self::OrgWorldcoinInsightStaging
             | Self::OrgWorldcoinInsightSandbox
@@ -301,18 +309,27 @@ impl BundleIdentifier {
         }
     }
 
-    /// Expected app signing-certificate digest (base64) for Android hardware attestation (`POST /a`).
+    /// Expected app signing-certificate digest(s) (base64) for Android hardware attestation (`POST /a`).
+    ///
+    /// Returns all digests accepted for the bundle identifier; a cert chain matching any one of
+    /// them is considered valid.
     #[must_use]
-    pub const fn android_certificate_sha256_digest_base64(&self) -> Option<&'static str> {
+    pub const fn android_certificate_sha256_digest_base64(
+        &self,
+    ) -> Option<&'static [&'static str]> {
         match self {
             Self::ComWorldcoin
             | Self::ComWorldcoinStaging
             | Self::ComWorldcoinSandbox
             | Self::OrgWorldId
-            | Self::OrgWorldIdStaging
-            | Self::OrgWorldIdSandbox => Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="),
+            | Self::OrgWorldIdStaging => Some(&["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="]),
+            Self::OrgWorldIdSandbox => Some(&[
+                "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
+                // cspell:disable-next-line
+                "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ=",
+            ]),
             Self::ComWorldcoinDev | Self::OrgWorldIdDev => {
-                Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=")
+                Some(&["o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="])
             }
             Self::OrgWorldcoinInsight
             | Self::OrgWorldcoinInsightStaging
@@ -1034,11 +1051,39 @@ mod tests {
         assert_eq!(
             bundle.android_certificate_sha256_digest(),
             // cspell:disable-next-line
-            Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
+            Some(["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"].as_slice())
         );
         assert_eq!(
             bundle.android_certificate_sha256_digest_base64(),
-            Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
+            Some(["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="].as_slice())
+        );
+    }
+
+    #[test]
+    fn org_world_id_sandbox_accepts_both_android_cert_digests() {
+        let bundle = BundleIdentifier::OrgWorldIdSandbox;
+        assert_eq!(
+            bundle.android_certificate_sha256_digest(),
+            Some(
+                [
+                    // cspell:disable-next-line
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
+                    // cspell:disable-next-line
+                    "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ",
+                ]
+                .as_slice()
+            )
+        );
+        assert_eq!(
+            bundle.android_certificate_sha256_digest_base64(),
+            Some(
+                [
+                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
+                    // cspell:disable-next-line
+                    "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ=",
+                ]
+                .as_slice()
+            )
         );
     }
 
