@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::{env, fmt::Display, time::SystemTime};
 use uuid::Uuid;
 
-static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(60 * 10);
+static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_mins(10);
 
 /// A Play Integrity response-encryption key pair (the self-managed "download my keys" pair):
 /// the outer JWE decryption key (AES-256, base64) and the inner JWS verification key (EC, base64).
@@ -798,7 +798,7 @@ pub struct OutputTokenPayload {
     pub extra: Option<HashMap<String, String>>,
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn handle_jose_error(e: JoseError) -> RequestError {
     tracing::error!(
         "Error generating `JWTPayload` for `OutputTokenPayload`: {:?}",
@@ -810,7 +810,16 @@ fn handle_jose_error(e: JoseError) -> RequestError {
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
+fn handle_system_time_error(e: std::time::SystemTimeError) -> RequestError {
+    tracing::error!("System clock is before the Unix epoch: {:?}", e);
+    RequestError {
+        code: ErrorCode::InternalServerError,
+        details: None,
+    }
+}
+
+#[expect(clippy::needless_pass_by_value)]
 pub fn handle_redis_error(e: RedisError) -> RequestError {
     tracing::error!("Redis error: {e}");
     RequestError {
@@ -826,11 +835,24 @@ impl OutputTokenPayload {
     /// Will return a `JoseError` if the payload generation fails
     pub fn generate(&self) -> Result<JwtPayload, RequestError> {
         let mut payload = JwtPayload::new();
-        payload.set_issued_at(&SystemTime::now());
-        payload.set_issuer(&self.issuer);
-        payload.set_expires_at(&(SystemTime::now() + OUTPUT_TOKEN_EXPIRATION));
+
+        // manually set the `iat` & `exp` claim as josekit's `set_issued_at` and `set_expires_at`
+        // serializes timestamps as floats which some strict parsers reject
+        let issued_at = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(handle_system_time_error)?
+            .as_secs();
+        let expires_at = issued_at + OUTPUT_TOKEN_EXPIRATION.as_secs();
+
+        payload
+            .set_claim("iat", Some(josekit::Value::Number(issued_at.into())))
+            .map_err(handle_jose_error)?;
+        payload
+            .set_claim("exp", Some(josekit::Value::Number(expires_at.into())))
+            .map_err(handle_jose_error)?;
 
         // Claims
+        payload.set_issuer(&self.issuer);
         payload
             .set_claim("aud", Some(josekit::Value::String(self.aud.clone())))
             .map_err(handle_jose_error)?;
@@ -941,6 +963,24 @@ mod tests {
                 OUTPUT_TOKEN_EXPIRATION +
                 // tolerance time
                 std::time::Duration::from_secs(5))
+        );
+
+        // `iat`/`exp` must be integer NumericDate seconds (RFC 7519 §2), floats is technically not
+        // against the spec but several parsers reject it.
+        let iat = match jwt_payload.claim("iat") {
+            Some(josekit::Value::Number(n)) => n,
+            other => panic!("`iat` must be a JSON number, got {other:?}"),
+        };
+        let exp = match jwt_payload.claim("exp") {
+            Some(josekit::Value::Number(n)) => n,
+            other => panic!("`exp` must be a JSON number, got {other:?}"),
+        };
+        assert!(iat.is_u64(), "`iat` must be an integer, got {iat}");
+        assert!(exp.is_u64(), "`exp` must be an integer, got {exp}");
+        assert_eq!(
+            exp.as_u64().unwrap() - iat.as_u64().unwrap(),
+            OUTPUT_TOKEN_EXPIRATION.as_secs(),
+            "`exp` must be exactly the expiration window after `iat`"
         );
 
         // Assert remainder of claims
