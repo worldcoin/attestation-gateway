@@ -272,6 +272,9 @@ mod tests {
             .build_chain_from_base64(&[cert1.clone(), cert3.clone(), cert2.clone()])
             .unwrap();
 
+        assert!(cert_chain1.has_strong_box_chain_shape());
+        assert!(cert_chain2.has_strong_box_chain_shape());
+
         assert_eq!(
             cert_chain1.session_cert().serial(),
             cert_chain2.session_cert().serial()
