@@ -132,7 +132,7 @@ fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) 
     } else {
         // The precise verify failure stays server-side; the client gets only the coarse
         // default message so rejection reasons don't aid attestation probing.
-        tracing::error!(endpoint = "/a", session_id = %session_id, message = %e);
+        tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
         RequestError {
             code: ErrorCode::AttestationRejected,
             details: None,
@@ -188,7 +188,7 @@ pub async fn handler(
 
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
         if matches!(e, NonceDbError::NonceNotFound) {
-            tracing::error!(endpoint = "/a", session_id = %session_id, message = "Nonce not found");
+            tracing::warn!(endpoint = "/a", session_id = %session_id, message = "Nonce not found");
             RequestError {
                 code: ErrorCode::NonceNotFound,
                 details: None,
