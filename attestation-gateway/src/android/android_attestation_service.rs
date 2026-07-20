@@ -246,18 +246,23 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::KeyNotGeneratedInSecureHardware);
         }
 
-        let expected_attestation_signature_digest = bundle_identifier
+        let expected_attestation_signature_digests = bundle_identifier
             .android_certificate_sha256_digest_base64()
             .ok_or(AndroidAttestationError::MissingCertificateDigest)?;
 
-        let expected_attestation_signature_digest = Base64
-            .decode(expected_attestation_signature_digest)
-            .map_err(AndroidAttestationError::BadCertificateDigestEncoding)?;
+        let matches_expected_digest = expected_attestation_signature_digests
+            .iter()
+            .map(|digest| Base64.decode(digest))
+            .collect::<Result<Vec<_>, DecodeError>>()
+            .map_err(AndroidAttestationError::BadCertificateDigestEncoding)?
+            .iter()
+            .any(|digest| {
+                cert_chain
+                    .session_cert()
+                    .contains_attestation_signature_digests(digest)
+            });
 
-        if !cert_chain
-            .session_cert()
-            .contains_attestation_signature_digests(&expected_attestation_signature_digest)
-        {
+        if !matches_expected_digest {
             return Err(AndroidAttestationError::InvalidAttestationSignatureDigest);
         }
 

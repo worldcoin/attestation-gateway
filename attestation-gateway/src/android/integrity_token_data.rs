@@ -265,10 +265,13 @@ impl PlayIntegrityToken {
             }));
         }
 
-        if let Some(digest) = bundle_identifier.android_certificate_sha256_digest() {
+        if let Some(digests) = bundle_identifier.android_certificate_sha256_digest() {
             if let Some(certificate_sha_256_digest) = &self.app_integrity.certificate_sha_256_digest
             {
-                if !certificate_sha_256_digest.contains(&digest.to_string()) {
+                if !digests
+                    .iter()
+                    .any(|digest| certificate_sha_256_digest.contains(&digest.to_string()))
+                {
                     return Err(eyre::eyre!(ClientException {
                         code: ErrorCode::IntegrityFailed,
                         internal_debug_info:
