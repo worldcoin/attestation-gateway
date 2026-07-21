@@ -26,19 +26,31 @@ pub struct IntermediateCert {
     #[serde(with = "crate::android::serde_hex")]
     public_key: Vec<u8>,
     serial: CertSerial,
+    #[serde(skip)]
+    subject_contains_strong_box: bool,
 }
 
 impl IntermediateCert {
     pub fn from_x509(cert: &X509) -> Result<Self, IntermediateCertError> {
         let serial = CertSerial::from_x509(cert).map_err(IntermediateCertError::Serial)?;
+        let subject_contains_strong_box = cert.subject_name().entries().any(|entry| {
+            entry
+                .data()
+                .to_string()
+                .is_ok_and(|value| value.to_ascii_lowercase().contains("strongbox"))
+        });
         let der = cert
             .to_der()
             .map_err(|_| IntermediateCertError::DerEncoding)?;
 
-        Self::from_der_with_serial(&der, serial)
+        Self::from_der_with_serial(&der, serial, subject_contains_strong_box)
     }
 
-    fn from_der_with_serial(der: &[u8], serial: CertSerial) -> Result<Self, IntermediateCertError> {
+    fn from_der_with_serial(
+        der: &[u8],
+        serial: CertSerial,
+        subject_contains_strong_box: bool,
+    ) -> Result<Self, IntermediateCertError> {
         let (_, cert) =
             X509Certificate::from_der(der).map_err(|_| IntermediateCertError::DerDecoding)?;
 
@@ -52,7 +64,11 @@ impl IntermediateCert {
 
         let public_key = Vec::from(cert.public_key().subject_public_key.data.clone());
 
-        Ok(Self { public_key, serial })
+        Ok(Self {
+            public_key,
+            serial,
+            subject_contains_strong_box,
+        })
     }
 
     pub const fn serial(&self) -> &CertSerial {
@@ -65,6 +81,10 @@ impl IntermediateCert {
 
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.public_key())
+    }
+
+    pub const fn subject_contains_strong_box(&self) -> bool {
+        self.subject_contains_strong_box
     }
 }
 

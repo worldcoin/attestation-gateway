@@ -49,6 +49,9 @@ pub enum AndroidAttestationError {
     #[error("inconsistent security levels")]
     InconsistentSecurityLevels,
 
+    #[error("StrongBox security level does not match certificate chain")]
+    StrongBoxChainMismatch,
+
     #[error("device not locked")]
     DeviceNotLocked,
 
@@ -219,6 +222,13 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::InconsistentSecurityLevels);
         }
 
+        if !security_level_matches_chain(
+            &cert_chain.session_cert().attestation_security_level(),
+            cert_chain.has_strong_box_chain_shape(),
+        ) {
+            return Err(AndroidAttestationError::StrongBoxChainMismatch);
+        }
+
         let verified_boot_state = cert_chain
             .session_cert()
             .verified_boot_state()
@@ -300,6 +310,13 @@ impl AndroidAttestationService {
     }
 }
 
+fn security_level_matches_chain(
+    attestation_security_level: &SecurityLevel,
+    has_strong_box_chain_shape: bool,
+) -> bool {
+    attestation_security_level != &SecurityLevel::StrongBox || has_strong_box_chain_shape
+}
+
 impl AndroidAttestationError {
     pub fn reason_tag(&self) -> String {
         match self {
@@ -317,6 +334,7 @@ impl AndroidAttestationError {
             Self::InvalidChallenge => "invalid_challenge".to_string(),
             Self::LowSecurityLevel => "low_security_level".to_string(),
             Self::InconsistentSecurityLevels => "inconsistent_security_levels".to_string(),
+            Self::StrongBoxChainMismatch => "strong_box_chain_mismatch".to_string(),
             Self::DeviceNotLocked => "device_not_locked".to_string(),
             Self::BootNotVerified => "boot_not_verified".to_string(),
             Self::KeyNotGeneratedInSecureHardware => {
@@ -348,6 +366,7 @@ impl AndroidAttestationError {
             | Self::InvalidChallenge
             | Self::LowSecurityLevel
             | Self::InconsistentSecurityLevels
+            | Self::StrongBoxChainMismatch
             | Self::DeviceNotLocked
             | Self::BootNotVerified
             | Self::KeyNotGeneratedInSecureHardware
@@ -358,5 +377,34 @@ impl AndroidAttestationError {
             | Self::CertificateRevoked => false,
             Self::MissingCertificateDigest | Self::BadCertificateDigestEncoding(_) => true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_strong_box_claim_without_strong_box_chain_shape() {
+        assert!(!security_level_matches_chain(
+            &SecurityLevel::StrongBox,
+            false
+        ));
+    }
+
+    #[test]
+    fn accepts_strong_box_claim_with_strong_box_chain_shape() {
+        assert!(security_level_matches_chain(
+            &SecurityLevel::StrongBox,
+            true
+        ));
+    }
+
+    #[test]
+    fn accepts_tee_without_strong_box_chain_shape() {
+        assert!(security_level_matches_chain(
+            &SecurityLevel::TrustedEnvironment,
+            false
+        ));
     }
 }
