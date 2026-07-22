@@ -342,6 +342,26 @@ impl BundleIdentifier {
             // cspell:enable
         }
     }
+
+    /// The App IDs accepted for iOS App Attest for this bundle. Normally just the canonical
+    /// [`Self::apple_app_id`]; staging additionally accepts the App ID of re-signed automation
+    /// builds. `None` for non-Apple bundles (mirrors `apple_app_id`).
+    ///
+    /// TEMPORARY: the staging extra lets AWS Device Farm's wildcard re-sign (Apple Team
+    /// `5VLXJ89ZV9`) pass attestation so UI automation can run on real devices. Production
+    /// deployments reject staging bundles at the `enabled_bundle_identifiers` gate before
+    /// attestation, so this never widens production. Remove when device-farm automation no
+    /// longer needs it.
+    #[must_use]
+    pub fn apple_accepted_app_ids(&self) -> Option<Vec<&str>> {
+        let mut ids = vec![self.apple_app_id()?];
+        // cspell:disable-next-line
+        if matches!(self, Self::OrgWorldStagingId) {
+            // cspell:disable-next-line
+            ids.push("5VLXJ89ZV9.org.world.staging.id");
+        }
+        Some(ids)
+    }
 }
 
 impl Display for BundleIdentifier {
@@ -1109,6 +1129,54 @@ mod tests {
             None
         );
         assert_eq!(BundleIdentifier::OrgWorldStagingId.android_app(), None);
+    }
+
+    #[test]
+    fn apple_accepted_app_ids_always_contain_canonical() {
+        // Whatever else is accepted, a bundle's canonical App ID must always be — otherwise
+        // real store-signed apps would fail attestation.
+        for bundle in [
+            BundleIdentifier::OrgWorldId,
+            BundleIdentifier::OrgWorldStagingId,
+            BundleIdentifier::OrgWorldSandboxId,
+            BundleIdentifier::OrgWorldcoinInsight,
+            BundleIdentifier::OrgWorldcoinInsightStaging,
+            BundleIdentifier::OrgWorldcoinInsightSandbox,
+        ] {
+            let accepted = bundle.apple_accepted_app_ids().unwrap();
+            assert!(accepted.contains(&bundle.apple_app_id().unwrap()));
+        }
+    }
+
+    #[test]
+    fn production_bundles_accept_only_their_canonical_app_id() {
+        // The invariant that keeps re-signed builds out of production: a production bundle must
+        // accept exactly its one canonical App ID — never an extra. (Non-prod bundles may carry
+        // an extra; the staging one does today, asserted below.)
+        for bundle in [
+            BundleIdentifier::OrgWorldId,
+            BundleIdentifier::OrgWorldcoinInsight,
+            BundleIdentifier::ComWorldcoin,
+        ] {
+            let app_ids = bundle
+                .apple_accepted_app_ids()
+                .map(|ids| ids.len())
+                .unwrap_or(1);
+            assert_eq!(
+                app_ids, 1,
+                "{bundle} is a production bundle and must accept only its canonical App ID"
+            );
+        }
+        assert_eq!(
+            BundleIdentifier::OrgWorldStagingId
+                .apple_accepted_app_ids()
+                .unwrap(),
+            // cspell:disable-next-line
+            vec![
+                "35RXKB6738.org.world.staging.id",
+                "5VLXJ89ZV9.org.world.staging.id"
+            ],
+        );
     }
 
     #[test]
