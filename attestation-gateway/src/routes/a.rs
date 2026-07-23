@@ -293,10 +293,12 @@ fn validate_apple_attestation_and_get_device_public_key(
     let allowed_aaguid_vec = apple::AAGUID::allowed_for_bundle_identifier(bundle_identifier)
         .map_err(|_| bad_request("Invalid bundle identifier"))?;
 
+    // Canonical App ID only — the re-signed-build allow-list is intentionally scoped to the
+    // `/g` token flow (via `apple_accepted_app_ids`); this `/a` route is unchanged.
     let initial_attestation = apple::decode_and_validate_initial_attestation(
         apple_attestation,
         challenge,
-        app_id,
+        &[app_id],
         allowed_aaguid_vec.as_slice(),
         apple_root_ca_pem,
     )
