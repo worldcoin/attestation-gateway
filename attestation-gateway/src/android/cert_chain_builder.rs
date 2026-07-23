@@ -364,12 +364,12 @@ mod tests {
             cert_chain1
                 .intermediate_certs()
                 .iter()
-                .map(IntermediateCert::serial)
+                .map(|cert| cert.serial())
                 .collect::<Vec<_>>(),
             cert_chain2
                 .intermediate_certs()
                 .iter()
-                .map(IntermediateCert::serial)
+                .map(|cert| cert.serial())
                 .collect::<Vec<_>>()
         );
         assert_eq!(
