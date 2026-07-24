@@ -255,7 +255,7 @@ impl RootOfTrust {
     pub fn from_asn1(v: &RootOfTrustAsn1) -> Result<Self, KeyDescriptionError> {
         Ok(Self {
             verified_boot_key: v.verified_boot_key.to_vec(),
-            device_locked: v.device_locked,
+            device_locked: v.device_locked.0,
             verified_boot_state: VerifiedBootState::from_asn1(&v.verified_boot_state)?,
             verified_boot_hash: v.verified_boot_hash.map(|h| h.to_vec()),
         })
