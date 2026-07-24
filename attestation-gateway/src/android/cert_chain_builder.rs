@@ -152,8 +152,27 @@ impl CertChainBuilder {
 
                 match Self::verify_cert_chain(cert_chain, &legacy_cert_store) {
                     Ok(verified_cert_chain) => verified_cert_chain,
-                    Err(CertChainBuilderBuildChainError::Verification(_, _)) => {
-                        return Err(CertChainBuilderBuildChainError::Verification(error, depth));
+                    Err(CertChainBuilderBuildChainError::Verification(
+                        legacy_error,
+                        legacy_depth,
+                    )) => {
+                        if legacy_error.error_string() == "invalid CA certificate"
+                            && legacy_depth == 1
+                        {
+                            if let Some(verified_cert_chain) =
+                                self.verify_legacy_factory_chain(cert_chain)?
+                            {
+                                verified_cert_chain
+                            } else {
+                                return Err(CertChainBuilderBuildChainError::Verification(
+                                    error, depth,
+                                ));
+                            }
+                        } else {
+                            return Err(CertChainBuilderBuildChainError::Verification(
+                                error, depth,
+                            ));
+                        }
                     }
                     Err(error) => return Err(error),
                 }
@@ -200,6 +219,78 @@ impl CertChainBuilder {
         verified_cert_chain.ok_or_else(|| {
             CertChainBuilderBuildChainError::Verification(context.error(), context.error_depth())
         })
+    }
+
+    fn verify_legacy_factory_chain(
+        &self,
+        cert_chain: &[X509],
+    ) -> Result<Option<Vec<X509>>, CertChainBuilderBuildChainError> {
+        let [leaf, attestation, intermediate, supplied_root] = cert_chain else {
+            return Ok(None);
+        };
+
+        let Some(trusted_root) = self
+            .trusted_certs
+            .iter()
+            .find(|cert| is_legacy_google_root(cert))
+        else {
+            return Ok(None);
+        };
+
+        if supplied_root
+            .subject_name()
+            .try_cmp(trusted_root.subject_name())
+            .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?
+            != Ordering::Equal
+        {
+            return Ok(None);
+        }
+
+        let supplied_root_key = supplied_root
+            .public_key()
+            .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?;
+        let trusted_root_key = trusted_root
+            .public_key()
+            .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?;
+
+        if !supplied_root_key.public_eq(&trusted_root_key) {
+            return Ok(None);
+        }
+
+        let verified_chain = [
+            leaf.to_owned(),
+            attestation.to_owned(),
+            intermediate.to_owned(),
+            trusted_root.to_owned(),
+        ];
+
+        for pair in verified_chain.windows(2) {
+            let [cert, issuer] = pair else {
+                unreachable!();
+            };
+
+            if cert
+                .issuer_name()
+                .try_cmp(issuer.subject_name())
+                .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?
+                != Ordering::Equal
+            {
+                return Ok(None);
+            }
+
+            let issuer_key = issuer
+                .public_key()
+                .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?;
+
+            if !cert
+                .verify(&issuer_key)
+                .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?
+            {
+                return Ok(None);
+            }
+        }
+
+        Ok(Some(Vec::from(verified_chain)))
     }
 
     fn build_trusted_cert_store(
@@ -376,6 +467,41 @@ mod tests {
         cert_chain_builder
             .build_chain_from_base64(&[cert1, cert2, cert3, cert4])
             .unwrap();
+    }
+
+    #[cfg(test)]
+    fn invalid_ca_factory_chain() -> Vec<String> {
+        [
+            "MIICdTCCAhugAwIBAgIBATAKBggqhkjOPQQDAjAbMRkwFwYDVQQFExBhYjNkYTBkMTZmNzYxZWFhMB4XDTcwMDEwMTAwMDAwMFoXDTI2MDcyMzA5NTQ0OVowHzEdMBsGA1UEAwwUQW5kcm9pZCBLZXlzdG9yZSBLZXkwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQuoDTx4xY7IyX/QMg02CxOoF5OznDv/LOKpKgSC93bEKPPAOIpMoFUeTarsG2BPJIdVtIv51UU++c23UeXjd9zo4IBSjCCAUYwDgYDVR0PAQH/BAQDAgeAMIIBMgYKKwYBBAHWeQIBEQSCASIwggEeAgECCgEBAgEDCgEBBC5uPWE1MjUwOTY5OTA0NmEwM2QyNjFkNjYyZTQwNjU5MGQ2LGF2PTQuMC4yOTAwBAAwaL+DEQgCBgGfjmYuKL+DEggCBgGfjmYuKL+FPQgCBgGfjmGWYL+FRUAEPjA8MRYwFAQNY29tLndvcmxkY29pbgIDPRRUMSIEIJ0q1xJ/CZGSlxTAGVtDR4Q0UxzYt/GBNlwr1c2F40bvMHShBTEDAgECogMCAQOjBAICAQClCDEGAgEEAgEAqgMCAQG/g3cCBQC/hT4DAgEAv4U/AgUAv4VAKjAoBCCAurBggHz/pF1HR98a1wb+464/ZF+AzxSHHdvifhTDCwEB/woBAL+FQQUCAwFfkL+FQgUCAwMUtDAKBggqhkjOPQQDAgNIADBFAiEApxcOFrxQI+6PZ6Zjb+ppxM3mvo5Y3Uk0XYbqlfy5vfkCIFPz4DQYmwAaiDoz+UEZvQApk0v1N/2hpcJzmNkwqDxM",
+            "MIICLDCCAbKgAwIBAgIKBREVCFAyc1ESeDAKBggqhkjOPQQDAjAbMRkwFwYDVQQFExA4N2Y0NTE0NDc1YmEwYTJiMB4XDTE2MDUyNjE3MTkzN1oXDTI2MDUyNDE3MTkzN1owGzEZMBcGA1UEBRMQYWIzZGEwZDE2Zjc2MWVhYTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABIeQeVZ64ZBNuSJ9wrgsixxYkjk9FjnrP4FF8X8DIFnod+88Dp5wnnSYB/fkHqfjEvHaEzmVaKa/xUpZZLocKsKjgd0wgdowHQYDVR0OBBYEFMIhIvU+gIzg/2sP6rJtFJp2N+CrMB8GA1UdIwQYMBaAFDBEI+Wi9gbhUKt3XxYWu5HMY8ZZMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMCQGA1UdHgQdMBugGTAXghVpbnZhbGlkO2VtYWlsOmludmFsaWQwVAYDVR0fBE0wSzBJoEegRYZDaHR0cHM6Ly9hbmRyb2lkLmdvb2dsZWFwaXMuY29tL2F0dGVzdGF0aW9uL2NybC8wNTExMTUwODUwMzI3MzUxMTI3ODAKBggqhkjOPQQDAgNoADBlAjBn5rj2bNcOtGuKklizVl2REZVzR/PKVt9fkgnOA0pGiFnpwfmUFXhkDjbg0KQ7m7ICMQD0kxUYp+HXMWjPB+ywpvOnEF/MbrugGt33d0IIth+cGWBfxzzfhEpumerGGnbj9G4=",
+            "MIIDwzCCAaugAwIBAgIKA4gmZ2BliZaFdTANBgkqhkiG9w0BAQsFADAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MB4XDTE2MDUyNjE3MDE1MVoXDTI2MDUyNDE3MDE1MVowGzEZMBcGA1UEBRMQODdmNDUxNDQ3NWJhMGEyYjB2MBAGByqGSM49AgEGBSuBBAAiA2IABGQ7VmgdJ/rEgs9sIE3rzvApXDUMAaqMMn8+1fRJrvQpZkJfOT2EdjtdrVaxDQRZxixqT5MlVqiSk8PRTqLx3+8OPLoicqMiOeGytH2sVQurvFynVeKqSGKK1jx2/2fccqOBtjCBszAdBgNVHQ4EFgQUMEQj5aL2BuFQq3dfFha7kcxjxlkwHwYDVR0jBBgwFoAUNmHhAHyIBQlRi0RsR/8aTMnqTxIwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwUAYDVR0fBEkwRzBFoEOgQYY/aHR0cHM6Ly9hbmRyb2lkLmdvb2dsZWFwaXMuY29tL2F0dGVzdGF0aW9uL2NybC9FOEZBMTk2MzE0RDJGQTE4MA0GCSqGSIb3DQEBCwUAA4ICAQBAOYqLNryTmbOlnrjnIvDoXxzaLOgCXu29l7KpbFHacVLxgYuGRiIEQqzZBqUYSt9Pgx+P2KvoHtz99sEZr2xTe0Dw6CTHTAmxWXUFdrlvEMm2GySfvJRfMNCuX1oIS/M5PfREY2YZHyLq/sn1sJr3FjbKMdUMBo5AcamcD3H8wl9O/6qfhX+57iXzoK6yMzJRG/Mlkm58/sFk0pjayUBchmUJL0FQ6IhKYgy8RKE2UDyXKOE7+ZMSMUUkAdzyn2PFv7TvQtDk0ge2mkVrNrfPSglMzBNvrSDHPBmTktXzwseVagIRT5WI91OrUOYPFgostsfH42hs5wJtAFGPwDg/1mNa8UyH9k1bMrRq3Srez1XG0Ju7SGN/uNX5dkcwvfAmadtmM7Pp+l2VHRYRR600jAcM2+7bl8egqfM/A7vyDLZqPIxDwkLXj2eN99nJZJVaGfB9dHyFOqBqBM6SdyV6MSIr3AHoo6u+BWIX9+q8n1qg5I6JWeEe+K58SbRDVoNQgsKP9/iPruXMU5rm2ywPxICVGysl1GgAP+FJ3X6oP0tXFWQlYoWdSloSVHNZQqj2ev/69sMnGsTeJw1V7I0gR+eZNEfxe+vZD4KP88KxuiPCe94rp+Aqs5/YwuCo6rQ+HGi5OZNBsQXYIufClSBje+OpjQb7HJgihJdzo2/IBw==",
+            "MIIFYDCCA0igAwIBAgIJAOj6GWMU0voYMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNVBAUTEGY5MjAwOWU4NTNiNmIwNDUwHhcNMTYwNTI2MTYyODUyWhcNMjYwNTI0MTYyODUyWjAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdSSxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggjnar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGqC4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQoVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+OJtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/EgsTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRiigHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+MRPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9EaDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5UmAGMCAwEAAaOBpjCBozAdBgNVHQ4EFgQUNmHhAHyIBQlRi0RsR/8aTMnqTxIwHwYDVR0jBBgwFoAUNmHhAHyIBQlRi0RsR/8aTMnqTxIwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cHM6Ly9hbmRyb2lkLmdvb2dsZWFwaXMuY29tL2F0dGVzdGF0aW9uL2NybC8wDQYJKoZIhvcNAQELBQADggIBACDIw41L3KlXG0aMiS//cqrG+EShHUGo8HNsw30W1kJtjn6UBwRM6jnmiwfBPb8VA91chb2vssAtX2zbTvqBJ9+LBPGCdw/E53Rbf86qhxKaiAHOjpvAy5Y3m00mqC0w/Zwvju1twb4vhLaJ5NkUJYsUS7rmJKHHBnETLi8GFqiEsqTWpG/6ibYCv7rYDBJDcR9W62BW9jfIoBQcxUCUJouMPH25lLNcDc1ssqvC2v7iUgI9LeoM1sNovqPmQUiG9rHli1vXxzCyaMTjwftkJLkf6724DFhuKug2jITV0QkXvaJWF4nUaHOTNA4uJU9WDvZLI1j83A+/xnAJUucIv/zGJ1AMH2boHqF8CY16LpsYgBt6tKxxWH00XcyDCdW2KlBCeqbQPcsFmWyWugxdcekhYsAWyoSf818NUsZdBWBaR/OukXrNLfkQ79IyZohZbvabO/X+MVT3rriAoKc8oE2Uws6DF+60PV7/WIPjNvXySdqspImSN78mflxDqwLqRBYkA3I75qppLGG9rp7UCdRjxMl8ZDBld+7yvHVgt1cVzJx9xnyGCC23UaicMDSXYrB4I4WHXPGjxhZuCuPBLTdOLU8YRvMYdEvYebWHMpvwGCF6bAx3JBpIeOQ1wDB5y0USicV3YgYGmi+NZfhA4URSh77Yd6uuJOJENRaNVTzk",
+        ]
+        .map(str::to_string)
+        .to_vec()
+    }
+
+    #[test]
+    fn accepts_legacy_factory_chain_with_non_ca_attestation_cert() {
+        CertChainBuilder::new_from_default_pem()
+            .unwrap()
+            .build_chain_from_base64(&invalid_ca_factory_chain())
+            .unwrap();
+    }
+
+    #[test]
+    fn rejects_legacy_factory_chain_with_invalid_signature() {
+        let mut cert_chain = invalid_ca_factory_chain();
+        let mut leaf = Base64.decode(&cert_chain[0]).unwrap();
+        *leaf.last_mut().unwrap() ^= 1;
+        cert_chain[0] = Base64.encode(leaf);
+
+        assert!(
+            CertChainBuilder::new_from_default_pem()
+                .unwrap()
+                .build_chain_from_base64(&cert_chain)
+                .is_err()
+        );
     }
 
     #[test]
