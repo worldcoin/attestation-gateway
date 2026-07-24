@@ -1,17 +1,24 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    cmp::Ordering,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use openssl::{
+    asn1::{Asn1Time, Asn1TimeRef},
+    nid::Nid,
     stack::Stack,
     x509::{
         X509, X509StoreContext, X509VerifyResult,
         store::{X509Store, X509StoreBuilder},
-        verify::X509VerifyParam,
+        verify::{X509VerifyFlags, X509VerifyParam},
     },
 };
 use thiserror::Error;
 
 use crate::android::cert_chain::{CertChain, CertChainError};
+
+const LEGACY_GOOGLE_ROOT_SERIAL: &[u8] = b"f92009e853b6b045";
 
 #[derive(Debug, Error)]
 pub enum CertChainBuilderNewError {
@@ -127,6 +134,41 @@ impl CertChainBuilder {
             .build_trusted_cert_store()
             .map_err(CertChainBuilderBuildChainError::InternalBuildTrustedCertStore)?;
 
+        let verified_cert_chain = match Self::verify_cert_chain(cert_chain, &trusted_cert_store) {
+            Ok(verified_cert_chain) => verified_cert_chain,
+            Err(CertChainBuilderBuildChainError::Verification(error, depth)) => {
+                let verification_time = Asn1Time::from_unix(verification_time())
+                    .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?;
+
+                if !legacy_factory_chain_dates_are_acceptable(cert_chain, &verification_time)
+                    .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?
+                {
+                    return Err(CertChainBuilderBuildChainError::Verification(error, depth));
+                }
+
+                let legacy_cert_store = self
+                    .build_legacy_cert_store_without_time_checks()
+                    .map_err(CertChainBuilderBuildChainError::InternalBuildTrustedCertStore)?;
+
+                match Self::verify_cert_chain(cert_chain, &legacy_cert_store) {
+                    Ok(verified_cert_chain) => verified_cert_chain,
+                    Err(CertChainBuilderBuildChainError::Verification(_, _)) => {
+                        return Err(CertChainBuilderBuildChainError::Verification(error, depth));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+
+        CertChain::from_x509(&verified_cert_chain)
+            .map_err(CertChainBuilderBuildChainError::CertChain)
+    }
+
+    fn verify_cert_chain(
+        cert_chain: &[X509],
+        trusted_cert_store: &X509Store,
+    ) -> Result<Vec<X509>, CertChainBuilderBuildChainError> {
         let (leaf_cert, intermediate_certs) = cert_chain
             .split_first()
             .ok_or(CertChainBuilderBuildChainError::EmptyChain)?;
@@ -134,7 +176,7 @@ impl CertChainBuilder {
         let mut cert_stack =
             Stack::new().map_err(|_| CertChainBuilderBuildChainError::InternalStackBuilder)?;
 
-        for cert in intermediate_certs.iter() {
+        for cert in intermediate_certs {
             cert_stack
                 .push(cert.to_owned())
                 .map_err(|_| CertChainBuilderBuildChainError::InternalStackPush)?;
@@ -144,27 +186,20 @@ impl CertChainBuilder {
             .map_err(|_| CertChainBuilderBuildChainError::InternalContextBuilder)?;
 
         let verified_cert_chain = context
-            .init(&trusted_cert_store, leaf_cert, &cert_stack, |ctx| {
+            .init(trusted_cert_store, leaf_cert, &cert_stack, |ctx| {
                 if !ctx.verify_cert()? {
                     return Ok(None);
                 }
 
-                let verified_cert_chain = ctx
+                Ok(ctx
                     .chain()
-                    .map(|stack| stack.iter().map(|c| c.to_owned()).collect::<Vec<X509>>());
-
-                Ok(verified_cert_chain)
+                    .map(|stack| stack.iter().map(|cert| cert.to_owned()).collect()))
             })
             .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?;
 
-        match verified_cert_chain {
-            Some(verified_cert_chain) => CertChain::from_x509(&verified_cert_chain)
-                .map_err(CertChainBuilderBuildChainError::CertChain),
-            None => Err(CertChainBuilderBuildChainError::Verification(
-                context.error(),
-                context.error_depth(),
-            )),
-        }
+        verified_cert_chain.ok_or_else(|| {
+            CertChainBuilderBuildChainError::Verification(context.error(), context.error_depth())
+        })
     }
 
     fn build_trusted_cert_store(
@@ -174,13 +209,7 @@ impl CertChainBuilder {
             .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::ParamBuilder)?;
 
         // Account for clock drift
-        store_param.set_time(
-            60 + SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                .cast_signed(),
-        );
+        store_param.set_time(verification_time());
 
         // TODO Throws "Missing Authority Key Identifier"
         // store_param
@@ -202,6 +231,70 @@ impl CertChainBuilder {
 
         Ok(store_builder.build())
     }
+
+    fn build_legacy_cert_store_without_time_checks(
+        &self,
+    ) -> Result<X509Store, CertChainBuilderBuildTrustedCertStoreError> {
+        let mut store_param = X509VerifyParam::new()
+            .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::ParamBuilder)?;
+
+        // Google's verifier ignores target certificate validity and expired factory-provisioned
+        // intermediates, but still rejects intermediates that are not yet valid. The latter is
+        // checked before using NO_CHECK_TIME because OpenSSL cannot disable expiration checks only.
+        store_param
+            .set_flags(X509VerifyFlags::NO_CHECK_TIME)
+            .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::ParamSetFlags)?;
+
+        let mut store_builder = X509StoreBuilder::new()
+            .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::Builder)?;
+
+        store_builder
+            .set_param(&store_param)
+            .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::Builder)?;
+
+        for trusted_cert in self
+            .trusted_certs
+            .iter()
+            .filter(|cert| is_legacy_google_root(cert))
+        {
+            store_builder
+                .add_cert(trusted_cert.to_owned())
+                .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::AddCert)?;
+        }
+
+        Ok(store_builder.build())
+    }
+}
+
+fn is_legacy_google_root(cert: &X509) -> bool {
+    cert.subject_name()
+        .entries_by_nid(Nid::SERIALNUMBER)
+        .any(|entry| entry.data().as_slice() == LEGACY_GOOGLE_ROOT_SERIAL)
+}
+
+fn verification_time() -> i64 {
+    60 + SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .cast_signed()
+}
+
+fn legacy_factory_chain_dates_are_acceptable(
+    cert_chain: &[X509],
+    verification_time: &Asn1TimeRef,
+) -> Result<bool, openssl::error::ErrorStack> {
+    let [_, attestation, intermediate, _] = cert_chain else {
+        return Ok(false);
+    };
+
+    for cert in [attestation, intermediate] {
+        if cert.not_before().compare(verification_time)? == Ordering::Greater {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 impl CertChainBuilderBuildChainError {
@@ -253,7 +346,37 @@ mod tests {
     #[allow(unused_imports)]
     use super::*;
 
-    use crate::android::intermediate_cert::IntermediateCert;
+    #[test]
+    fn identifies_only_legacy_google_root() {
+        let cert_chain_builder = CertChainBuilder::new_from_default_pem().unwrap();
+
+        assert!(is_legacy_google_root(&cert_chain_builder.trusted_certs[0]));
+        assert!(!is_legacy_google_root(&cert_chain_builder.trusted_certs[1]));
+    }
+
+    #[test]
+    fn accepts_expired_factory_chain_but_rejects_not_yet_valid_intermediates() {
+        let cert_chain_builder = CertChainBuilder::new_from_default_pem().unwrap();
+        let cert1 = "MIICvzCCAmSgAwIBAgIBATAKBggqhkjOPQQDAjApMRkwFwYDVQQFExAwNjdmOWJmMGFlNTQwNmMxMQwwCgYDVQQMDANURUUwHhcNNzAwMTAxMDAwMDAwWhcNNzAwMTAxMDAwMDAwWjAfMR0wGwYDVQQDDBRBbmRyb2lkIEtleXN0b3JlIEtleTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABI5ZUqZSIZumBF6OtNdq+Lzw4MANIrFLKCHsFeQrtNpmIGk1Uk7y0T/kFYEavMN6JfwP1WV7aBRdn9oi0Vp8ygajggGFMIIBgTALBgNVHQ8EBAMCB4AwggFPBgorBgEEAdZ5AgERBIIBPzCCATsCAQMKAQECAQQKAQEELm49NTY5NmZkM2MyYzBiMjg5MDYxNTdjOWMzMWNjMDE1YmUsYXY9NC4wLjMxMDAEADBov4MRCAIGAZ+OZmjAv4MSCAIGAZ+OZmjAv4U9CAIGAZ+OYdD4v4VFQAQ+MDwxFjAUBA1jb20ud29ybGRjb2luAgM9FRwxIgQgnSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8wgZChBTEDAgECogMCAQOjBAICAQClCDEGAgEAAgEEqgMCAQG/g3cCBQC/hT4DAgEAv4VATDBKBCBP/IgfqvstGvfdQM+6TKkEZLT1aJ739Ow6D+e3QUQGiAEBAQoBAAQgiaPWQESZuzc8T5GTBlm97rYM58em+2G7OABrJQS+qA6/hUEFAgMBhqC/hUIFAgMDFX8wHwYDVR0jBBgwFoAU263NqhXAwJF864A5G8IVYNKn7CwwCgYIKoZIzj0EAwIDSQAwRgIhAOkJ8QYZ05jFPT6lWFhQOmdncx7XYKk8bYge15W4KGXuAiEAruZlPuOmWJFIae0jwu4dDEWAlWfuhlbxcx+5C2P5sOE=".to_string();
+        let cert2 = "MIICJTCCAaugAwIBAgIKEVIgIXIgclFiJjAKBggqhkjOPQQDAjApMRkwFwYDVQQFExAyMzg3OGYwY2I5ZGU4NTFhMQwwCgYDVQQMDANURUUwHhcNMTgwNzIzMTk1NjU1WhcNMjgwNzIwMTk1NjU1WjApMRkwFwYDVQQFExAwNjdmOWJmMGFlNTQwNmMxMQwwCgYDVQQMDANURUUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASaAUmuLgzPyDyXlo/n1Ko5GCxsV/kbDM6pHG1/mntYk13RzBvcGPD05e81dA6Bp5I9tF+x3ivFThgzOWxRjgm4o4G6MIG3MB0GA1UdDgQWBBTbrc2qFcDAkXzrgDkbwhVg0qfsLDAfBgNVHSMEGDAWgBSfvF93vtFSWG6q/KH55h85D0sAPTAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwICBDBUBgNVHR8ETTBLMEmgR6BFhkNodHRwczovL2FuZHJvaWQuZ29vZ2xlYXBpcy5jb20vYXR0ZXN0YXRpb24vY3JsLzExNTIyMDIxNzIyMDcyNTE2MjI2MAoGCCqGSM49BAMCA2gAMGUCMH09uhX4RgQFw1nhCdEIQ0WhuGi094MKtr/QeWrpgUQ5tzTifvLwtPyvT1jeoLpsnAIxAPEZIs6B5ei2fK8aXhBlgqEkc4ssXg9M00WGYkNT9nPSoi2OjsuzJdfZ6Vj4lLCQLQ==".to_string();
+        let cert3 = "MIID0TCCAbmgAwIBAgIKA4gmZ2BliZaFnDANBgkqhkiG9w0BAQsFADAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MB4XDTE4MDcyMzE5NTMxMloXDTI4MDcyMDE5NTMxMlowKTEZMBcGA1UEBRMQMjM4NzhmMGNiOWRlODUxYTEMMAoGA1UEDAwDVEVFMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEw61Nd8Q51Y/OBOqzjG6a1D+qhtV3FagPuSaNJoDnxuf85fYurFG0IGQzRYVfMjzXAhfY20aWVip1W+uS6pPuBAu6HM+4T/XQAlqhQmv7t69WERv+g0GdNi9ncv7pD1n0o4G2MIGzMB0GA1UdDgQWBBSfvF93vtFSWG6q/KH55h85D0sAPTAfBgNVHSMEGDAWgBQ2YeEAfIgFCVGLRGxH/xpMyepPEjAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwICBDBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwczovL2FuZHJvaWQuZ29vZ2xlYXBpcy5jb20vYXR0ZXN0YXRpb24vY3JsL0U4RkExOTYzMTREMkZBMTgwDQYJKoZIhvcNAQELBQADggIBAGDPfqeu514zKXz9OWpD2uo2Gcbf2ULo8ywSI7Bydl73Ux5gI/s480CZpBgQTN5+hHprv+m+PzSSg+Dg689ev5b+b9Qj2zTyo23YZglHWS9V1+JoVSxNCOmA3ql5wxuLRG76UOcAKs43WMjLvvERP8e/vpOKwTuAKYG0WknJT6E5pwPfZ2cvsOIAIe7d/kVZyJbOJcHT4+anY15u7HOu9zbhYUmeOSSfh0NbjZhubIAuwWoryhLBaWTDRmLVYE9XKJQIPn36LWuaUd+gt1jPYSL9gejkfYt4jvXlqWdovVV5yKhKAMEIV6cL876qUvkNey2nr/SeMHZDznjWwTv+9ztnsyth1T+PBJfIbAdDVDcnSBWAIrbFQ3/espcSdDaDoLL4zDj05ZLEUKmdJODpDvacMF4Szpm38MRMB25+I7/N2oFwPaCfxAf4o+CjuHjyzbc+Msow1fm7rZ8qwE1EcPQTDFnY1iLOkqhxpd6T1k4bYf5uZgCSYE/G4Vu8PlUxdaXAUsn4K5VvBUm1JTDtNwngIY3BJriudjAsUd9H2WE2EmaZnpSe+FUK0LmHSCHVA6t4NtE7bLUrhGrcjwsucP7EA4Vvf++HpiLym1uhL3/4qaDR0t780zc73hzUCwzrefHN0q65wX8/Xo9DKHliJO+mJG1zaO+eRYNsRWHJdUAg".to_string();
+        let cert4 = "MIIFYDCCA0igAwIBAgIJAOj6GWMU0voYMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNVBAUTEGY5MjAwOWU4NTNiNmIwNDUwHhcNMTYwNTI2MTYyODUyWhcNMjYwNTI0MTYyODUyWjAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdSSxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggjnar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGqC4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQoVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+OJtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/EgsTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRiigHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+MRPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9EaDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5UmAGMCAwEAAaOBpjCBozAdBgNVHQ4EFgQUNmHhAHyIBQlRi0RsR/8aTMnqTxIwHwYDVR0jBBgwFoAUNmHhAHyIBQlRi0RsR/8aTMnqTxIwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cHM6Ly9hbmRyb2lkLmdvb2dsZWFwaXMuY29tL2F0dGVzdGF0aW9uL2NybC8wDQYJKoZIhvcNAQELBQADggIBACDIw41L3KlXG0aMiS//cqrG+EShHUGo8HNsw30W1kJtjn6UBwRM6jnmiwfBPb8VA91chb2vssAtX2zbTvqBJ9+LBPGCdw/E53Rbf86qhxKaiAHOjpvAy5Y3m00mqC0w/Zwvju1twb4vhLaJ5NkUJYsUS7rmJKHHBnETLi8GFqiEsqTWpG/6ibYCv7rYDBJDcR9W62BW9jfIoBQcxUCUJouMPH25lLNcDc1ssqvC2v7iUgI9LeoM1sNovqPmQUiG9rHli1vXxzCyaMTjwftkJLkf6724DFhuKug2jITV0QkXvaJWF4nUaHOTNA4uJU9WDvZLI1j83A+/xnAJUucIv/zGJ1AMH2boHqF8CY16LpsYgBt6tKxxWH00XcyDCdW2KlBCeqbQPcsFmWyWugxdcekhYsAWyoSf818NUsZdBWBaR/OukXrNLfkQ79IyZohZbvabO/X+MVT3rriAoKc8oE2Uws6DF+60PV7/WIPjNvXySdqspImSN78mflxDqwLqRBYkA3I75qppLGG9rp7UCdRjxMl8ZDBld+7yvHVgt1cVzJx9xnyGCC23UaicMDSXYrB4I4WHXPGjxhZuCuPBLTdOLU8YRvMYdEvYebWHMpvwGCF6bAx3JBpIeOQ1wDB5y0USicV3YgYGmi+NZfhA4URSh77Yd6uuJOJENRaNVTzk".to_string();
+
+        let x509_chain = [&cert1, &cert2, &cert3, &cert4]
+            .map(|cert| X509::from_der(&Base64.decode(cert).unwrap()).unwrap());
+
+        assert!(
+            !legacy_factory_chain_dates_are_acceptable(
+                &x509_chain,
+                Asn1Time::from_unix(0).unwrap().as_ref(),
+            )
+            .unwrap()
+        );
+
+        cert_chain_builder
+            .build_chain_from_base64(&[cert1, cert2, cert3, cert4])
+            .unwrap();
+    }
 
     #[test]
     fn test_certificate_order1() {
@@ -287,12 +410,12 @@ mod tests {
             cert_chain1
                 .intermediate_certs()
                 .iter()
-                .map(IntermediateCert::serial)
+                .map(|cert| cert.serial())
                 .collect::<Vec<_>>(),
             cert_chain2
                 .intermediate_certs()
                 .iter()
-                .map(IntermediateCert::serial)
+                .map(|cert| cert.serial())
                 .collect::<Vec<_>>()
         );
         assert_eq!(
