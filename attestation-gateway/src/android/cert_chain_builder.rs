@@ -457,6 +457,10 @@ mod tests {
             .unwrap();
     }
 
+    /// Serial of the 2016 legacy Google attestation root, which both fixtures terminate at.
+    #[allow(dead_code)]
+    const LEGACY_GOOGLE_ROOT_SERIAL_HEX: &str = "e8fa196314d2fa18";
+
     /// Sony SOV37 chain whose factory attestation certificate is marked CA:FALSE.
     #[allow(dead_code)]
     const LEGACY_NON_CA_INTERMEDIATE_CHAIN: [&str; 4] = [
@@ -498,9 +502,30 @@ mod tests {
         // OpenSSL rejects this chain with "invalid CA certificate at depth 1" because the
         // factory attestation certificate is marked CA:FALSE. Google's verifier does not look
         // at basicConstraints, and every link is signed correctly up to the pinned root.
-        cert_chain_builder
+        assert!(
+            cert_chain_builder
+                .legacy_chain_matches_google_rules(&decode_chain(&LEGACY_NON_CA_INTERMEDIATE_CHAIN))
+                .unwrap()
+        );
+
+        let cert_chain = cert_chain_builder
             .build_chain_from_base64(&LEGACY_NON_CA_INTERMEDIATE_CHAIN.map(str::to_string))
             .unwrap();
+
+        // Pin what was accepted, not just that nothing errored: the chain must still be ordered
+        // leaf to root and must terminate at the legacy Google root.
+        assert_eq!(
+            cert_chain.root_cert().serial().hex,
+            LEGACY_GOOGLE_ROOT_SERIAL_HEX
+        );
+        assert_eq!(
+            cert_chain.root_cert().serial().issued_to,
+            vec![String::from_utf8_lossy(LEGACY_GOOGLE_ROOT_SERIAL).to_string()],
+        );
+        assert_eq!(
+            cert_chain.device_cert().serial().issued_to,
+            vec!["5a75218acd7a00f8".to_string()],
+        );
     }
 
     #[test]
@@ -511,11 +536,28 @@ mod tests {
         // marks the whole certificate invalid and reports a missing issuer at depth 0, even
         // though the issuer is present in the chain. We never read that extension; revocation
         // is checked against Google's status list instead.
-        cert_chain_builder
+        assert!(
+            cert_chain_builder
+                .legacy_chain_matches_google_rules(&decode_chain(
+                    &LEGACY_UNPARSABLE_CRL_DISTRIBUTION_POINT_CHAIN,
+                ))
+                .unwrap()
+        );
+
+        let cert_chain = cert_chain_builder
             .build_chain_from_base64(
                 &LEGACY_UNPARSABLE_CRL_DISTRIBUTION_POINT_CHAIN.map(str::to_string),
             )
             .unwrap();
+
+        assert_eq!(
+            cert_chain.root_cert().serial().hex,
+            LEGACY_GOOGLE_ROOT_SERIAL_HEX
+        );
+        assert_eq!(
+            cert_chain.device_cert().serial().issued_to,
+            vec!["c96f4c8b375fea84".to_string()],
+        );
     }
 
     #[test]
