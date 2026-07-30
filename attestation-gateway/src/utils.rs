@@ -288,17 +288,18 @@ impl BundleIdentifier {
         match self {
             Self::ComWorldcoin
             | Self::ComWorldcoinStaging
-            | Self::ComWorldcoinSandbox
             | Self::OrgWorldId
             | Self::OrgWorldIdStaging => {
                 // cspell:disable-next-line
                 Some(&["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"])
             }
-            Self::OrgWorldIdSandbox => Some(&[
+            Self::ComWorldcoinSandbox | Self::OrgWorldIdSandbox => Some(&[
                 // cspell:disable-next-line
                 "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
                 // cspell:disable-next-line
                 "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ",
+                // cspell:disable-next-line
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
             ]),
             Self::ComWorldcoinDev | Self::OrgWorldIdDev => Some(&["6a6a1474b5cbbb2b1aa57e0bc3"]),
             Self::OrgWorldcoinInsight
@@ -320,13 +321,14 @@ impl BundleIdentifier {
         match self {
             Self::ComWorldcoin
             | Self::ComWorldcoinStaging
-            | Self::ComWorldcoinSandbox
             | Self::OrgWorldId
             | Self::OrgWorldIdStaging => Some(&["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="]),
-            Self::OrgWorldIdSandbox => Some(&[
+            Self::ComWorldcoinSandbox | Self::OrgWorldIdSandbox => Some(&[
                 "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
                 // cspell:disable-next-line
                 "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ=",
+                // cspell:disable-next-line
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
             ]),
             Self::ComWorldcoinDev | Self::OrgWorldIdDev => {
                 Some(&["o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="])
@@ -1145,31 +1147,36 @@ mod tests {
     }
 
     #[test]
-    fn org_world_id_sandbox_accepts_both_android_cert_digests() {
-        let bundle = BundleIdentifier::OrgWorldIdSandbox;
-        assert_eq!(
-            bundle.android_certificate_sha256_digest(),
-            Some(
-                [
-                    // cspell:disable-next-line
-                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
-                    // cspell:disable-next-line
-                    "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ",
-                ]
-                .as_slice()
-            )
-        );
-        assert_eq!(
-            bundle.android_certificate_sha256_digest_base64(),
-            Some(
-                [
-                    "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
-                    // cspell:disable-next-line
-                    "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ=",
-                ]
-                .as_slice()
-            )
-        );
+    fn sandbox_accepts_all_android_cert_digests() {
+        let expected_digests = [
+            // cspell:disable-next-line
+            "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
+            // cspell:disable-next-line
+            "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ",
+            // cspell:disable-next-line
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+        ];
+        let expected_digests_base64 = [
+            "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
+            // cspell:disable-next-line
+            "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ=",
+            // cspell:disable-next-line
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
+        ];
+
+        for bundle in [
+            BundleIdentifier::ComWorldcoinSandbox,
+            BundleIdentifier::OrgWorldIdSandbox,
+        ] {
+            assert_eq!(
+                bundle.android_certificate_sha256_digest(),
+                Some(expected_digests.as_slice())
+            );
+            assert_eq!(
+                bundle.android_certificate_sha256_digest_base64(),
+                Some(expected_digests_base64.as_slice())
+            );
+        }
     }
 
     #[test]
