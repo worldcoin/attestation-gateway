@@ -148,9 +148,12 @@ impl SessionCertError {
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::AttestationParsing(_) | Self::Serial(_) => false,
-            Self::DerEncoding | Self::DerDecoding => true,
-            Self::AttestationExtraction | Self::MissingAttestation => false,
+            Self::DerEncoding => true,
+            Self::DerDecoding
+            | Self::AttestationParsing(_)
+            | Self::AttestationExtraction
+            | Self::MissingAttestation
+            | Self::Serial(_) => false,
         }
     }
 }
