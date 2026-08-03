@@ -1,17 +1,24 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    cmp::Ordering,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use openssl::{
+    asn1::{Asn1Time, Asn1TimeRef},
+    nid::Nid,
     stack::Stack,
     x509::{
         X509, X509StoreContext, X509VerifyResult,
         store::{X509Store, X509StoreBuilder},
-        verify::X509VerifyParam,
+        verify::{X509VerifyFlags, X509VerifyParam},
     },
 };
 use thiserror::Error;
 
 use crate::android::cert_chain::{CertChain, CertChainError};
+
+const LEGACY_GOOGLE_ROOT_SERIAL: &[u8] = b"f92009e853b6b045";
 
 #[derive(Debug, Error)]
 pub enum CertChainBuilderNewError {
@@ -127,6 +134,54 @@ impl CertChainBuilder {
             .build_trusted_cert_store()
             .map_err(CertChainBuilderBuildChainError::InternalBuildTrustedCertStore)?;
 
+        let verified_cert_chain = match Self::verify_cert_chain(cert_chain, &trusted_cert_store) {
+            Ok(verified_cert_chain) => verified_cert_chain,
+            Err(CertChainBuilderBuildChainError::Verification(error, depth)) => {
+                let verification_time = Asn1Time::from_unix(verification_time())
+                    .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?;
+
+                if !legacy_factory_chain_dates_are_acceptable(cert_chain, &verification_time)
+                    .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?
+                {
+                    return Err(CertChainBuilderBuildChainError::Verification(error, depth));
+                }
+
+                let legacy_cert_store = self
+                    .build_legacy_cert_store_without_time_checks()
+                    .map_err(CertChainBuilderBuildChainError::InternalBuildTrustedCertStore)?;
+
+                match Self::verify_cert_chain(cert_chain, &legacy_cert_store) {
+                    Ok(verified_cert_chain) => verified_cert_chain,
+                    Err(CertChainBuilderBuildChainError::Verification(_, _)) => {
+                        // Some factory-provisioned devices ship an attestation certificate
+                        // marked CA:FALSE, and some ship a leaf whose CRL distribution point
+                        // does not parse. OpenSSL treats both as fatal; Google's verifier
+                        // looks at neither. Fall back to Google's rule set for these chains.
+                        if !self
+                            .legacy_chain_matches_google_rules(cert_chain)
+                            .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?
+                        {
+                            return Err(CertChainBuilderBuildChainError::Verification(
+                                error, depth,
+                            ));
+                        }
+
+                        cert_chain.to_vec()
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+
+        CertChain::from_x509(&verified_cert_chain)
+            .map_err(CertChainBuilderBuildChainError::CertChain)
+    }
+
+    fn verify_cert_chain(
+        cert_chain: &[X509],
+        trusted_cert_store: &X509Store,
+    ) -> Result<Vec<X509>, CertChainBuilderBuildChainError> {
         let (leaf_cert, intermediate_certs) = cert_chain
             .split_first()
             .ok_or(CertChainBuilderBuildChainError::EmptyChain)?;
@@ -134,7 +189,7 @@ impl CertChainBuilder {
         let mut cert_stack =
             Stack::new().map_err(|_| CertChainBuilderBuildChainError::InternalStackBuilder)?;
 
-        for cert in intermediate_certs.iter() {
+        for cert in intermediate_certs {
             cert_stack
                 .push(cert.to_owned())
                 .map_err(|_| CertChainBuilderBuildChainError::InternalStackPush)?;
@@ -144,27 +199,20 @@ impl CertChainBuilder {
             .map_err(|_| CertChainBuilderBuildChainError::InternalContextBuilder)?;
 
         let verified_cert_chain = context
-            .init(&trusted_cert_store, leaf_cert, &cert_stack, |ctx| {
+            .init(trusted_cert_store, leaf_cert, &cert_stack, |ctx| {
                 if !ctx.verify_cert()? {
                     return Ok(None);
                 }
 
-                let verified_cert_chain = ctx
+                Ok(ctx
                     .chain()
-                    .map(|stack| stack.iter().map(|c| c.to_owned()).collect::<Vec<X509>>());
-
-                Ok(verified_cert_chain)
+                    .map(|stack| stack.iter().map(|cert| cert.to_owned()).collect()))
             })
             .map_err(|_| CertChainBuilderBuildChainError::InternalContextVerify)?;
 
-        match verified_cert_chain {
-            Some(verified_cert_chain) => CertChain::from_x509(&verified_cert_chain)
-                .map_err(CertChainBuilderBuildChainError::CertChain),
-            None => Err(CertChainBuilderBuildChainError::Verification(
-                context.error(),
-                context.error_depth(),
-            )),
-        }
+        verified_cert_chain.ok_or_else(|| {
+            CertChainBuilderBuildChainError::Verification(context.error(), context.error_depth())
+        })
     }
 
     fn build_trusted_cert_store(
@@ -174,13 +222,7 @@ impl CertChainBuilder {
             .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::ParamBuilder)?;
 
         // Account for clock drift
-        store_param.set_time(
-            60 + SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                .cast_signed(),
-        );
+        store_param.set_time(verification_time());
 
         // TODO Throws "Missing Authority Key Identifier"
         // store_param
@@ -202,6 +244,133 @@ impl CertChainBuilder {
 
         Ok(store_builder.build())
     }
+
+    /// Validates a legacy factory-provisioned chain the way Google's own
+    /// `KeyAttestationCertPathValidator` does: canonical issuer to subject name chaining, a
+    /// signature check on every link, and a terminal certificate pinned by public key.
+    ///
+    /// It deliberately ignores `basicConstraints`, `keyUsage` and CRL distribution points.
+    /// Google checks none of the three, and enough factory-provisioned devices encode them
+    /// incorrectly that OpenSSL's RFC 5280 path validation locks those devices out for good.
+    /// Certificate validity is not re-checked here because the caller has already accepted the
+    /// chain's dates through [`legacy_factory_chain_dates_are_acceptable`].
+    ///
+    /// This is only reachable for chains that terminate at the pinned legacy Google root, and
+    /// [`CertChain::from_x509`] still rejects an attestation extension on any certificate below
+    /// the leaf, which is what prevents a caller extending the chain with a forged leaf.
+    fn legacy_chain_matches_google_rules(
+        &self,
+        cert_chain: &[X509],
+    ) -> Result<bool, openssl::error::ErrorStack> {
+        let Some((root_cert, issued_certs)) = cert_chain.split_last() else {
+            return Ok(false);
+        };
+
+        if issued_certs.is_empty() || !self.is_pinned_legacy_root(root_cert)? {
+            return Ok(false);
+        }
+
+        for certs in cert_chain.windows(2) {
+            let [cert, issuer] = certs else {
+                return Ok(false);
+            };
+
+            if cert.issuer_name().try_cmp(issuer.subject_name())? != Ordering::Equal {
+                return Ok(false);
+            }
+
+            let issuer_public_key = issuer.public_key()?;
+
+            if !cert.verify(&issuer_public_key)? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Matches a certificate against the pinned legacy Google root by public key rather than by
+    /// name, so that a chain terminating in one of Google's previously issued root certificates
+    /// is accepted while a look-alike self-signed certificate is not.
+    fn is_pinned_legacy_root(&self, cert: &X509) -> Result<bool, openssl::error::ErrorStack> {
+        let cert_public_key = cert.public_key()?.public_key_to_der()?;
+
+        for trusted_cert in self
+            .trusted_certs
+            .iter()
+            .filter(|trusted_cert| is_legacy_google_root(trusted_cert))
+        {
+            if trusted_cert.public_key()?.public_key_to_der()? == cert_public_key {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn build_legacy_cert_store_without_time_checks(
+        &self,
+    ) -> Result<X509Store, CertChainBuilderBuildTrustedCertStoreError> {
+        let mut store_param = X509VerifyParam::new()
+            .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::ParamBuilder)?;
+
+        // Google's verifier ignores target certificate validity and expired factory-provisioned
+        // intermediates, but still rejects intermediates that are not yet valid. The latter is
+        // checked before using NO_CHECK_TIME because OpenSSL cannot disable expiration checks only.
+        store_param
+            .set_flags(X509VerifyFlags::NO_CHECK_TIME)
+            .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::ParamSetFlags)?;
+
+        let mut store_builder = X509StoreBuilder::new()
+            .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::Builder)?;
+
+        store_builder
+            .set_param(&store_param)
+            .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::Builder)?;
+
+        for trusted_cert in self
+            .trusted_certs
+            .iter()
+            .filter(|cert| is_legacy_google_root(cert))
+        {
+            store_builder
+                .add_cert(trusted_cert.to_owned())
+                .map_err(|_| CertChainBuilderBuildTrustedCertStoreError::AddCert)?;
+        }
+
+        Ok(store_builder.build())
+    }
+}
+
+fn is_legacy_google_root(cert: &X509) -> bool {
+    cert.subject_name()
+        .entries_by_nid(Nid::SERIALNUMBER)
+        .any(|entry| entry.data().as_slice() == LEGACY_GOOGLE_ROOT_SERIAL)
+}
+
+fn verification_time() -> i64 {
+    60 + SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .cast_signed()
+}
+
+fn legacy_factory_chain_dates_are_acceptable(
+    cert_chain: &[X509],
+    verification_time: &Asn1TimeRef,
+) -> Result<bool, openssl::error::ErrorStack> {
+    let [_, attestation, intermediate, _] = cert_chain else {
+        return Ok(false);
+    };
+
+    for cert in [attestation, intermediate] {
+        if cert.not_before().compare(verification_time)? == Ordering::Greater {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 impl CertChainBuilderBuildChainError {
@@ -253,7 +422,192 @@ mod tests {
     #[allow(unused_imports)]
     use super::*;
 
-    use crate::android::intermediate_cert::IntermediateCert;
+    #[allow(unused_imports)]
+    use crate::android::intermediate_cert::IntermediateCertError;
+
+    #[test]
+    fn identifies_only_legacy_google_root() {
+        let cert_chain_builder = CertChainBuilder::new_from_default_pem().unwrap();
+
+        assert!(is_legacy_google_root(&cert_chain_builder.trusted_certs[0]));
+        assert!(!is_legacy_google_root(&cert_chain_builder.trusted_certs[1]));
+    }
+
+    #[test]
+    fn accepts_expired_factory_chain_but_rejects_not_yet_valid_intermediates() {
+        let cert_chain_builder = CertChainBuilder::new_from_default_pem().unwrap();
+        let cert1 = "MIICvzCCAmSgAwIBAgIBATAKBggqhkjOPQQDAjApMRkwFwYDVQQFExAwNjdmOWJmMGFlNTQwNmMxMQwwCgYDVQQMDANURUUwHhcNNzAwMTAxMDAwMDAwWhcNNzAwMTAxMDAwMDAwWjAfMR0wGwYDVQQDDBRBbmRyb2lkIEtleXN0b3JlIEtleTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABI5ZUqZSIZumBF6OtNdq+Lzw4MANIrFLKCHsFeQrtNpmIGk1Uk7y0T/kFYEavMN6JfwP1WV7aBRdn9oi0Vp8ygajggGFMIIBgTALBgNVHQ8EBAMCB4AwggFPBgorBgEEAdZ5AgERBIIBPzCCATsCAQMKAQECAQQKAQEELm49NTY5NmZkM2MyYzBiMjg5MDYxNTdjOWMzMWNjMDE1YmUsYXY9NC4wLjMxMDAEADBov4MRCAIGAZ+OZmjAv4MSCAIGAZ+OZmjAv4U9CAIGAZ+OYdD4v4VFQAQ+MDwxFjAUBA1jb20ud29ybGRjb2luAgM9FRwxIgQgnSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8wgZChBTEDAgECogMCAQOjBAICAQClCDEGAgEAAgEEqgMCAQG/g3cCBQC/hT4DAgEAv4VATDBKBCBP/IgfqvstGvfdQM+6TKkEZLT1aJ739Ow6D+e3QUQGiAEBAQoBAAQgiaPWQESZuzc8T5GTBlm97rYM58em+2G7OABrJQS+qA6/hUEFAgMBhqC/hUIFAgMDFX8wHwYDVR0jBBgwFoAU263NqhXAwJF864A5G8IVYNKn7CwwCgYIKoZIzj0EAwIDSQAwRgIhAOkJ8QYZ05jFPT6lWFhQOmdncx7XYKk8bYge15W4KGXuAiEAruZlPuOmWJFIae0jwu4dDEWAlWfuhlbxcx+5C2P5sOE=".to_string();
+        let cert2 = "MIICJTCCAaugAwIBAgIKEVIgIXIgclFiJjAKBggqhkjOPQQDAjApMRkwFwYDVQQFExAyMzg3OGYwY2I5ZGU4NTFhMQwwCgYDVQQMDANURUUwHhcNMTgwNzIzMTk1NjU1WhcNMjgwNzIwMTk1NjU1WjApMRkwFwYDVQQFExAwNjdmOWJmMGFlNTQwNmMxMQwwCgYDVQQMDANURUUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASaAUmuLgzPyDyXlo/n1Ko5GCxsV/kbDM6pHG1/mntYk13RzBvcGPD05e81dA6Bp5I9tF+x3ivFThgzOWxRjgm4o4G6MIG3MB0GA1UdDgQWBBTbrc2qFcDAkXzrgDkbwhVg0qfsLDAfBgNVHSMEGDAWgBSfvF93vtFSWG6q/KH55h85D0sAPTAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwICBDBUBgNVHR8ETTBLMEmgR6BFhkNodHRwczovL2FuZHJvaWQuZ29vZ2xlYXBpcy5jb20vYXR0ZXN0YXRpb24vY3JsLzExNTIyMDIxNzIyMDcyNTE2MjI2MAoGCCqGSM49BAMCA2gAMGUCMH09uhX4RgQFw1nhCdEIQ0WhuGi094MKtr/QeWrpgUQ5tzTifvLwtPyvT1jeoLpsnAIxAPEZIs6B5ei2fK8aXhBlgqEkc4ssXg9M00WGYkNT9nPSoi2OjsuzJdfZ6Vj4lLCQLQ==".to_string();
+        let cert3 = "MIID0TCCAbmgAwIBAgIKA4gmZ2BliZaFnDANBgkqhkiG9w0BAQsFADAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MB4XDTE4MDcyMzE5NTMxMloXDTI4MDcyMDE5NTMxMlowKTEZMBcGA1UEBRMQMjM4NzhmMGNiOWRlODUxYTEMMAoGA1UEDAwDVEVFMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEw61Nd8Q51Y/OBOqzjG6a1D+qhtV3FagPuSaNJoDnxuf85fYurFG0IGQzRYVfMjzXAhfY20aWVip1W+uS6pPuBAu6HM+4T/XQAlqhQmv7t69WERv+g0GdNi9ncv7pD1n0o4G2MIGzMB0GA1UdDgQWBBSfvF93vtFSWG6q/KH55h85D0sAPTAfBgNVHSMEGDAWgBQ2YeEAfIgFCVGLRGxH/xpMyepPEjAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwICBDBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwczovL2FuZHJvaWQuZ29vZ2xlYXBpcy5jb20vYXR0ZXN0YXRpb24vY3JsL0U4RkExOTYzMTREMkZBMTgwDQYJKoZIhvcNAQELBQADggIBAGDPfqeu514zKXz9OWpD2uo2Gcbf2ULo8ywSI7Bydl73Ux5gI/s480CZpBgQTN5+hHprv+m+PzSSg+Dg689ev5b+b9Qj2zTyo23YZglHWS9V1+JoVSxNCOmA3ql5wxuLRG76UOcAKs43WMjLvvERP8e/vpOKwTuAKYG0WknJT6E5pwPfZ2cvsOIAIe7d/kVZyJbOJcHT4+anY15u7HOu9zbhYUmeOSSfh0NbjZhubIAuwWoryhLBaWTDRmLVYE9XKJQIPn36LWuaUd+gt1jPYSL9gejkfYt4jvXlqWdovVV5yKhKAMEIV6cL876qUvkNey2nr/SeMHZDznjWwTv+9ztnsyth1T+PBJfIbAdDVDcnSBWAIrbFQ3/espcSdDaDoLL4zDj05ZLEUKmdJODpDvacMF4Szpm38MRMB25+I7/N2oFwPaCfxAf4o+CjuHjyzbc+Msow1fm7rZ8qwE1EcPQTDFnY1iLOkqhxpd6T1k4bYf5uZgCSYE/G4Vu8PlUxdaXAUsn4K5VvBUm1JTDtNwngIY3BJriudjAsUd9H2WE2EmaZnpSe+FUK0LmHSCHVA6t4NtE7bLUrhGrcjwsucP7EA4Vvf++HpiLym1uhL3/4qaDR0t780zc73hzUCwzrefHN0q65wX8/Xo9DKHliJO+mJG1zaO+eRYNsRWHJdUAg".to_string();
+        let cert4 = "MIIFYDCCA0igAwIBAgIJAOj6GWMU0voYMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNVBAUTEGY5MjAwOWU4NTNiNmIwNDUwHhcNMTYwNTI2MTYyODUyWhcNMjYwNTI0MTYyODUyWjAbMRkwFwYDVQQFExBmOTIwMDllODUzYjZiMDQ1MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAr7bHgiuxpwHsK7Qui8xUFmOr75gvMsd/dTEDDJdSSxtf6An7xyqpRR90PL2abxM1dEqlXnf2tqw1Ne4Xwl5jlRfdnJLmN0pTy/4lj4/7tv0Sk3iiKkypnEUtR6WfMgH0QZfKHM1+di+y9TFRtv6y//0rb+T+W8a9nsNL/ggjnar86461qO0rOs2cXjp3kOG1FEJ5MVmFmBGtnrKpa73XpXyTqRxB/M0n1n/W9nGqC4FSYa04T6N5RIZGBN2z2MT5IKGbFlbC8UrW0DxW7AYImQQcHtGl/m00QLVWutHQoVJYnFPlXTcHYvASLu+RhhsbDmxMgJJ0mcDpvsC4PjvB+TxywElgS70vE0XmLD+OJtvsBslHZvPBKCOdT0MS+tgSOIfga+z1Z1g7+DVagf7quvmag8jfPioyKvxnK/EgsTUVi2ghzq8wm27ud/mIM7AY2qEORR8Go3TVB4HzWQgpZrt3i5MIlCaY504LzSRiigHCzAPlHws+W0rB5N+er5/2pJKnfBSDiCiFAVtCLOZ7gLiMm0jhO2B6tUXHI/+MRPjy02i59lINMRRev56GKtcd9qO/0kUJWdZTdA2XoS82ixPvZtXQpUpuL12ab+9EaDK8Z4RHJYYfCT3Q5vNAXaiWQ+8PTWm2QgBR/bkwSWc+NpUFgNPN9PvQi8WEg5UmAGMCAwEAAaOBpjCBozAdBgNVHQ4EFgQUNmHhAHyIBQlRi0RsR/8aTMnqTxIwHwYDVR0jBBgwFoAUNmHhAHyIBQlRi0RsR/8aTMnqTxIwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cHM6Ly9hbmRyb2lkLmdvb2dsZWFwaXMuY29tL2F0dGVzdGF0aW9uL2NybC8wDQYJKoZIhvcNAQELBQADggIBACDIw41L3KlXG0aMiS//cqrG+EShHUGo8HNsw30W1kJtjn6UBwRM6jnmiwfBPb8VA91chb2vssAtX2zbTvqBJ9+LBPGCdw/E53Rbf86qhxKaiAHOjpvAy5Y3m00mqC0w/Zwvju1twb4vhLaJ5NkUJYsUS7rmJKHHBnETLi8GFqiEsqTWpG/6ibYCv7rYDBJDcR9W62BW9jfIoBQcxUCUJouMPH25lLNcDc1ssqvC2v7iUgI9LeoM1sNovqPmQUiG9rHli1vXxzCyaMTjwftkJLkf6724DFhuKug2jITV0QkXvaJWF4nUaHOTNA4uJU9WDvZLI1j83A+/xnAJUucIv/zGJ1AMH2boHqF8CY16LpsYgBt6tKxxWH00XcyDCdW2KlBCeqbQPcsFmWyWugxdcekhYsAWyoSf818NUsZdBWBaR/OukXrNLfkQ79IyZohZbvabO/X+MVT3rriAoKc8oE2Uws6DF+60PV7/WIPjNvXySdqspImSN78mflxDqwLqRBYkA3I75qppLGG9rp7UCdRjxMl8ZDBld+7yvHVgt1cVzJx9xnyGCC23UaicMDSXYrB4I4WHXPGjxhZuCuPBLTdOLU8YRvMYdEvYebWHMpvwGCF6bAx3JBpIeOQ1wDB5y0USicV3YgYGmi+NZfhA4URSh77Yd6uuJOJENRaNVTzk".to_string();
+
+        let x509_chain = [&cert1, &cert2, &cert3, &cert4]
+            .map(|cert| X509::from_der(&Base64.decode(cert).unwrap()).unwrap());
+
+        assert!(
+            !legacy_factory_chain_dates_are_acceptable(
+                &x509_chain,
+                Asn1Time::from_unix(0).unwrap().as_ref(),
+            )
+            .unwrap()
+        );
+
+        cert_chain_builder
+            .build_chain_from_base64(&[cert1, cert2, cert3, cert4])
+            .unwrap();
+    }
+
+    /// Serial of the 2016 legacy Google attestation root, which both fixtures terminate at.
+    #[allow(dead_code)]
+    const LEGACY_GOOGLE_ROOT_SERIAL_HEX: &str = "e8fa196314d2fa18";
+
+    /// Sony SOV37 chain whose factory attestation certificate is marked CA:FALSE.
+    #[allow(dead_code)]
+    const LEGACY_NON_CA_INTERMEDIATE_CHAIN: [&str; 4] = [
+        "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",
+    ];
+
+    /// Huawei JKM-LX3 chain whose leaf carries a CRL distribution point that does not parse.
+    #[allow(dead_code)]
+    const LEGACY_UNPARSABLE_CRL_DISTRIBUTION_POINT_CHAIN: [&str; 4] = [
+        "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",
+    ];
+
+    /// Xiaomi Mi A1 chain that terminates at the AOSP software attestation root.
+    #[allow(dead_code)]
+    const SOFTWARE_ATTESTATION_ROOT_CHAIN: [&str; 3] = [
+        "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",
+    ];
+
+    #[allow(dead_code)]
+    fn decode_chain(chain: &[&str]) -> Vec<X509> {
+        chain
+            .iter()
+            .map(|cert| X509::from_der(&Base64.decode(cert).unwrap()).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn accepts_legacy_factory_chain_with_non_ca_attestation_certificate() {
+        let cert_chain_builder = CertChainBuilder::new_from_default_pem().unwrap();
+
+        // OpenSSL rejects this chain with "invalid CA certificate at depth 1" because the
+        // factory attestation certificate is marked CA:FALSE. Google's verifier does not look
+        // at basicConstraints, and every link is signed correctly up to the pinned root.
+        assert!(
+            cert_chain_builder
+                .legacy_chain_matches_google_rules(&decode_chain(&LEGACY_NON_CA_INTERMEDIATE_CHAIN))
+                .unwrap()
+        );
+
+        let cert_chain = cert_chain_builder
+            .build_chain_from_base64(&LEGACY_NON_CA_INTERMEDIATE_CHAIN.map(str::to_string))
+            .unwrap();
+
+        // Pin what was accepted, not just that nothing errored: the chain must still be ordered
+        // leaf to root and must terminate at the legacy Google root.
+        assert_eq!(
+            cert_chain.root_cert().serial().hex,
+            LEGACY_GOOGLE_ROOT_SERIAL_HEX
+        );
+        assert_eq!(
+            cert_chain.root_cert().serial().issued_to,
+            vec![String::from_utf8_lossy(LEGACY_GOOGLE_ROOT_SERIAL).to_string()],
+        );
+        assert_eq!(
+            cert_chain.device_cert().serial().issued_to,
+            vec!["5a75218acd7a00f8".to_string()],
+        );
+    }
+
+    #[test]
+    fn accepts_legacy_factory_chain_with_unparsable_crl_distribution_point() {
+        let cert_chain_builder = CertChainBuilder::new_from_default_pem().unwrap();
+
+        // The leaf carries a CRL distribution point whose value is a single zero byte. OpenSSL
+        // marks the whole certificate invalid and reports a missing issuer at depth 0, even
+        // though the issuer is present in the chain. We never read that extension; revocation
+        // is checked against Google's status list instead.
+        assert!(
+            cert_chain_builder
+                .legacy_chain_matches_google_rules(&decode_chain(
+                    &LEGACY_UNPARSABLE_CRL_DISTRIBUTION_POINT_CHAIN,
+                ))
+                .unwrap()
+        );
+
+        let cert_chain = cert_chain_builder
+            .build_chain_from_base64(
+                &LEGACY_UNPARSABLE_CRL_DISTRIBUTION_POINT_CHAIN.map(str::to_string),
+            )
+            .unwrap();
+
+        assert_eq!(
+            cert_chain.root_cert().serial().hex,
+            LEGACY_GOOGLE_ROOT_SERIAL_HEX
+        );
+        assert_eq!(
+            cert_chain.device_cert().serial().issued_to,
+            vec!["c96f4c8b375fea84".to_string()],
+        );
+    }
+
+    #[test]
+    fn google_rules_fallback_rejects_chains_that_do_not_reach_the_pinned_root() {
+        let cert_chain_builder = CertChainBuilder::new_from_default_pem().unwrap();
+        let cert_chain = decode_chain(&SOFTWARE_ATTESTATION_ROOT_CHAIN);
+
+        // Every link in this chain is internally consistent, so root pinning is the only thing
+        // rejecting it. The software attestation root's private key ships in AOSP, so accepting
+        // it would make attestation forgeable by anyone.
+        assert!(
+            !cert_chain_builder
+                .legacy_chain_matches_google_rules(&cert_chain)
+                .unwrap()
+        );
+
+        assert!(
+            cert_chain_builder
+                .build_chain_from_base64(&SOFTWARE_ATTESTATION_ROOT_CHAIN.map(str::to_string))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_chain_carrying_an_attestation_extension_below_the_leaf() {
+        // The Google rules fallback no longer relies on basicConstraints to stop a caller
+        // extending a chain with a forged leaf, so the guard that only the leaf may carry an
+        // attestation extension has to hold on its own.
+        let cert_chain = decode_chain(&LEGACY_NON_CA_INTERMEDIATE_CHAIN);
+        let [leaf, attestation, intermediate, root] = cert_chain.as_slice() else {
+            panic!("fixture should contain four certificates");
+        };
+
+        let extended_chain = [
+            leaf.clone(),
+            leaf.clone(),
+            attestation.clone(),
+            intermediate.clone(),
+            root.clone(),
+        ];
+
+        let error = CertChain::from_x509(&extended_chain)
+            .err()
+            .expect("an attestation extension below the leaf must be rejected");
+
+        assert!(matches!(
+            error,
+            CertChainError::IntermediateCert(IntermediateCertError::AttestationPresent)
+        ));
+    }
 
     #[test]
     fn test_certificate_order1() {
@@ -272,6 +626,9 @@ mod tests {
             .build_chain_from_base64(&[cert1.clone(), cert3.clone(), cert2.clone()])
             .unwrap();
 
+        assert!(cert_chain1.has_strong_box_chain_shape());
+        assert!(cert_chain2.has_strong_box_chain_shape());
+
         assert_eq!(
             cert_chain1.session_cert().serial(),
             cert_chain2.session_cert().serial()
@@ -284,12 +641,12 @@ mod tests {
             cert_chain1
                 .intermediate_certs()
                 .iter()
-                .map(IntermediateCert::serial)
+                .map(|cert| cert.serial())
                 .collect::<Vec<_>>(),
             cert_chain2
                 .intermediate_certs()
                 .iter()
-                .map(IntermediateCert::serial)
+                .map(|cert| cert.serial())
                 .collect::<Vec<_>>()
         );
         assert_eq!(

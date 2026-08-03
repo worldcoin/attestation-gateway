@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::{env, fmt::Display, time::SystemTime};
 use uuid::Uuid;
 
-static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_secs(60 * 10);
+static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_mins(10);
 
 /// A Play Integrity response-encryption key pair (the self-managed "download my keys" pair):
 /// the outer JWE decryption key (AES-256, base64) and the inner JWS verification key (EC, base64).
@@ -279,20 +279,29 @@ impl BundleIdentifier {
         }
     }
 
-    /// Expected app signing-certificate digest (hex) for Android Play Integrity (`POST /g`).
+    /// Expected app signing-certificate digest(s) (hex) for Android Play Integrity (`POST /g`).
+    ///
+    /// Returns all digests accepted for the bundle identifier; a response listing any one of
+    /// them is considered valid.
     #[must_use]
-    pub const fn android_certificate_sha256_digest(&self) -> Option<&str> {
+    pub const fn android_certificate_sha256_digest(&self) -> Option<&'static [&'static str]> {
         match self {
             Self::ComWorldcoin
             | Self::ComWorldcoinStaging
-            | Self::ComWorldcoinSandbox
             | Self::OrgWorldId
-            | Self::OrgWorldIdStaging
-            | Self::OrgWorldIdSandbox => {
+            | Self::OrgWorldIdStaging => {
                 // cspell:disable-next-line
-                Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
+                Some(&["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"])
             }
-            Self::ComWorldcoinDev | Self::OrgWorldIdDev => Some("6a6a1474b5cbbb2b1aa57e0bc3"),
+            Self::ComWorldcoinSandbox | Self::OrgWorldIdSandbox => Some(&[
+                // cspell:disable-next-line
+                "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
+                // cspell:disable-next-line
+                "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ",
+                // cspell:disable-next-line
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+            ]),
+            Self::ComWorldcoinDev | Self::OrgWorldIdDev => Some(&["6a6a1474b5cbbb2b1aa57e0bc3"]),
             Self::OrgWorldcoinInsight
             | Self::OrgWorldcoinInsightStaging
             | Self::OrgWorldcoinInsightSandbox
@@ -301,18 +310,28 @@ impl BundleIdentifier {
         }
     }
 
-    /// Expected app signing-certificate digest (base64) for Android hardware attestation (`POST /a`).
+    /// Expected app signing-certificate digest(s) (base64) for Android hardware attestation (`POST /a`).
+    ///
+    /// Returns all digests accepted for the bundle identifier; a cert chain matching any one of
+    /// them is considered valid.
     #[must_use]
-    pub const fn android_certificate_sha256_digest_base64(&self) -> Option<&'static str> {
+    pub const fn android_certificate_sha256_digest_base64(
+        &self,
+    ) -> Option<&'static [&'static str]> {
         match self {
             Self::ComWorldcoin
             | Self::ComWorldcoinStaging
-            | Self::ComWorldcoinSandbox
             | Self::OrgWorldId
-            | Self::OrgWorldIdStaging
-            | Self::OrgWorldIdSandbox => Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="),
+            | Self::OrgWorldIdStaging => Some(&["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="]),
+            Self::ComWorldcoinSandbox | Self::OrgWorldIdSandbox => Some(&[
+                "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
+                // cspell:disable-next-line
+                "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ=",
+                // cspell:disable-next-line
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
+            ]),
             Self::ComWorldcoinDev | Self::OrgWorldIdDev => {
-                Some("o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=")
+                Some(&["o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="])
             }
             Self::OrgWorldcoinInsight
             | Self::OrgWorldcoinInsightStaging
@@ -341,6 +360,26 @@ impl BundleIdentifier {
             Self::OrgWorldSandboxId => Some("35RXKB6738.org.world.sandbox.id"),
             // cspell:enable
         }
+    }
+
+    /// The App IDs accepted for iOS App Attest for this bundle. Normally just the canonical
+    /// [`Self::apple_app_id`]; staging additionally accepts the App ID of re-signed automation
+    /// builds. `None` for non-Apple bundles (mirrors `apple_app_id`).
+    ///
+    /// TEMPORARY: the staging extra lets AWS Device Farm's wildcard re-sign (Apple Team
+    /// `5VLXJ89ZV9`) pass attestation so UI automation can run on real devices. Production
+    /// deployments reject staging bundles at the `enabled_bundle_identifiers` gate before
+    /// attestation, so this never widens production. Remove when device-farm automation no
+    /// longer needs it.
+    #[must_use]
+    pub fn apple_accepted_app_ids(&self) -> Option<Vec<&str>> {
+        let mut ids = vec![self.apple_app_id()?];
+        // cspell:disable-next-line
+        if matches!(self, Self::OrgWorldStagingId) {
+            // cspell:disable-next-line
+            ids.push("5VLXJ89ZV9.org.world.staging.id");
+        }
+        Some(ids)
     }
 }
 
@@ -573,8 +612,22 @@ impl IntoResponse for RequestError {
 
 impl std::error::Error for RequestError {}
 
+/// Session identifier World App sends in the `sessionId` header on every request.
+///
+/// Used only to correlate gateway logs with client-side Datadog logs (which carry the same value
+/// as `SessionID`); it is client-controlled and must not be trusted for anything
+/// security-relevant.
+#[must_use]
+pub fn client_session_id(headers: &axum::http::HeaderMap) -> &str {
+    headers
+        .get("sessionId")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown")
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ErrorCode {
+    AttestationRejected,
     BadRequest,
     DuplicateRequestHash,
     ExpiredToken,
@@ -585,11 +638,13 @@ pub enum ErrorCode {
     InvalidPublicKey,
     InvalidToken,
     InvalidDeveloperToken,
+    NonceNotFound,
 }
 
 impl std::fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::AttestationRejected => write!(f, "attestation_rejected"),
             Self::BadRequest => write!(f, "bad_request"),
             Self::DuplicateRequestHash => write!(f, "duplicate_request_hash"),
             Self::ExpiredToken => write!(f, "expired_token"),
@@ -600,6 +655,7 @@ impl std::fmt::Display for ErrorCode {
             Self::InvalidPublicKey => write!(f, "invalid_public_key"),
             Self::InvalidToken => write!(f, "invalid_token"),
             Self::InvalidDeveloperToken => write!(f, "invalid_developer_token"),
+            Self::NonceNotFound => write!(f, "nonce_not_found"),
         }
     }
 }
@@ -609,19 +665,25 @@ impl ErrorCode {
         match self {
             Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
-            Self::BadRequest
+            Self::AttestationRejected
+            | Self::BadRequest
             | Self::ExpiredToken
             | Self::IntegrityFailed
             | Self::InvalidAttestationForApp
             | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
             | Self::InvalidToken
-            | Self::InvalidDeveloperToken => axum::http::StatusCode::BAD_REQUEST,
+            | Self::InvalidDeveloperToken
+            | Self::NonceNotFound => axum::http::StatusCode::BAD_REQUEST,
         }
     }
 
     const fn into_default_error_message(self) -> &'static str {
         match self {
+            Self::AttestationRejected => "Device attestation could not be verified.",
+            Self::NonceNotFound => {
+                "The challenge nonce is unknown or has expired. Request a new challenge."
+            }
             Self::BadRequest => "The request is malformed.",
             Self::DuplicateRequestHash => "The `request_hash` has already been used.",
             Self::ExpiredToken => "The integrity token has expired. Please generate a new one.",
@@ -643,7 +705,8 @@ impl ErrorCode {
     const fn into_allow_retry(self) -> bool {
         match self {
             Self::InternalServerError => true,
-            Self::BadRequest
+            Self::AttestationRejected
+            | Self::BadRequest
             | Self::ExpiredToken
             | Self::IntegrityFailed
             | Self::InvalidAttestationForApp
@@ -651,7 +714,8 @@ impl ErrorCode {
             | Self::InvalidPublicKey
             | Self::InvalidToken
             | Self::InvalidDeveloperToken
-            | Self::DuplicateRequestHash => false,
+            | Self::DuplicateRequestHash
+            | Self::NonceNotFound => false,
         }
     }
 }
@@ -781,7 +845,7 @@ pub struct OutputTokenPayload {
     pub extra: Option<HashMap<String, String>>,
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn handle_jose_error(e: JoseError) -> RequestError {
     tracing::error!(
         "Error generating `JWTPayload` for `OutputTokenPayload`: {:?}",
@@ -793,7 +857,16 @@ fn handle_jose_error(e: JoseError) -> RequestError {
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
+fn handle_system_time_error(e: std::time::SystemTimeError) -> RequestError {
+    tracing::error!("System clock is before the Unix epoch: {:?}", e);
+    RequestError {
+        code: ErrorCode::InternalServerError,
+        details: None,
+    }
+}
+
+#[expect(clippy::needless_pass_by_value)]
 pub fn handle_redis_error(e: RedisError) -> RequestError {
     tracing::error!("Redis error: {e}");
     RequestError {
@@ -809,11 +882,24 @@ impl OutputTokenPayload {
     /// Will return a `JoseError` if the payload generation fails
     pub fn generate(&self) -> Result<JwtPayload, RequestError> {
         let mut payload = JwtPayload::new();
-        payload.set_issued_at(&SystemTime::now());
-        payload.set_issuer(&self.issuer);
-        payload.set_expires_at(&(SystemTime::now() + OUTPUT_TOKEN_EXPIRATION));
+
+        // manually set the `iat` & `exp` claim as josekit's `set_issued_at` and `set_expires_at`
+        // serializes timestamps as floats which some strict parsers reject
+        let issued_at = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(handle_system_time_error)?
+            .as_secs();
+        let expires_at = issued_at + OUTPUT_TOKEN_EXPIRATION.as_secs();
+
+        payload
+            .set_claim("iat", Some(josekit::Value::Number(issued_at.into())))
+            .map_err(handle_jose_error)?;
+        payload
+            .set_claim("exp", Some(josekit::Value::Number(expires_at.into())))
+            .map_err(handle_jose_error)?;
 
         // Claims
+        payload.set_issuer(&self.issuer);
         payload
             .set_claim("aud", Some(josekit::Value::String(self.aud.clone())))
             .map_err(handle_jose_error)?;
@@ -926,6 +1012,24 @@ mod tests {
                 std::time::Duration::from_secs(5))
         );
 
+        // `iat`/`exp` must be integer NumericDate seconds (RFC 7519 §2), floats is technically not
+        // against the spec but several parsers reject it.
+        let iat = match jwt_payload.claim("iat") {
+            Some(josekit::Value::Number(n)) => n,
+            other => panic!("`iat` must be a JSON number, got {other:?}"),
+        };
+        let exp = match jwt_payload.claim("exp") {
+            Some(josekit::Value::Number(n)) => n,
+            other => panic!("`exp` must be a JSON number, got {other:?}"),
+        };
+        assert!(iat.is_u64(), "`iat` must be an integer, got {iat}");
+        assert!(exp.is_u64(), "`exp` must be an integer, got {exp}");
+        assert_eq!(
+            exp.as_u64().unwrap() - iat.as_u64().unwrap(),
+            OUTPUT_TOKEN_EXPIRATION.as_secs(),
+            "`exp` must be exactly the expiration window after `iat`"
+        );
+
         // Assert remainder of claims
         assert_eq!(
             jwt_payload.claim("aud"),
@@ -1034,12 +1138,45 @@ mod tests {
         assert_eq!(
             bundle.android_certificate_sha256_digest(),
             // cspell:disable-next-line
-            Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8")
+            Some(["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"].as_slice())
         );
         assert_eq!(
             bundle.android_certificate_sha256_digest_base64(),
-            Some("nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=")
+            Some(["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="].as_slice())
         );
+    }
+
+    #[test]
+    fn sandbox_accepts_all_android_cert_digests() {
+        let expected_digests = [
+            // cspell:disable-next-line
+            "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
+            // cspell:disable-next-line
+            "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ",
+            // cspell:disable-next-line
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+        ];
+        let expected_digests_base64 = [
+            "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
+            // cspell:disable-next-line
+            "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ=",
+            // cspell:disable-next-line
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
+        ];
+
+        for bundle in [
+            BundleIdentifier::ComWorldcoinSandbox,
+            BundleIdentifier::OrgWorldIdSandbox,
+        ] {
+            assert_eq!(
+                bundle.android_certificate_sha256_digest(),
+                Some(expected_digests.as_slice())
+            );
+            assert_eq!(
+                bundle.android_certificate_sha256_digest_base64(),
+                Some(expected_digests_base64.as_slice())
+            );
+        }
     }
 
     #[test]
@@ -1109,6 +1246,54 @@ mod tests {
             None
         );
         assert_eq!(BundleIdentifier::OrgWorldStagingId.android_app(), None);
+    }
+
+    #[test]
+    fn apple_accepted_app_ids_always_contain_canonical() {
+        // Whatever else is accepted, a bundle's canonical App ID must always be — otherwise
+        // real store-signed apps would fail attestation.
+        for bundle in [
+            BundleIdentifier::OrgWorldId,
+            BundleIdentifier::OrgWorldStagingId,
+            BundleIdentifier::OrgWorldSandboxId,
+            BundleIdentifier::OrgWorldcoinInsight,
+            BundleIdentifier::OrgWorldcoinInsightStaging,
+            BundleIdentifier::OrgWorldcoinInsightSandbox,
+        ] {
+            let accepted = bundle.apple_accepted_app_ids().unwrap();
+            assert!(accepted.contains(&bundle.apple_app_id().unwrap()));
+        }
+    }
+
+    #[test]
+    fn production_bundles_accept_only_their_canonical_app_id() {
+        // The invariant that keeps re-signed builds out of production: a production bundle must
+        // accept exactly its one canonical App ID — never an extra. (Non-prod bundles may carry
+        // an extra; the staging one does today, asserted below.)
+        for bundle in [
+            BundleIdentifier::OrgWorldId,
+            BundleIdentifier::OrgWorldcoinInsight,
+            BundleIdentifier::ComWorldcoin,
+        ] {
+            let app_ids = bundle
+                .apple_accepted_app_ids()
+                .map(|ids| ids.len())
+                .unwrap_or(1);
+            assert_eq!(
+                app_ids, 1,
+                "{bundle} is a production bundle and must accept only its canonical App ID"
+            );
+        }
+        assert_eq!(
+            BundleIdentifier::OrgWorldStagingId
+                .apple_accepted_app_ids()
+                .unwrap(),
+            // cspell:disable-next-line
+            vec![
+                "35RXKB6738.org.world.staging.id",
+                "5VLXJ89ZV9.org.world.staging.id"
+            ],
+        );
     }
 
     #[test]

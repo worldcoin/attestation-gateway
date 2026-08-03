@@ -44,7 +44,7 @@ pub async fn verify_initial_attestation(
     let attestation_result = decode_and_validate_initial_attestation(
         apple_initial_attestation,
         &request_hash,
-        bundle_identifier.apple_app_id().context(format!(
+        &bundle_identifier.apple_accepted_app_ids().context(format!(
             "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
         ))?,
         &AAGUID::allowed_for_bundle_identifier(&bundle_identifier)?,
@@ -101,7 +101,7 @@ pub async fn verify(
     let counter = decode_and_validate_assertion(
         apple_assertion,
         key.public_key,
-        bundle_identifier.apple_app_id().context(format!(
+        &bundle_identifier.apple_accepted_app_ids().context(format!(
             "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
         ))?,
         request_hash,
@@ -201,14 +201,42 @@ pub struct InitialAttestationOutput {
     pub key_public_key: Vec<u8>,
 }
 
+/// Confirms `rp_id` (the SHA-256 app-id hash carried in an attestation/assertion) matches one of
+/// the `accepted_app_ids`. Fails closed with `InvalidAttestationForApp` when none match.
+fn verify_rp_id_against_accepted(
+    rp_id: &[u8],
+    accepted_app_ids: &[&str],
+    object_kind: &str,
+) -> eyre::Result<()> {
+    let any_match = accepted_app_ids.iter().any(|app_id| {
+        let mut hasher = Sha256::new();
+        hasher.update(app_id.as_bytes());
+        let hashed_app_id: &[u8] = &hasher.finish();
+        rp_id == hashed_app_id
+    });
+
+    if !any_match {
+        eyre::bail!(ClientException {
+            code: ErrorCode::InvalidAttestationForApp,
+            internal_debug_info: format!(
+                "expected `app_id` for bundle identifier and `rp_id` from {object_kind} object do not match."
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// Implements the verification of `DeviceCheck` *attestations* for iOS.
 ///
 /// Attestations are sent the first time to attest to the validity of a specific public key.
 /// <https://developer.apple.com/documentation/devicecheck/validating_apps_that_connect_to_your_server#3576643>
+///
+/// The step-6 `rp_id` check passes if the attestation matches any of `accepted_app_ids` (see
+/// `BundleIdentifier::apple_accepted_app_ids`).
 pub fn decode_and_validate_initial_attestation(
     apple_initial_attestation: String,
     challenge: &str,
-    expected_app_id: &str,
+    accepted_app_ids: &[&str],
     allowed_aaguid: &[AAGUID],
     apple_root_ca_pem: &[u8],
 ) -> eyre::Result<InitialAttestationOutput> {
@@ -278,19 +306,9 @@ pub fn decode_and_validate_initial_attestation(
     let public_key_der = cert.public_key()?.public_key_to_der()?;
     let public_key = res.public_key().subject_public_key.clone().data;
 
-    // Step 6: check app_id
+    // Step 6: check app_id against the accepted list
     let rp_id = &attestation.auth_data.clone()[0..32];
-    let mut hasher = Sha256::new();
-    hasher.update(expected_app_id.as_bytes());
-    let hashed_app_id: &[u8] = &hasher.finish();
-
-    if rp_id != hashed_app_id {
-        eyre::bail!(ClientException {
-            code: ErrorCode::InvalidAttestationForApp,
-            internal_debug_info: "expected `app_id` for bundle identifier and `rp_id` from attestation object do not match."
-                .to_string(),
-        });
-    }
+    verify_rp_id_against_accepted(rp_id, accepted_app_ids, "attestation")?;
 
     // Step 7: counter check
     let counter = u32::from_be_bytes(attestation.auth_data.clone()[33..37].try_into()?);
@@ -370,10 +388,12 @@ fn internal_verify_cert_chain_with_store(
 
 /// Implements the verification of `DeviceCheck` *assertions* for iOS.
 /// <https://developer.apple.com/documentation/devicecheck/validating_apps_that_connect_to_your_server#3576644>
+///
+/// The step-4 `rp_id` check passes if the assertion matches any of `accepted_app_ids`.
 fn decode_and_validate_assertion(
     assertion: String,
     public_key: String,
-    expected_app_id: &str,
+    accepted_app_ids: &[&str],
     request_hash: &str,
     last_counter: u32,
 ) -> eyre::Result<u32> {
@@ -410,19 +430,9 @@ fn decode_and_validate_assertion(
         });
     }
 
-    // Step 4: check app_id
+    // Step 4: check app_id against the accepted list
     let rp_id = &assertion.authenticator_data.clone()[0..32];
-    let mut hasher = Sha256::new();
-    hasher.update(expected_app_id.as_bytes());
-    let hashed_app_id: &[u8] = &hasher.finish();
-
-    if rp_id != hashed_app_id {
-        eyre::bail!(ClientException {
-            code: ErrorCode::InvalidAttestationForApp,
-            internal_debug_info: "expected `app_id` for bundle identifier and `rp_id` from assertion object do not match."
-                .to_string(),
-        });
-    }
+    verify_rp_id_against_accepted(rp_id, accepted_app_ids, "assertion")?;
 
     // Step 5: Counter check
     let counter = u32::from_be_bytes(assertion.authenticator_data.clone()[33..37].try_into()?);

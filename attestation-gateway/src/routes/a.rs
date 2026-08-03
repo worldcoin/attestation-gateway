@@ -15,10 +15,10 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    android::AndroidAttestationService,
+    android::{AndroidAttestationError, AndroidAttestationService},
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
-    utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError},
+    utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError, client_session_id},
 };
 
 fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
@@ -119,6 +119,27 @@ impl IntegrityTokenPayload {
     }
 }
 
+fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) -> RequestError {
+    metrics::counter!("attestation_gateway.android_error", "reason" => e.reason_tag()).increment(1);
+
+    if e.is_internal_error() {
+        tracing::error!(error = ?e, "Error validating Android attestation");
+
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    } else {
+        // The precise verify failure stays server-side; the client gets only the coarse
+        // default message so rejection reasons don't aid attestation probing.
+        tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
+        RequestError {
+            code: ErrorCode::AttestationRejected,
+            details: None,
+        }
+    }
+}
+
 fn infer_platform(request: &Request) -> Result<Platform, RequestError> {
     let has_android = request.android_attestation.is_some();
     let has_apple = request.apple_attestation.is_some();
@@ -151,7 +172,9 @@ pub async fn handler(
     headers: HeaderMap,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
-    let tracing_span = tracing::span!(tracing::Level::DEBUG, "a", endpoint = "/a");
+    let session_id = client_session_id(&headers);
+    let tracing_span =
+        tracing::span!(tracing::Level::DEBUG, "a", endpoint = "/a", session_id = %session_id);
     let _enter = tracing_span.enter();
 
     if !global_config
@@ -165,7 +188,11 @@ pub async fn handler(
 
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
         if matches!(e, NonceDbError::NonceNotFound) {
-            bad_request("Nonce not found")
+            tracing::warn!(endpoint = "/a", session_id = %session_id, message = "Nonce not found");
+            RequestError {
+                code: ErrorCode::NonceNotFound,
+                details: None,
+            }
         } else {
             tracing::error!(error = ?e, "Error consuming token nonce");
 
@@ -209,24 +236,8 @@ pub async fn handler(
                 )
                 .await;
 
-            let attestation_output = match attestation_result {
-                Ok(attestation_output) => Ok(attestation_output),
-                Err(e) => {
-                    metrics::counter!("attestation_gateway.android_error",  "reason" => e.reason_tag())
-                        .increment(1);
-
-                    if e.is_internal_error() {
-                        tracing::error!(error = ?e, "Error validating Android attestation");
-
-                        Err(RequestError {
-                            code: ErrorCode::InternalServerError,
-                            details: None,
-                        })
-                    } else {
-                        Err(bad_request(e.to_string()))
-                    }
-                }
-            }?;
+            let attestation_output =
+                attestation_result.map_err(|e| map_android_attestation_error(&e, session_id))?;
 
             if let Some(os_patch_level_delta) = attestation_output.os_patch_level_delta {
                 metrics::gauge!("attestation_gateway.android_os_patch_level_delta")
@@ -282,10 +293,12 @@ fn validate_apple_attestation_and_get_device_public_key(
     let allowed_aaguid_vec = apple::AAGUID::allowed_for_bundle_identifier(bundle_identifier)
         .map_err(|_| bad_request("Invalid bundle identifier"))?;
 
+    // Canonical App ID only — the re-signed-build allow-list is intentionally scoped to the
+    // `/g` token flow (via `apple_accepted_app_ids`); this `/a` route is unchanged.
     let initial_attestation = apple::decode_and_validate_initial_attestation(
         apple_attestation,
         challenge,
-        app_id,
+        &[app_id],
         allowed_aaguid_vec.as_slice(),
         apple_root_ca_pem,
     )

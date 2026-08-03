@@ -179,6 +179,17 @@ impl CertChain {
     pub const fn root_cert(&self) -> &RootCert {
         &self.root_cert
     }
+
+    /// StrongBox factory and remotely provisioned chains identify StrongBox in the
+    /// subject of the attestation certificate or the final intermediate certificate.
+    #[must_use]
+    pub fn has_strong_box_chain_shape(&self) -> bool {
+        self.device_cert().subject_contains_strong_box()
+            || self
+                .intermediate_certs()
+                .last()
+                .is_some_and(IntermediateCert::subject_contains_strong_box)
+    }
 }
 
 impl CertChainError {

@@ -16,7 +16,7 @@ fn test_verify_initial_attestation_success_with_test_attestation() {
     let result = decode_and_validate_initial_attestation(
         test_data.attestation_base64,
         request_hash,
-        app_id,
+        &[app_id],
         &[AAGUID::AppAttestDevelop],
         &test_data.root_ca_pem,
     )
@@ -255,9 +255,9 @@ fn test_verify_initial_attestation_failure_on_invalid_attestation() {
     let result = decode_and_validate_initial_attestation(
         "this_is_not_base64_encoded".to_string(),
         "test",
-        BundleIdentifier::OrgWorldcoinInsightStaging
+        &[BundleIdentifier::OrgWorldcoinInsightStaging
             .apple_app_id()
-            .unwrap(),
+            .unwrap()],
         &[AAGUID::AppAttestDevelop],
         include_bytes!("./apple_app_attestation_root_ca.pem"),
     )
@@ -281,9 +281,9 @@ fn test_verify_initial_attestation_failure_on_invalid_cbor_message() {
         // cspell:disable-next-line
         "dGhpcyBpcyBpbnZhbGlk".to_string(),
         "test",
-        BundleIdentifier::OrgWorldcoinInsightStaging
+        &[BundleIdentifier::OrgWorldcoinInsightStaging
             .apple_app_id()
-            .unwrap(),
+            .unwrap()],
         &[AAGUID::AppAttestDevelop],
         include_bytes!("./apple_app_attestation_root_ca.pem"),
     )
@@ -308,7 +308,7 @@ fn test_verify_initial_attestation_failure_nonce_mismatch() {
     let result = decode_and_validate_initial_attestation(
         test_data.attestation_base64,
         "hash_b",
-        app_id,
+        &[app_id],
         &[AAGUID::AppAttestDevelop],
         &test_data.root_ca_pem,
     )
@@ -338,7 +338,7 @@ fn test_verify_initial_attestation_failure_app_id_mismatch() {
     let result = decode_and_validate_initial_attestation(
         test_data.attestation_base64,
         request_hash,
-        prod_app_id,
+        &[prod_app_id],
         &[AAGUID::AppAttestDevelop],
         &test_data.root_ca_pem,
     )
@@ -366,7 +366,7 @@ fn test_verify_initial_attestation_failure_aaguid_mismatch() {
     let result = decode_and_validate_initial_attestation(
         test_data.attestation_base64,
         request_hash,
-        app_id,
+        &[app_id],
         &[AAGUID::AppAttest],
         &test_data.root_ca_pem,
     )
@@ -398,7 +398,7 @@ fn test_verify_initial_attestation_bypassing_aaguid_check_for_staging_apps() {
     decode_and_validate_initial_attestation(
         test_data.attestation_base64,
         request_hash,
-        app_id,
+        &[app_id],
         &expected_aaguids,
         &test_data.root_ca_pem,
     )
@@ -425,7 +425,7 @@ fn verify_assertion_success() {
         valid_assertion.to_string(),
         // notice this is the public key from test_verify_initial_attestation_success
         "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEu5PyE6mg2JOA19zIosBmv/18/3B5ySWGLET7mQhWijPWWtKPEjdfDME7djEYaT81tvWoXXm95qfBYZw3Q2YDmQ==".to_string(),
-        BundleIdentifier::OrgWorldcoinInsightStaging.apple_app_id().unwrap(),
+        &[BundleIdentifier::OrgWorldcoinInsightStaging.apple_app_id().unwrap()],
         "02072cdf5e347d876a89949e6c11febb55716e3e7026e76b7d90d0bed6cf28e9",
         0,
     );
@@ -442,7 +442,7 @@ fn verify_assertion_success_two() {
         valid_assertion.to_string(),
         // notice this is the public key from test_verify_initial_attestation_success
         "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEh4Bd1IrEnNal/KNplK6VVrByUq4jsVtVVxpMI/mezeQcluflXHikUxYe+xoB/fAL3VnEA5zJlLobpHcfn/4+7w==".to_string(),
-        BundleIdentifier::OrgWorldcoinInsightStaging.apple_app_id().unwrap(),
+        &[BundleIdentifier::OrgWorldcoinInsightStaging.apple_app_id().unwrap()],
         "test",
         0,
     );
@@ -458,7 +458,7 @@ fn verify_assertion_failure_with_invalid_counter() {
         valid_assertion.to_string(),
         // notice this is the public key from test_verify_initial_attestation_success
         "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEh4Bd1IrEnNal/KNplK6VVrByUq4jsVtVVxpMI/mezeQcluflXHikUxYe+xoB/fAL3VnEA5zJlLobpHcfn/4+7w==".to_string(),
-        BundleIdentifier::OrgWorldcoinInsightStaging.apple_app_id().unwrap(),
+        &[BundleIdentifier::OrgWorldcoinInsightStaging.apple_app_id().unwrap()],
         "test",
         1,
     ).unwrap_err();
@@ -480,7 +480,7 @@ fn verify_assertion_failure_with_invalid_hash() {
         valid_assertion.to_string(),
         // notice this is the public key from test_verify_initial_attestation_success
         "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEh4Bd1IrEnNal/KNplK6VVrByUq4jsVtVVxpMI/mezeQcluflXHikUxYe+xoB/fAL3VnEA5zJlLobpHcfn/4+7w==".to_string(),
-        BundleIdentifier::OrgWorldcoinInsightStaging.apple_app_id().unwrap(),
+        &[BundleIdentifier::OrgWorldcoinInsightStaging.apple_app_id().unwrap()],
         "not_the_hash_i_expect",
         0,
     ).unwrap_err();
@@ -538,7 +538,7 @@ fn verify_assertion_failure_with_invalid_key() {
          encoded_assertion,
         // notice this public key does not match the `fake_public_key` generated above
          "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEh4Bd1IrEnNal/KNplK6VVrByUq4jsVtVVxpMI/mezeQcluflXHikUxYe+xoB/fAL3VnEA5zJlLobpHcfn/4+7w==".to_string(),
-        BundleIdentifier::OrgWorldcoinInsightStaging.apple_app_id().unwrap(),
+        &[BundleIdentifier::OrgWorldcoinInsightStaging.apple_app_id().unwrap()],
         request_hash,
         0,
     )
@@ -594,9 +594,9 @@ fn verify_assertion_failure_with_invalid_authenticator_data() {
     let result = decode_and_validate_assertion(
         encoded_assertion,
         general_purpose::STANDARD.encode(fake_key.public_key_to_der().unwrap()),
-        BundleIdentifier::OrgWorldcoinInsightStaging
+        &[BundleIdentifier::OrgWorldcoinInsightStaging
             .apple_app_id()
-            .unwrap(),
+            .unwrap()],
         request_hash,
         0,
     )

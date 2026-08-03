@@ -52,8 +52,8 @@ impl RootCertError {
 
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::DerEncoding | Self::DerDecoding => true,
-            Self::Serial(_) => false,
+            Self::DerEncoding => true,
+            Self::DerDecoding | Self::Serial(_) => false,
         }
     }
 }
