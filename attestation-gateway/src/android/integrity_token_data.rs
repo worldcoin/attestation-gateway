@@ -341,11 +341,11 @@ impl PlayIntegrityToken {
         bundle_identifier: &BundleIdentifier,
     ) -> eyre::Result<()> {
         if let Some(value) = &self.environment_details {
-            // HighRisk is logged for downstream analytics but does not block. The block was
-            // introduced in PR #7 and sat dormant until 2026-05-18 when the Play Console
-            // `Play Protect verdict` toggle was enabled, at which point it began rejecting
-            // ~14% of devices that would otherwise have passed. Telemetry-only keeps the
-            // signal available for signup-sequencer / face-signup-service to consume.
+            // HighRisk is recorded in this service's logs but does not block. The reject was
+            // introduced in PR #7 and sat dormant until 2026-05-18, when enabling the Play
+            // Console `Play Protect verdict` toggle made it reject ~14% of devices that would
+            // otherwise have passed. The verdict is not part of the token we issue and is not
+            // forwarded to any other service, so consuming it downstream needs its own change.
             if value.play_protect_verdict == Some(PlayProtectVerdict::HighRisk) {
                 tracing::warn!(
                     bundle_identifier = %bundle_identifier,
