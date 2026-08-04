@@ -53,7 +53,7 @@ impl CertSerial {
             .subject_name()
             .entries()
             .filter(|e| e.object().nid().as_raw() == NID_SERIAL_NUMBER)
-            .map(|e| e.data().as_utf8().map(|v| String::from(&**v)))
+            .map(|e| e.data().to_string())
             .collect::<Result<Vec<String>, openssl::error::ErrorStack>>()
             .map_err(|_| CertSerialError::IssuedToDecoding)?;
 
