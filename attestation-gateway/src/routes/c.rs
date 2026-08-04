@@ -59,7 +59,7 @@ pub async fn handler(
         .await
         .map_err(|error| {
             if matches!(error, AudienceAuthorizationError::NotAuthorized) {
-                tracing::error!(
+                tracing::warn!(
                     aud = %request.aud,
                     endpoint = "/c",
                     session_id = %session_id,
