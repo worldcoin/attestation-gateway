@@ -23,7 +23,11 @@ pub async fn send_kinesis_stream_event(
     stream_arn: &str,
     data_report: &DataReport,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (payload_bytes, partition_key) = data_report.as_vec()?;
+    // Get the partition key from the DataReport using the bundle identifier
+    let partition_key = data_report.bundle_identifier.to_string();
+
+    // Serialize DataReport to JSON
+    let payload_bytes = data_report.as_vec()?;
 
     let mut backoff_ms = INITIAL_BACKOFF_MS;
 

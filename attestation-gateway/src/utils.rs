@@ -810,26 +810,24 @@ impl DataReport {
 
     /// Formats the `DataReport` as a JSON object and serializes it to a byte vector.
     ///
-    /// Returns `(payload_bytes, partition_key)`. The partition key is a random UUID so
-    /// records spread across shards; the same id is embedded in the payload as
-    /// `report_{uuid}` because `request_hash` is deleted after some time.
+    /// This method generates a random identifier to act as partition key for the Kinesis stream.
+    /// This is used because the `request_hash` is deleted after some time.
     ///
     /// # Errors
     /// Will return an `eyre::Error` if the serialization fails.
-    pub fn as_vec(&self) -> eyre::Result<(Vec<u8>, String)> {
+    pub fn as_vec(&self) -> eyre::Result<Vec<u8>> {
         let mut payload = serde_json::to_value(self)?;
         let obj = payload
             .as_object_mut()
             .ok_or_else(|| eyre::eyre!("Error serializing DataReport as JSON object"))?;
 
-        let partition_key = Uuid::new_v4().simple().to_string();
+        let id = Uuid::new_v4().simple().to_string();
         obj.insert(
             "id".to_string(),
-            serde_json::Value::String(format!("report_{partition_key}")),
+            serde_json::Value::String(format!("report_{id}")),
         );
 
-        let bytes = serde_json::to_vec(&payload)?;
-        Ok((bytes, partition_key))
+        serde_json::to_vec(&payload).map_err(Into::into)
     }
 }
 
