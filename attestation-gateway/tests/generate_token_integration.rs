@@ -2148,7 +2148,12 @@ async fn test_client_error_gets_logged_to_kinesis() {
         .unwrap();
 
     let record = response.records[0].clone();
-    assert_eq!(record.partition_key, "id");
+    let partition_key_re = Regex::new(r"^[0-9a-f]{32}$").unwrap();
+    assert!(
+        partition_key_re.is_match(&record.partition_key),
+        "Kinesis partition key should be a UUID, got {}",
+        record.partition_key
+    );
     let record_body = String::from_utf8(record.data.into_inner()).unwrap();
 
     let json_body = serde_json::from_str::<Value>(&record_body).unwrap();
@@ -2157,6 +2162,10 @@ async fn test_client_error_gets_logged_to_kinesis() {
     assert!(
         re.is_match(json_body["id"].as_str().unwrap()),
         "Kinesis DataReport.id format is incorrect"
+    );
+    assert_eq!(
+        json_body["id"].as_str().unwrap(),
+        format!("report_{}", record.partition_key)
     );
 
     let data_report: DataReport = serde_json::from_str(&record_body).unwrap();
