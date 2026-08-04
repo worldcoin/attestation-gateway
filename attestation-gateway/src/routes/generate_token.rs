@@ -346,11 +346,12 @@ async fn process_and_finalize_report(
     kinesis_client: &KinesisClient,
     kinesis_stream_arn: &str,
 ) -> Result<TokenGenerationResponse, RequestError> {
-    // Report result to Kinesis
+    // Report result to Kinesis (best-effort analytics; never fail the request)
     if !kinesis_stream_arn.is_empty()
         && let Err(e) = send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report).await
     {
-        tracing::error!("Failed to send Kinesis event: {:?}", e);
+        metrics::counter!("attestation_gateway.kinesis_put_failure").increment(1);
+        tracing::warn!(error = ?e, "Failed to send Kinesis event");
     }
 
     // TODO: Initial roll out does not include generating failure tokens
@@ -450,15 +451,11 @@ async fn handle_client_error_if_applicable(
             Some("`client_error` provided in the request".to_string()),
         );
 
-        send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to send `client_error` to Kinesis: {:?}", e);
-                RequestError {
-                    code: ErrorCode::InternalServerError,
-                    details: None,
-                }
-            })?;
+        if let Err(e) = send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report).await
+        {
+            metrics::counter!("attestation_gateway.kinesis_put_failure").increment(1);
+            tracing::warn!(error = ?e, "Failed to send `client_error` to Kinesis");
+        }
 
         if log_client_errors {
             tracing::info!(
