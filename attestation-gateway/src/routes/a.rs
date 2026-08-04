@@ -38,7 +38,7 @@ fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, Stri
 
 fn bad_request(details: impl Into<String>) -> RequestError {
     let details = details.into();
-    tracing::error!(endpoint = "/a", message = %details);
+    tracing::warn!(endpoint = "/a", message = %details);
     RequestError {
         code: ErrorCode::BadRequest,
         details: Some(details),
