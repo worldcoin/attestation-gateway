@@ -2148,9 +2148,11 @@ async fn test_client_error_gets_logged_to_kinesis() {
         .unwrap();
 
     let record = response.records[0].clone();
-    assert_eq!(
-        record.partition_key,
-        BundleIdentifier::ComWorldcoinStaging.to_string()
+    let partition_key_re = Regex::new(r"^[0-9a-f]{32}$").unwrap();
+    assert!(
+        partition_key_re.is_match(&record.partition_key),
+        "Kinesis partition key should be a UUID, got {}",
+        record.partition_key
     );
     let record_body = String::from_utf8(record.data.into_inner()).unwrap();
 

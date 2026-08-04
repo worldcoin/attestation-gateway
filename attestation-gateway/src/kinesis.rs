@@ -6,6 +6,7 @@ use aws_sdk_kinesis::{
     operation::put_record::PutRecordError,
     primitives::Blob,
 };
+use uuid::Uuid;
 
 use crate::utils::DataReport;
 
@@ -23,9 +24,8 @@ pub async fn send_kinesis_stream_event(
     stream_arn: &str,
     data_report: &DataReport,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Get the partition key from the DataReport using the bundle identifier
-    let partition_key = data_report.bundle_identifier.to_string();
-
+    // Generate a unique partition key for the DataReport
+    let partition_key = Uuid::new_v4().simple().to_string();
     // Serialize DataReport to JSON
     let payload_bytes = data_report.as_vec()?;
 
