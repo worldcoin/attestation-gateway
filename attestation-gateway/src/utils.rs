@@ -810,8 +810,8 @@ impl DataReport {
 
     /// Formats the `DataReport` as a JSON object and serializes it to a byte vector.
     ///
-    /// This method generates a random identifier embedded in the payload as `report_{uuid}`
-    /// because the `request_hash` is deleted after some time.
+    /// This method generates a random identifier to act as partition key for the Kinesis stream.
+    /// This is used because the `request_hash` is deleted after some time.
     ///
     /// # Errors
     /// Will return an `eyre::Error` if the serialization fails.
