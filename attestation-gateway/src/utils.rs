@@ -286,18 +286,19 @@ impl BundleIdentifier {
     #[must_use]
     pub const fn android_certificate_sha256_digest(&self) -> Option<&'static [&'static str]> {
         match self {
-            Self::ComWorldcoin
-            | Self::ComWorldcoinStaging
-            | Self::OrgWorldId
-            | Self::OrgWorldIdStaging => {
+            Self::ComWorldcoin | Self::OrgWorldId => {
                 // cspell:disable-next-line
                 Some(&["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"])
             }
-            Self::ComWorldcoinSandbox | Self::OrgWorldIdSandbox => Some(&[
+            Self::ComWorldcoinStaging | Self::OrgWorldIdStaging => Some(&[
                 // cspell:disable-next-line
                 "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
                 // cspell:disable-next-line
-                "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ",
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+            ]),
+            Self::ComWorldcoinSandbox | Self::OrgWorldIdSandbox => Some(&[
+                // cspell:disable-next-line
+                "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
                 // cspell:disable-next-line
                 "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
             ]),
@@ -319,14 +320,16 @@ impl BundleIdentifier {
         &self,
     ) -> Option<&'static [&'static str]> {
         match self {
-            Self::ComWorldcoin
-            | Self::ComWorldcoinStaging
-            | Self::OrgWorldId
-            | Self::OrgWorldIdStaging => Some(&["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="]),
-            Self::ComWorldcoinSandbox | Self::OrgWorldIdSandbox => Some(&[
+            Self::ComWorldcoin | Self::OrgWorldId => {
+                Some(&["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="])
+            }
+            Self::ComWorldcoinStaging | Self::OrgWorldIdStaging => Some(&[
                 "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
                 // cspell:disable-next-line
-                "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ=",
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
+            ]),
+            Self::ComWorldcoinSandbox | Self::OrgWorldIdSandbox => Some(&[
+                "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
                 // cspell:disable-next-line
                 "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
             ]),
@@ -1152,14 +1155,10 @@ mod tests {
             // cspell:disable-next-line
             "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
             // cspell:disable-next-line
-            "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ",
-            // cspell:disable-next-line
             "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
         ];
         let expected_digests_base64 = [
             "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
-            // cspell:disable-next-line
-            "ZCvi3PWJOn5wJNMnMfkK6/XzKck4vUj9v3nOHFLSDUQ=",
             // cspell:disable-next-line
             "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
         ];
@@ -1175,6 +1174,50 @@ mod tests {
             assert_eq!(
                 bundle.android_certificate_sha256_digest_base64(),
                 Some(expected_digests_base64.as_slice())
+            );
+        }
+    }
+
+    #[test]
+    fn staging_accepts_all_android_cert_digests() {
+        let expected_digests = [
+            // cspell:disable-next-line
+            "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
+            // cspell:disable-next-line
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+        ];
+        let expected_digests_base64 = [
+            "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
+            // cspell:disable-next-line
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
+        ];
+
+        for bundle in [
+            BundleIdentifier::ComWorldcoinStaging,
+            BundleIdentifier::OrgWorldIdStaging,
+        ] {
+            assert_eq!(
+                bundle.android_certificate_sha256_digest(),
+                Some(expected_digests.as_slice())
+            );
+            assert_eq!(
+                bundle.android_certificate_sha256_digest_base64(),
+                Some(expected_digests_base64.as_slice())
+            );
+        }
+    }
+
+    #[test]
+    fn prod_accepts_only_release_android_cert_digest() {
+        for bundle in [BundleIdentifier::ComWorldcoin, BundleIdentifier::OrgWorldId] {
+            assert_eq!(
+                bundle.android_certificate_sha256_digest(),
+                // cspell:disable-next-line
+                Some(["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8"].as_slice())
+            );
+            assert_eq!(
+                bundle.android_certificate_sha256_digest_base64(),
+                Some(["nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8="].as_slice())
             );
         }
     }
