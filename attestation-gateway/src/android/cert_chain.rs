@@ -81,7 +81,7 @@ impl CertSerial {
         }
     }
 
-    /// `true` if any representation appears in [`AndroidRevocationList`].
+    /// `true` if any representation appears in [`RevocationList`].
     #[must_use]
     pub fn is_revoked(&self, list: &RevocationList) -> bool {
         if list.is_revoked(&self.decimal) {
