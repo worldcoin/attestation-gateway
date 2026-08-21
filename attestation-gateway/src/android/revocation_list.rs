@@ -102,6 +102,21 @@ impl RevocationList {
         Self::connect(DEFAULT_ATTESTATION_STATUS_URL).await
     }
 
+    /// Builds a list with a fixed cache and no network access.
+    #[cfg(test)]
+    pub(crate) fn from_revoked_ids(revoked_ids: HashSet<String>) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                cache: ArcSwap::new(Arc::new(CacheState {
+                    revoked_ids,
+                    valid_until: None,
+                })),
+                client: build_http_client().expect("test http client"),
+                url: DEFAULT_ATTESTATION_STATUS_URL.to_string(),
+            }),
+        }
+    }
+
     /// Returns `true` if `certificate_id` matches a key in the cached JSON `entries` map (decimal or
     /// lowercase hex string, as published by Google).
     ///
