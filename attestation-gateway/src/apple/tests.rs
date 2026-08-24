@@ -430,7 +430,9 @@ fn verify_assertion_success() {
         0,
     );
 
-    assert!(result.is_ok());
+    let result = result.unwrap();
+    assert_eq!(result.counter, 1);
+    assert_eq!(result.key_public_key.len(), 65);
 }
 
 #[test]
@@ -447,7 +449,9 @@ fn verify_assertion_success_two() {
         0,
     );
 
-    assert!(result.is_ok());
+    let result = result.unwrap();
+    assert_eq!(result.counter, 1);
+    assert_eq!(result.key_public_key.len(), 65);
 }
 
 #[test]

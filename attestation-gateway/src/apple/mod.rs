@@ -6,6 +6,8 @@ use der_parser::parse_der;
 use dynamo::{fetch_apple_public_key, update_apple_public_key_counter_plus};
 use eyre::ContextCompat;
 use openssl::{
+    bn::BigNumContext,
+    ec::PointConversionForm,
     hash::MessageDigest,
     pkey::PKey,
     sha::Sha256,
@@ -83,6 +85,43 @@ pub async fn verify(
     aws_config: &aws_config::SdkConfig,
     apple_keys_dynamo_table_name: &String,
 ) -> eyre::Result<VerificationOutput> {
+    let accepted_app_ids = bundle_identifier.apple_accepted_app_ids().context(format!(
+        "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
+    ))?;
+    verify_assertion_and_get_device_public_key(
+        apple_assertion,
+        apple_public_key,
+        bundle_identifier,
+        &accepted_app_ids,
+        request_hash,
+        aws_config,
+        apple_keys_dynamo_table_name,
+    )
+    .await?;
+
+    Ok(VerificationOutput {
+        success: true,
+        parsed_play_integrity_token: None,
+        client_exception: None,
+        app_version: None,
+        developer_token: None,
+    })
+}
+
+/// Verifies an Apple assertion and returns the uncompressed public key for token binding.
+///
+/// # Errors
+/// Returns a client error when the key is unknown or the assertion is invalid, and a server error
+/// when the key registry cannot be accessed or updated.
+pub async fn verify_assertion_and_get_device_public_key(
+    apple_assertion: String,
+    apple_public_key: String,
+    bundle_identifier: &BundleIdentifier,
+    accepted_app_ids: &[&str],
+    request_hash: &str,
+    aws_config: &aws_config::SdkConfig,
+    apple_keys_dynamo_table_name: &String,
+) -> eyre::Result<Vec<u8>> {
     // Fetch public key and counter from DB
     let key = fetch_apple_public_key(
         aws_config,
@@ -98,12 +137,10 @@ pub async fn verify(
         });
     }
 
-    let counter = decode_and_validate_assertion(
+    let assertion = decode_and_validate_assertion(
         apple_assertion,
         key.public_key,
-        &bundle_identifier.apple_accepted_app_ids().context(format!(
-            "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
-        ))?,
+        accepted_app_ids,
         request_hash,
         key.counter,
     )?;
@@ -113,17 +150,11 @@ pub async fn verify(
         aws_config,
         apple_keys_dynamo_table_name,
         apple_public_key,
-        counter,
+        assertion.counter,
     )
     .await?;
 
-    Ok(VerificationOutput {
-        success: true,
-        parsed_play_integrity_token: None,
-        client_exception: None,
-        app_version: None,
-        developer_token: None,
-    })
+    Ok(assertion.key_public_key)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -390,13 +421,19 @@ fn internal_verify_cert_chain_with_store(
 /// <https://developer.apple.com/documentation/devicecheck/validating_apps_that_connect_to_your_server#3576644>
 ///
 /// The step-4 `rp_id` check passes if the assertion matches any of `accepted_app_ids`.
+#[derive(Debug)]
+struct AssertionValidationOutput {
+    counter: u32,
+    key_public_key: Vec<u8>,
+}
+
 fn decode_and_validate_assertion(
     assertion: String,
     public_key: String,
     accepted_app_ids: &[&str],
     request_hash: &str,
     last_counter: u32,
-) -> eyre::Result<u32> {
+) -> eyre::Result<AssertionValidationOutput> {
     let assertion_bytes = general_purpose::STANDARD.decode(assertion).map_err(|_| {
         eyre::eyre!(ClientException {
             code: ErrorCode::InvalidToken,
@@ -447,7 +484,18 @@ fn decode_and_validate_assertion(
     // Step 6: Check for nonce
     // Nonce is verified by downstream services and not by the Attestation Gateway
 
-    Ok(counter)
+    let ec_key = public_key.ec_key()?;
+    let mut context = BigNumContext::new()?;
+    let key_public_key = ec_key.public_key().to_bytes(
+        ec_key.group(),
+        PointConversionForm::UNCOMPRESSED,
+        &mut context,
+    )?;
+
+    Ok(AssertionValidationOutput {
+        counter,
+        key_public_key,
+    })
 }
 
 #[cfg(test)]

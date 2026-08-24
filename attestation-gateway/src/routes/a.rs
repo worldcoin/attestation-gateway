@@ -18,7 +18,10 @@ use crate::{
     android::{AndroidAttestationError, AndroidAttestationService},
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
-    utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError, client_session_id},
+    utils::{
+        BundleIdentifier, ClientException, ErrorCode, GlobalConfig, Platform, RequestError,
+        client_session_id,
+    },
 };
 
 fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
@@ -52,6 +55,8 @@ pub struct Request {
     pub app_version: String,
     pub bundle_identifier: BundleIdentifier,
     pub apple_attestation: Option<String>,
+    pub apple_public_key: Option<String>,
+    pub integrity_signature: Option<String>,
     pub android_attestation: Option<Vec<String>>,
     pub device_model: Option<String>,
 }
@@ -142,9 +147,10 @@ fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) 
 
 fn infer_platform(request: &Request) -> Result<Platform, RequestError> {
     let has_android = request.android_attestation.is_some();
-    let has_apple = request.apple_attestation.is_some();
+    let has_apple_attestation = request.apple_attestation.is_some();
+    let has_apple_public_key = request.apple_public_key.is_some();
 
-    if has_android && has_apple {
+    if has_android && (has_apple_attestation || has_apple_public_key) {
         return Err(bad_request(
             "Conflicting attestation fields for platform inference.",
         ));
@@ -154,7 +160,21 @@ fn infer_platform(request: &Request) -> Result<Platform, RequestError> {
         return Ok(Platform::Android);
     }
 
-    if has_apple {
+    if has_apple_attestation {
+        if has_apple_public_key {
+            return Err(bad_request(
+                "For initial attestations, `apple_public_key` is not allowed.",
+            ));
+        }
+        return Ok(Platform::AppleIOS);
+    }
+
+    if has_apple_public_key {
+        if request.integrity_signature.is_none() {
+            return Err(bad_request(
+                "`integrity_signature` is required with `apple_public_key`.",
+            ));
+        }
         return Ok(Platform::AppleIOS);
     }
 
@@ -208,16 +228,14 @@ pub async fn handler(
 
     let device_public_key = match platform {
         Platform::AppleIOS => {
-            let apple_attestation = request
-                .apple_attestation
-                .ok_or_else(|| bad_request("Apple attestation is required"))?;
-
-            validate_apple_attestation_and_get_device_public_key(
-                &global_config.apple_root_ca_pem,
+            verify_apple_proof(
+                &request,
                 &challenge,
-                &request.bundle_identifier,
-                apple_attestation,
-            )?
+                &global_config,
+                &aws_config,
+                session_id,
+            )
+            .await?
         }
         Platform::Android => {
             let android_cert_chain = request
@@ -280,12 +298,12 @@ pub async fn handler(
     Ok(Json(Response { integrity_token }))
 }
 
-fn validate_apple_attestation_and_get_device_public_key(
+fn validate_apple_attestation(
     apple_root_ca_pem: &[u8],
     challenge: &str,
     bundle_identifier: &BundleIdentifier,
     apple_attestation: String,
-) -> Result<Vec<u8>, RequestError> {
+) -> Result<apple::InitialAttestationOutput, RequestError> {
     let app_id = bundle_identifier
         .apple_app_id()
         .ok_or_else(|| bad_request("Invalid bundle identifier"))?;
@@ -295,16 +313,85 @@ fn validate_apple_attestation_and_get_device_public_key(
 
     // Canonical App ID only — the re-signed-build allow-list is intentionally scoped to the
     // `/g` token flow (via `apple_accepted_app_ids`); this `/a` route is unchanged.
-    let initial_attestation = apple::decode_and_validate_initial_attestation(
+    apple::decode_and_validate_initial_attestation(
         apple_attestation,
         challenge,
         &[app_id],
         allowed_aaguid_vec.as_slice(),
         apple_root_ca_pem,
     )
-    .map_err(|e| bad_request(e.to_string()))?;
+    .map_err(|error| bad_request(error.to_string()))
+}
 
-    Ok(initial_attestation.key_public_key)
+async fn verify_apple_proof(
+    request: &Request,
+    challenge: &str,
+    global_config: &GlobalConfig,
+    aws_config: &SdkConfig,
+    session_id: &str,
+) -> Result<Vec<u8>, RequestError> {
+    if let Some(apple_attestation) = &request.apple_attestation {
+        let initial_attestation = validate_apple_attestation(
+            &global_config.apple_root_ca_pem,
+            challenge,
+            &request.bundle_identifier,
+            apple_attestation.clone(),
+        )?;
+
+        apple::dynamo::insert_apple_public_key(
+            aws_config,
+            &global_config.apple_keys_dynamo_table_name,
+            request.bundle_identifier.clone(),
+            initial_attestation.key_id,
+            initial_attestation.public_key,
+            initial_attestation.receipt,
+        )
+        .await
+        .map_err(|error| map_apple_verification_error(&error, session_id))?;
+
+        return Ok(initial_attestation.key_public_key);
+    }
+
+    let apple_public_key = request
+        .apple_public_key
+        .clone()
+        .ok_or_else(|| bad_request("Apple public key is required"))?;
+    let integrity_signature = request
+        .integrity_signature
+        .clone()
+        .ok_or_else(|| bad_request("Apple assertion is required"))?;
+    let app_id = request
+        .bundle_identifier
+        .apple_app_id()
+        .ok_or_else(|| bad_request("Invalid bundle identifier"))?;
+
+    apple::verify_assertion_and_get_device_public_key(
+        integrity_signature,
+        apple_public_key,
+        &request.bundle_identifier,
+        &[app_id],
+        challenge,
+        aws_config,
+        &global_config.apple_keys_dynamo_table_name,
+    )
+    .await
+    .map_err(|error| map_apple_verification_error(&error, session_id))
+}
+
+fn map_apple_verification_error(error: &eyre::Report, session_id: &str) -> RequestError {
+    if let Some(client_error) = error.downcast_ref::<ClientException>() {
+        tracing::warn!(endpoint = "/a", session_id = %session_id, error = ?error);
+        return RequestError {
+            code: client_error.code,
+            details: None,
+        };
+    }
+
+    tracing::error!(endpoint = "/a", session_id = %session_id, error = ?error);
+    RequestError {
+        code: ErrorCode::InternalServerError,
+        details: None,
+    }
 }
 
 async fn generate_integrity_token(
@@ -359,6 +446,8 @@ mod tests {
             app_version: "1.0.0".to_string(),
             bundle_identifier: BundleIdentifier::OrgWorldId,
             apple_attestation: None,
+            apple_public_key: None,
+            integrity_signature: None,
             android_attestation: None,
             device_model: None,
         }
@@ -376,6 +465,49 @@ mod tests {
         let mut request = base_request();
         request.apple_attestation = Some("attestation".to_string());
         assert_eq!(infer_platform(&request).unwrap(), Platform::AppleIOS);
+    }
+
+    #[test]
+    fn infer_platform_ios_from_apple_assertion() {
+        let mut request = base_request();
+        request.apple_public_key = Some("public-key".to_string());
+        request.integrity_signature = Some("assertion".to_string());
+        assert_eq!(infer_platform(&request).unwrap(), Platform::AppleIOS);
+    }
+
+    #[test]
+    fn infer_platform_rejects_apple_public_key_without_assertion() {
+        let mut request = base_request();
+        request.apple_public_key = Some("public-key".to_string());
+        assert_eq!(
+            infer_platform(&request).unwrap_err().code,
+            ErrorCode::BadRequest
+        );
+    }
+
+    #[test]
+    fn infer_platform_rejects_initial_attestation_with_public_key() {
+        let mut request = base_request();
+        request.apple_attestation = Some("attestation".to_string());
+        request.apple_public_key = Some("public-key".to_string());
+        request.integrity_signature = Some("assertion".to_string());
+        assert_eq!(
+            infer_platform(&request).unwrap_err().code,
+            ErrorCode::BadRequest
+        );
+    }
+
+    #[test]
+    fn maps_unknown_apple_key_to_invalid_public_key() {
+        let error = eyre::eyre!(ClientException {
+            code: ErrorCode::InvalidPublicKey,
+            internal_debug_info: "unknown key".to_string(),
+        });
+
+        assert_eq!(
+            map_apple_verification_error(&error, "session").code,
+            ErrorCode::InvalidPublicKey
+        );
     }
 
     #[test]
