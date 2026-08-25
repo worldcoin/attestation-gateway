@@ -13,7 +13,7 @@ use crate::{
         rate_limit_service::{RateLimitService, RateLimitServiceTryIncrError},
         revocation_list::{RevocationList, RevocationListError},
     },
-    utils::BundleIdentifier,
+    utils::{BundleIdentifier, ErrorCode, RequestError},
 };
 use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::{DateTime, Datelike, Utc};
@@ -355,15 +355,43 @@ impl AndroidAttestationError {
         }
     }
 
-    pub const fn is_internal_error(&self) -> bool {
-        match self {
+    /// Client-facing policy for this failure. The [`ErrorCode`] decides the HTTP status and
+    /// `allowRetry` value on the wire, so every variant states explicitly how it reaches the
+    /// client.
+    #[must_use]
+    pub fn to_request_error(&self) -> RequestError {
+        let (code, details) = match self {
+            // Server faults: 500, retryable. (The bad base64 in
+            // `BadCertificateDigestEncoding` comes from compiled server constants.)
             Self::InternalRateLimitServiceTryIncr(_)
             | Self::CertChainBuilderNew(_)
-            | Self::AnalyticsServiceNew(_) => true,
-            Self::RevocationList(e) => e.is_internal_error(),
-            Self::CertChainBuilderBuildChain(e) => e.is_internal_error(),
-            Self::RateLimitExceeded
-            | Self::InvalidChallenge
+            | Self::AnalyticsServiceNew(_)
+            | Self::BadCertificateDigestEncoding(_) => (ErrorCode::InternalServerError, None),
+
+            // Mixed sources: the nested error knows whether the server or the client's
+            // certificate chain is at fault.
+            Self::RevocationList(e) if e.is_internal_error() => {
+                (ErrorCode::InternalServerError, None)
+            }
+            Self::RevocationList(_) => (ErrorCode::AttestationRejected, None),
+            Self::CertChainBuilderBuildChain(e) if e.is_internal_error() => {
+                (ErrorCode::InternalServerError, None)
+            }
+            Self::CertChainBuilderBuildChain(_) => (ErrorCode::AttestationRejected, None),
+
+            // Transient client state: the per-day quota resets, so a later retry can succeed.
+            Self::RateLimitExceeded => (ErrorCode::RateLimited, None),
+
+            // Permanent client misconfig: Android attestation for a bundle id with no Android
+            // digest. Not device-dependent, so a precise message leaks nothing and a retry can
+            // never succeed.
+            Self::MissingCertificateDigest => (
+                ErrorCode::BadRequest,
+                Some("Android attestation is not supported for this bundle identifier."),
+            ),
+
+            // Device/attestation rejections: permanent for this key, coarse default message.
+            Self::InvalidChallenge
             | Self::LowSecurityLevel
             | Self::InconsistentSecurityLevels
             | Self::StrongBoxChainMismatch
@@ -374,10 +402,12 @@ impl AndroidAttestationError {
             | Self::MissingKeyOrigin
             | Self::InvalidAttestationSignatureDigest
             | Self::InvalidPackageName
-            | Self::CertificateRevoked
-            // Client misconfig: Android attestation sent for a bundle id with no Android digest.
-            | Self::MissingCertificateDigest => false,
-            Self::BadCertificateDigestEncoding(_) => true,
+            | Self::CertificateRevoked => (ErrorCode::AttestationRejected, None),
+        };
+
+        RequestError {
+            code,
+            details: details.map(str::to_string),
         }
     }
 }

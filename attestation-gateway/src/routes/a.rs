@@ -122,42 +122,15 @@ impl IntegrityTokenPayload {
 fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) -> RequestError {
     metrics::counter!("attestation_gateway.android_error", "reason" => e.reason_tag()).increment(1);
 
-    match e {
-        AndroidAttestationError::RateLimitExceeded => {
-            tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
-            RequestError {
-                code: ErrorCode::RateLimited,
-                details: None,
-            }
-        }
-        // Not device-dependent (the gateway has no Android digest configured for this bundle
-        // identifier), so a precise message leaks nothing and a retry can never succeed.
-        AndroidAttestationError::MissingCertificateDigest => {
-            tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
-            RequestError {
-                code: ErrorCode::BadRequest,
-                details: Some(
-                    "Android attestation is not supported for this bundle identifier.".to_string(),
-                ),
-            }
-        }
-        _ if e.is_internal_error() => {
-            tracing::error!(error = ?e, "Error validating Android attestation");
-            RequestError {
-                code: ErrorCode::InternalServerError,
-                details: None,
-            }
-        }
+    let request_error = e.to_request_error();
+    if request_error.code == ErrorCode::InternalServerError {
+        tracing::error!(error = ?e, "Error validating Android attestation");
+    } else {
         // The precise verify failure stays server-side; the client gets only the coarse
         // default message so rejection reasons don't aid attestation probing.
-        _ => {
-            tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
-            RequestError {
-                code: ErrorCode::AttestationRejected,
-                details: None,
-            }
-        }
+        tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
     }
+    request_error
 }
 
 fn infer_platform(request: &Request) -> Result<Platform, RequestError> {
