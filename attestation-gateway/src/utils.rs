@@ -600,7 +600,7 @@ impl IntoResponse for RequestError {
         (
             self.code.into_http_status_code(),
             axum::Json(ErrorResponse {
-                allow_retry: self.code.into_allow_retry(),
+                allow_retry: self.code.allow_retry(),
                 error: ErrorObjectResponse {
                     code: self.code.to_string(),
                     message: self
@@ -709,7 +709,7 @@ impl ErrorCode {
     }
 
     /// Determines whether the request is retryable (**as-is**) or not.
-    const fn into_allow_retry(self) -> bool {
+    const fn allow_retry(self) -> bool {
         match self {
             Self::InternalServerError | Self::RateLimited => true,
             Self::AttestationRejected
