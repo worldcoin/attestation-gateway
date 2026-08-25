@@ -303,12 +303,18 @@ fn validate_apple_attestation_and_get_device_public_key(
         apple_root_ca_pem,
     )
     .map_err(|e| {
-        tracing::warn!(endpoint = "/a", error = ?e, message = "Apple attestation validation failed");
-        let code = e
-            .downcast_ref::<ClientException>()
-            .map_or(ErrorCode::AttestationRejected, |client_error| {
+        // Expected client rejections log a bounded reason; the full report is reserved for
+        // unexpected errors so warn volume stays flat under client-driven failures.
+        let code = match e.downcast_ref::<ClientException>() {
+            Some(client_error) => {
+                tracing::warn!(endpoint = "/a", message = %client_error);
                 client_error.code
-            });
+            }
+            None => {
+                tracing::warn!(endpoint = "/a", error = ?e, message = "Apple attestation validation failed");
+                ErrorCode::AttestationRejected
+            }
+        };
         RequestError {
             code,
             details: None,
