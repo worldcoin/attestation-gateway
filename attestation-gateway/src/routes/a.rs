@@ -307,7 +307,7 @@ fn validate_apple_attestation_and_get_device_public_key(
         // unexpected errors so warn volume stays flat under client-driven failures.
         let code = match e.downcast_ref::<ClientException>() {
             Some(client_error) => {
-                tracing::warn!(endpoint = "/a", message = %client_error);
+                tracing::warn!(endpoint = "/a", error_code = %client_error.code, message = "Apple attestation rejected");
                 client_error.code
             }
             None => {
