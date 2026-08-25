@@ -634,6 +634,7 @@ pub enum ErrorCode {
     BadRequest,
     DuplicateRequestHash,
     ExpiredToken,
+    Forbidden,
     IntegrityFailed,
     InternalServerError,
     InvalidAttestationForApp,
@@ -652,6 +653,7 @@ impl std::fmt::Display for ErrorCode {
             Self::BadRequest => write!(f, "bad_request"),
             Self::DuplicateRequestHash => write!(f, "duplicate_request_hash"),
             Self::ExpiredToken => write!(f, "expired_token"),
+            Self::Forbidden => write!(f, "forbidden"),
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
             Self::InvalidAttestationForApp => write!(f, "invalid_attestation_for_app"),
@@ -669,17 +671,19 @@ impl ErrorCode {
     const fn into_http_status_code(self) -> axum::http::StatusCode {
         match self {
             Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
+            Self::DuplicateRequestHash | Self::InvalidInitialAttestation => {
+                axum::http::StatusCode::CONFLICT
+            }
             Self::RateLimited => axum::http::StatusCode::TOO_MANY_REQUESTS,
+            Self::Forbidden => axum::http::StatusCode::FORBIDDEN,
+            Self::InvalidDeveloperToken => axum::http::StatusCode::UNAUTHORIZED,
             Self::AttestationRejected
             | Self::BadRequest
             | Self::ExpiredToken
             | Self::IntegrityFailed
             | Self::InvalidAttestationForApp
-            | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
             | Self::InvalidToken
-            | Self::InvalidDeveloperToken
             | Self::NonceNotFound => axum::http::StatusCode::BAD_REQUEST,
         }
     }
@@ -691,8 +695,11 @@ impl ErrorCode {
                 "The challenge nonce is unknown or has expired. Request a new challenge."
             }
             Self::BadRequest => "The request is malformed.",
-            Self::DuplicateRequestHash => "The `request_hash` has already been used.",
+            Self::DuplicateRequestHash => {
+                "The `request_hash` has already been used. Generate a new one."
+            }
             Self::ExpiredToken => "The integrity token has expired. Please generate a new one.",
+            Self::Forbidden => "This bundle identifier is not enabled on this deployment.",
             Self::IntegrityFailed => "Integrity checks have not passed.",
             Self::InternalServerError => "Internal server error. Please try again.",
             Self::InvalidAttestationForApp => {
@@ -715,6 +722,7 @@ impl ErrorCode {
             Self::AttestationRejected
             | Self::BadRequest
             | Self::ExpiredToken
+            | Self::Forbidden
             | Self::IntegrityFailed
             | Self::InvalidAttestationForApp
             | Self::InvalidInitialAttestation

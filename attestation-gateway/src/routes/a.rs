@@ -18,7 +18,10 @@ use crate::{
     android::{AndroidAttestationError, AndroidAttestationService},
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
-    utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError, client_session_id},
+    utils::{
+        BundleIdentifier, ClientException, ErrorCode, GlobalConfig, Platform, RequestError,
+        client_session_id,
+    },
 };
 
 fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
@@ -174,9 +177,11 @@ pub async fn handler(
         .enabled_bundle_identifiers
         .contains(&request.bundle_identifier)
     {
-        return Err(bad_request(
-            "This bundle identifier is currently unavailable.",
-        ));
+        tracing::warn!(endpoint = "/a", session_id = %session_id, message = "Bundle identifier not enabled");
+        return Err(RequestError {
+            code: ErrorCode::Forbidden,
+            details: None,
+        });
     }
 
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
@@ -288,6 +293,8 @@ fn validate_apple_attestation_and_get_device_public_key(
 
     // Canonical App ID only: the re-signed-build allow-list is intentionally scoped to the
     // `/g` token flow (via `apple_accepted_app_ids`); this `/a` route is unchanged.
+    // The precise failure stays server-side (mirrors the Android mapping above): the client
+    // gets only a coarse code so rejection reasons don't aid attestation probing.
     let initial_attestation = apple::decode_and_validate_initial_attestation(
         apple_attestation,
         challenge,
@@ -295,7 +302,18 @@ fn validate_apple_attestation_and_get_device_public_key(
         allowed_aaguid_vec.as_slice(),
         apple_root_ca_pem,
     )
-    .map_err(|e| bad_request(e.to_string()))?;
+    .map_err(|e| {
+        tracing::warn!(endpoint = "/a", error = ?e, message = "Apple attestation validation failed");
+        let code = e
+            .downcast_ref::<ClientException>()
+            .map_or(ErrorCode::AttestationRejected, |client_error| {
+                client_error.code
+            });
+        RequestError {
+            code,
+            details: None,
+        }
+    })?;
 
     Ok(initial_attestation.key_public_key)
 }

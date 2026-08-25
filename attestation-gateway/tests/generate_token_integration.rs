@@ -496,14 +496,16 @@ async fn test_token_generation_fails_on_disabled_bundle_identifier() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
 
+    assert_eq!(body["allowRetry"], false);
+    assert_eq!(body["error"]["code"], "forbidden");
     assert_eq!(
         body["error"]["message"],
-        "This bundle identifier is currently unavailable.".to_string()
+        "This bundle identifier is not enabled on this deployment.".to_string()
     );
 }
 
@@ -607,7 +609,7 @@ async fn test_token_generation_fails_on_duplicate_request_hash() {
     assert_eq!(body["error"]["code"], "duplicate_request_hash");
     assert_eq!(
         body["error"]["message"],
-        "The `request_hash` has already been used."
+        "The `request_hash` has already been used. Generate a new one."
     );
 }
 
@@ -959,7 +961,7 @@ async fn test_apple_initial_attestation_e2e_success() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::CONFLICT);
     let response = response.into_body().collect().await.unwrap().to_bytes();
     let response: Value = serde_json::from_slice(&response).unwrap();
     assert_eq!(
@@ -1994,7 +1996,7 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
 

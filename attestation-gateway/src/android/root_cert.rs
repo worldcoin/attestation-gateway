@@ -50,10 +50,11 @@ impl RootCertError {
         }
     }
 
+    // By the time `RootCert::new` runs, chain verification has already anchored the terminal
+    // certificate to a trusted Google root, so failing to re-parse it is a server-side problem.
     pub const fn is_internal_error(&self) -> bool {
         match self {
-            Self::DerEncoding => true,
-            Self::DerDecoding | Self::Serial(_) => false,
+            Self::DerEncoding | Self::DerDecoding | Self::Serial(_) => true,
         }
     }
 }
