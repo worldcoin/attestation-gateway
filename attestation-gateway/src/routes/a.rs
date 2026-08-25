@@ -75,7 +75,7 @@ pub struct IntegrityTokenPayload {
 impl IntegrityTokenPayload {
     pub fn generate(&self, issuer: &str) -> eyre::Result<JwtPayload> {
         if self.cnf.len() != 65 {
-            return Err(eyre::eyre!("Invalid device public key"));
+            return Err(bad_request("Invalid device public key").into());
         }
 
         let cnf_ec_key = EcKey::from_public_key_affine_coordinates(
@@ -333,12 +333,16 @@ async fn generate_integrity_token(
     issuer: &str,
     integrity_token_payload: IntegrityTokenPayload,
 ) -> Result<String, RequestError> {
+    // An invalid device public key is client data (surfaces as a `bad_request` inside
+    // `generate`), not a server fault; everything else stays a retryable 500.
     let integrity_token_payload = integrity_token_payload.generate(issuer).map_err(|e| {
-        tracing::error!(error = ?e, "Error generating integrity token payload");
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: None,
-        }
+        e.downcast::<RequestError>().unwrap_or_else(|e| {
+            tracing::error!(error = ?e, "Error generating integrity token payload");
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: None,
+            }
+        })
     })?;
 
     let kms_key = keys::fetch_active_key(redis, aws_config)
