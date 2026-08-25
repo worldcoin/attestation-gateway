@@ -65,7 +65,7 @@ impl GlobalConfig {
     /// # Panics
     /// If required environment variables are not set
     pub fn from_env() -> Self {
-        // Default (legacy) Android response keys — kept required so the service always has a
+        // Default (legacy) Android response keys; kept required so the service always has a
         // working fallback. Per-app namespaced keys are layered on top below.
         let android_default_keys = AndroidResponseKeys {
             outer_jwe_private_key: env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
@@ -149,7 +149,7 @@ impl GlobalConfig {
     /// its own namespaced key and falls back to `android_default_keys` when that key is not
     /// configured (or the bundle has no Android mapping). Never errors: a mismatched key simply
     /// fails decryption rather than passing a bad token, so falling back is safe. Fallbacks are
-    /// counted (metric only — no per-request log, to avoid spam on high-volume bundles) so a
+    /// counted (metric only; no per-request log, to avoid spam on high-volume bundles) so a
     /// missing expected key or an unmapped enabled bundle is observable.
     #[must_use]
     pub fn android_response_keys(&self, bundle: &BundleIdentifier) -> &AndroidResponseKeys {
@@ -642,6 +642,7 @@ pub enum ErrorCode {
     InvalidToken,
     InvalidDeveloperToken,
     NonceNotFound,
+    RateLimited,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -659,6 +660,7 @@ impl std::fmt::Display for ErrorCode {
             Self::InvalidToken => write!(f, "invalid_token"),
             Self::InvalidDeveloperToken => write!(f, "invalid_developer_token"),
             Self::NonceNotFound => write!(f, "nonce_not_found"),
+            Self::RateLimited => write!(f, "rate_limited"),
         }
     }
 }
@@ -668,6 +670,7 @@ impl ErrorCode {
         match self {
             Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
+            Self::RateLimited => axum::http::StatusCode::TOO_MANY_REQUESTS,
             Self::AttestationRejected
             | Self::BadRequest
             | Self::ExpiredToken
@@ -701,13 +704,14 @@ impl ErrorCode {
             Self::InvalidPublicKey => "Public key has not been attested.",
             Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
             Self::InvalidDeveloperToken => "The provided developer token is invalid or malformed.",
+            Self::RateLimited => "Too many attestation attempts. Please try again later.",
         }
     }
 
     /// Determines whether the request is retryable (**as-is**) or not.
     const fn into_allow_retry(self) -> bool {
         match self {
-            Self::InternalServerError => true,
+            Self::InternalServerError | Self::RateLimited => true,
             Self::AttestationRejected
             | Self::BadRequest
             | Self::ExpiredToken
@@ -1293,7 +1297,7 @@ mod tests {
 
     #[test]
     fn apple_accepted_app_ids_always_contain_canonical() {
-        // Whatever else is accepted, a bundle's canonical App ID must always be — otherwise
+        // Whatever else is accepted, a bundle's canonical App ID must always be; otherwise
         // real store-signed apps would fail attestation.
         for bundle in [
             BundleIdentifier::OrgWorldId,
@@ -1311,7 +1315,7 @@ mod tests {
     #[test]
     fn production_bundles_accept_only_their_canonical_app_id() {
         // The invariant that keeps re-signed builds out of production: a production bundle must
-        // accept exactly its one canonical App ID — never an extra. (Non-prod bundles may carry
+        // accept exactly its one canonical App ID; never an extra. (Non-prod bundles may carry
         // an extra; the staging one does today, asserted below.)
         for bundle in [
             BundleIdentifier::OrgWorldId,

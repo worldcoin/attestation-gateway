@@ -20,7 +20,7 @@ use chrono::{DateTime, Datelike, Utc};
 use redis::aio::ConnectionManager;
 use thiserror::Error;
 
-/// Android `KM_ORIGIN_GENERATED` — key generated inside secure `KeyMint` / Keymaster (TEE / `StrongBox`), not imported.
+/// Android `KM_ORIGIN_GENERATED`: key generated inside secure `KeyMint` / Keymaster (TEE / `StrongBox`), not imported.
 const KM_ORIGIN_GENERATED: u64 = 0;
 
 #[derive(Debug, Error)]
@@ -374,8 +374,10 @@ impl AndroidAttestationError {
             | Self::MissingKeyOrigin
             | Self::InvalidAttestationSignatureDigest
             | Self::InvalidPackageName
-            | Self::CertificateRevoked => false,
-            Self::MissingCertificateDigest | Self::BadCertificateDigestEncoding(_) => true,
+            | Self::CertificateRevoked
+            // Client misconfig: Android attestation sent for a bundle id with no Android digest.
+            | Self::MissingCertificateDigest => false,
+            Self::BadCertificateDigestEncoding(_) => true,
         }
     }
 }

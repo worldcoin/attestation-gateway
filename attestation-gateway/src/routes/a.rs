@@ -122,20 +122,40 @@ impl IntegrityTokenPayload {
 fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) -> RequestError {
     metrics::counter!("attestation_gateway.android_error", "reason" => e.reason_tag()).increment(1);
 
-    if e.is_internal_error() {
-        tracing::error!(error = ?e, "Error validating Android attestation");
-
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: None,
+    match e {
+        AndroidAttestationError::RateLimitExceeded => {
+            tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
+            RequestError {
+                code: ErrorCode::RateLimited,
+                details: None,
+            }
         }
-    } else {
+        // Not device-dependent (the gateway has no Android digest configured for this bundle
+        // identifier), so a precise message leaks nothing and a retry can never succeed.
+        AndroidAttestationError::MissingCertificateDigest => {
+            tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
+            RequestError {
+                code: ErrorCode::BadRequest,
+                details: Some(
+                    "Android attestation is not supported for this bundle identifier.".to_string(),
+                ),
+            }
+        }
+        _ if e.is_internal_error() => {
+            tracing::error!(error = ?e, "Error validating Android attestation");
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: None,
+            }
+        }
         // The precise verify failure stays server-side; the client gets only the coarse
         // default message so rejection reasons don't aid attestation probing.
-        tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
-        RequestError {
-            code: ErrorCode::AttestationRejected,
-            details: None,
+        _ => {
+            tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
+            RequestError {
+                code: ErrorCode::AttestationRejected,
+                details: None,
+            }
         }
     }
 }
@@ -293,7 +313,7 @@ fn validate_apple_attestation_and_get_device_public_key(
     let allowed_aaguid_vec = apple::AAGUID::allowed_for_bundle_identifier(bundle_identifier)
         .map_err(|_| bad_request("Invalid bundle identifier"))?;
 
-    // Canonical App ID only — the re-signed-build allow-list is intentionally scoped to the
+    // Canonical App ID only: the re-signed-build allow-list is intentionally scoped to the
     // `/g` token flow (via `apple_accepted_app_ids`); this `/a` route is unchanged.
     let initial_attestation = apple::decode_and_validate_initial_attestation(
         apple_attestation,
