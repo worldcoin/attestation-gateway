@@ -570,6 +570,18 @@ pub struct ClientException {
     pub internal_debug_info: String,
 }
 
+impl ClientException {
+    /// Builds an `eyre::Report` marked as client-caused: route mappings downcast for
+    /// `ClientException` and return its `code` as a 4xx, while bare (unmarked) errors are
+    /// treated as server faults.
+    pub fn report(code: ErrorCode, internal_debug_info: impl Into<String>) -> eyre::Report {
+        eyre::eyre!(Self {
+            code,
+            internal_debug_info: internal_debug_info.into(),
+        })
+    }
+}
+
 impl Display for ClientException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
