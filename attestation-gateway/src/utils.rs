@@ -151,6 +151,19 @@ impl GlobalConfig {
     /// fails decryption rather than passing a bad token, so falling back is safe. Fallbacks are
     /// counted (metric only; no per-request log, to avoid spam on high-volume bundles) so a
     /// missing expected key or an unmapped enabled bundle is observable.
+    /// Errors with [`ErrorCode::Forbidden`] when `bundle` is not enabled on this deployment.
+    pub fn require_enabled_bundle(&self, bundle: &BundleIdentifier) -> Result<(), RequestError> {
+        if self.enabled_bundle_identifiers.contains(bundle) {
+            return Ok(());
+        }
+
+        tracing::warn!(bundle_identifier = %bundle, message = "Bundle identifier not enabled");
+        Err(RequestError {
+            code: ErrorCode::Forbidden,
+            details: None,
+        })
+    }
+
     #[must_use]
     pub fn android_response_keys(&self, bundle: &BundleIdentifier) -> &AndroidResponseKeys {
         let configured = match bundle.android_app() {

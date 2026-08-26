@@ -244,16 +244,6 @@ impl RevocationListError {
             Self::FetchRevocationsJsonParsing(_) => "fetch_revocations_json".to_string(),
         }
     }
-
-    // Fetching Google's revocation feed is a server dependency; none of its failures are the
-    // client's fault.
-    pub const fn is_internal_error(&self) -> bool {
-        match self {
-            Self::ReqwestError(_)
-            | Self::FetchRevocationsHttp(_)
-            | Self::FetchRevocationsJsonParsing(_) => true,
-        }
-    }
 }
 
 #[derive(Deserialize)]

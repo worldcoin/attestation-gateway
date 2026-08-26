@@ -116,15 +116,7 @@ pub async fn handler(
     )
     .await?;
 
-    if !global_config
-        .enabled_bundle_identifiers
-        .contains(&request.bundle_identifier)
-    {
-        return Err(RequestError {
-            code: ErrorCode::Forbidden,
-            details: None,
-        });
-    }
+    global_config.require_enabled_bundle(&request.bundle_identifier)?;
 
     metrics::counter!("generate_token",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
 

@@ -76,9 +76,11 @@ pub struct IntegrityTokenPayload {
 }
 
 impl IntegrityTokenPayload {
-    pub fn generate(&self, issuer: &str) -> eyre::Result<JwtPayload> {
+    pub fn generate(&self, issuer: &str) -> Result<JwtPayload, RequestError> {
+        // The key comes from a validated attestation, but nothing upstream pins its curve, so
+        // a non-P-256 key is a client problem, not a server fault.
         if self.cnf.len() != 65 {
-            return Err(bad_request("Invalid device public key").into());
+            return Err(bad_request("Invalid device public key"));
         }
 
         let cnf_ec_key = EcKey::from_public_key_affine_coordinates(
@@ -91,8 +93,22 @@ impl IntegrityTokenPayload {
         let cnf_pkey =
             PKey::from_ec_key(cnf_ec_key).map_err(|_| bad_request("Invalid device public key"))?;
 
+        self.build_payload(issuer, &cnf_pkey).map_err(|e| {
+            tracing::error!(error = ?e, "Error generating integrity token payload");
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: None,
+            }
+        })
+    }
+
+    fn build_payload(
+        &self,
+        issuer: &str,
+        cnf_pkey: &PKey<openssl::pkey::Public>,
+    ) -> eyre::Result<JwtPayload> {
         let cnf_key_id = Base64.encode(sha256(&self.cnf));
-        let cnf_jwk = keys::public_key_to_jwk(&cnf_pkey, Some(cnf_key_id))?;
+        let cnf_jwk = keys::public_key_to_jwk(cnf_pkey, Some(cnf_key_id))?;
 
         let mut cfn = josekit::Map::new();
         cfn.insert("jwk".to_string(), josekit::Value::Object(cnf_jwk.into()));
@@ -173,16 +189,7 @@ pub async fn handler(
         tracing::span!(tracing::Level::DEBUG, "a", endpoint = "/a", session_id = %session_id);
     let _enter = tracing_span.enter();
 
-    if !global_config
-        .enabled_bundle_identifiers
-        .contains(&request.bundle_identifier)
-    {
-        tracing::warn!(endpoint = "/a", session_id = %session_id, message = "Bundle identifier not enabled");
-        return Err(RequestError {
-            code: ErrorCode::Forbidden,
-            details: None,
-        });
-    }
+    global_config.require_enabled_bundle(&request.bundle_identifier)?;
 
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
         if matches!(e, NonceDbError::NonceNotFound) {
@@ -303,18 +310,15 @@ fn validate_apple_attestation_and_get_device_public_key(
         apple_root_ca_pem,
     )
     .map_err(|e| {
-        // Expected client rejections log a bounded reason; the full report is reserved for
-        // unexpected errors so warn volume stays flat under client-driven failures.
-        let code = match e.downcast_ref::<ClientException>() {
-            Some(client_error) => {
-                tracing::warn!(endpoint = "/a", error_code = %client_error.code, message = "Apple attestation rejected");
+        let code = e
+            .downcast_ref::<ClientException>()
+            .map_or(ErrorCode::AttestationRejected, |client_error| {
                 client_error.code
-            }
-            None => {
-                tracing::warn!(endpoint = "/a", error = ?e, message = "Apple attestation validation failed");
-                ErrorCode::AttestationRejected
-            }
-        };
+            });
+        metrics::counter!("attestation_gateway.apple_error", "reason" => code.to_string())
+            .increment(1);
+        // `%e` (Display) keeps the log bounded; the full report never leaves the server.
+        tracing::warn!(endpoint = "/a", error_code = %code, error = %e, message = "Apple attestation rejected");
         RequestError {
             code,
             details: None,
@@ -330,17 +334,7 @@ async fn generate_integrity_token(
     issuer: &str,
     integrity_token_payload: IntegrityTokenPayload,
 ) -> Result<String, RequestError> {
-    // An invalid device public key is client data (surfaces as a `bad_request` inside
-    // `generate`), not a server fault; everything else stays a retryable 500.
-    let integrity_token_payload = integrity_token_payload.generate(issuer).map_err(|e| {
-        e.downcast::<RequestError>().unwrap_or_else(|e| {
-            tracing::error!(error = ?e, "Error generating integrity token payload");
-            RequestError {
-                code: ErrorCode::InternalServerError,
-                details: None,
-            }
-        })
-    })?;
+    let integrity_token_payload = integrity_token_payload.generate(issuer)?;
 
     let kms_key = keys::fetch_active_key(redis, aws_config)
         .await

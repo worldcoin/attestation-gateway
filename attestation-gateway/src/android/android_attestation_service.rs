@@ -360,35 +360,30 @@ impl AndroidAttestationError {
     /// client.
     #[must_use]
     pub fn to_request_error(&self) -> RequestError {
-        let (code, details) = match self {
-            // Server faults: 500, retryable. (The bad base64 in
-            // `BadCertificateDigestEncoding` comes from compiled server constants.)
+        let code = match self {
+            // Server faults: 500, retryable. (Revocation list failures are fetches of Google's
+            // feed; the bad base64 in `BadCertificateDigestEncoding` comes from compiled
+            // server constants.)
             Self::InternalRateLimitServiceTryIncr(_)
             | Self::CertChainBuilderNew(_)
             | Self::AnalyticsServiceNew(_)
-            | Self::BadCertificateDigestEncoding(_) => (ErrorCode::InternalServerError, None),
+            | Self::RevocationList(_)
+            | Self::BadCertificateDigestEncoding(_) => ErrorCode::InternalServerError,
 
-            // Mixed sources: the nested error knows whether the server or the client's
+            // Mixed source: the nested error knows whether the server or the client's
             // certificate chain is at fault.
-            Self::RevocationList(e) if e.is_internal_error() => {
-                (ErrorCode::InternalServerError, None)
-            }
-            Self::RevocationList(_) => (ErrorCode::AttestationRejected, None),
             Self::CertChainBuilderBuildChain(e) if e.is_internal_error() => {
-                (ErrorCode::InternalServerError, None)
+                ErrorCode::InternalServerError
             }
-            Self::CertChainBuilderBuildChain(_) => (ErrorCode::AttestationRejected, None),
+            Self::CertChainBuilderBuildChain(_) => ErrorCode::AttestationRejected,
 
             // Transient client state: the per-day quota resets, so a later retry can succeed.
-            Self::RateLimitExceeded => (ErrorCode::RateLimited, None),
+            Self::RateLimitExceeded => ErrorCode::RateLimited,
 
             // Permanent client misconfig: Android attestation for a bundle id with no Android
-            // digest. Not device-dependent, so a precise message leaks nothing and a retry can
-            // never succeed.
-            Self::MissingCertificateDigest => (
-                ErrorCode::BadRequest,
-                Some("Android attestation is not supported for this bundle identifier."),
-            ),
+            // digest. Not device-dependent, so a precise message (below) leaks nothing and a
+            // retry can never succeed.
+            Self::MissingCertificateDigest => ErrorCode::BadRequest,
 
             // Device/attestation rejections: permanent for this key, coarse default message.
             Self::InvalidChallenge
@@ -402,12 +397,14 @@ impl AndroidAttestationError {
             | Self::MissingKeyOrigin
             | Self::InvalidAttestationSignatureDigest
             | Self::InvalidPackageName
-            | Self::CertificateRevoked => (ErrorCode::AttestationRejected, None),
+            | Self::CertificateRevoked => ErrorCode::AttestationRejected,
         };
 
         RequestError {
             code,
-            details: details.map(str::to_string),
+            details: matches!(self, Self::MissingCertificateDigest).then(|| {
+                "Android attestation is not supported for this bundle identifier.".to_string()
+            }),
         }
     }
 }
