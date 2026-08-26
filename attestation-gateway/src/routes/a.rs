@@ -145,8 +145,8 @@ fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) 
     if request_error.code == ErrorCode::InternalServerError {
         tracing::error!(error = ?e, "Error validating Android attestation");
     } else {
-        // The precise verify failure stays server-side; the client gets only the coarse
-        // default message so rejection reasons don't aid attestation probing.
+        // The precise verify failure stays server-side so rejection reasons don't aid
+        // attestation probing.
         tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
     }
     request_error
@@ -310,15 +310,20 @@ fn validate_apple_attestation_and_get_device_public_key(
         apple_root_ca_pem,
     )
     .map_err(|e| {
-        let code = e
-            .downcast_ref::<ClientException>()
-            .map_or(ErrorCode::AttestationRejected, |client_error| {
+        // Client-caused failures are marked `ClientException` inside the apple module; a bare
+        // error is a server fault.
+        let code = match e.downcast_ref::<ClientException>() {
+            Some(client_error) => {
+                tracing::warn!(endpoint = "/a", error_code = %client_error.code, message = "Apple attestation rejected");
                 client_error.code
-            });
+            }
+            None => {
+                tracing::error!(error = ?e, "Error validating Apple attestation");
+                ErrorCode::InternalServerError
+            }
+        };
         metrics::counter!("attestation_gateway.apple_error", "reason" => code.to_string())
             .increment(1);
-        // `%e` (Display) keeps the log bounded; the full report never leaves the server.
-        tracing::warn!(endpoint = "/a", error_code = %code, error = %e, message = "Apple attestation rejected");
         RequestError {
             code,
             details: None,

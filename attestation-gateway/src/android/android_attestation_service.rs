@@ -371,11 +371,11 @@ impl AndroidAttestationError {
             | Self::BadCertificateDigestEncoding(_) => ErrorCode::InternalServerError,
 
             // Mixed source: the nested error knows whether the server or the client's
-            // certificate chain is at fault.
+            // certificate chain is at fault. Non-internal chain errors fall through to the
+            // rejection arm below.
             Self::CertChainBuilderBuildChain(e) if e.is_internal_error() => {
                 ErrorCode::InternalServerError
             }
-            Self::CertChainBuilderBuildChain(_) => ErrorCode::AttestationRejected,
 
             // Transient client state: the per-day quota resets, so a later retry can succeed.
             Self::RateLimitExceeded => ErrorCode::RateLimited,
@@ -386,7 +386,8 @@ impl AndroidAttestationError {
             Self::MissingCertificateDigest => ErrorCode::BadRequest,
 
             // Device/attestation rejections: permanent for this key, coarse default message.
-            Self::InvalidChallenge
+            Self::CertChainBuilderBuildChain(_)
+            | Self::InvalidChallenge
             | Self::LowSecurityLevel
             | Self::InconsistentSecurityLevels
             | Self::StrongBoxChainMismatch
@@ -435,5 +436,24 @@ mod tests {
             &SecurityLevel::TrustedEnvironment,
             false
         ));
+    }
+
+    #[test]
+    fn to_request_error_wire_policy() {
+        let rate_limited = AndroidAttestationError::RateLimitExceeded.to_request_error();
+        assert_eq!(rate_limited.code, ErrorCode::RateLimited);
+        assert_eq!(rate_limited.details, None);
+
+        let missing_digest = AndroidAttestationError::MissingCertificateDigest.to_request_error();
+        assert_eq!(missing_digest.code, ErrorCode::BadRequest);
+        assert_eq!(
+            missing_digest.details.as_deref(),
+            Some("Android attestation is not supported for this bundle identifier.")
+        );
+
+        // Rejections carry no details so rejection reasons don't aid attestation probing.
+        let rejected = AndroidAttestationError::CertificateRevoked.to_request_error();
+        assert_eq!(rejected.code, ErrorCode::AttestationRejected);
+        assert_eq!(rejected.details, None);
     }
 }

@@ -145,13 +145,8 @@ impl GlobalConfig {
         }
     }
 
-    /// Selects the Play Integrity response-encryption keys for `bundle`. Each app family looks up
-    /// its own namespaced key and falls back to `android_default_keys` when that key is not
-    /// configured (or the bundle has no Android mapping). Never errors: a mismatched key simply
-    /// fails decryption rather than passing a bad token, so falling back is safe. Fallbacks are
-    /// counted (metric only; no per-request log, to avoid spam on high-volume bundles) so a
-    /// missing expected key or an unmapped enabled bundle is observable.
-    /// Errors with [`ErrorCode::Forbidden`] when `bundle` is not enabled on this deployment.
+    /// # Errors
+    /// [`ErrorCode::Forbidden`] when `bundle` is not enabled on this deployment.
     pub fn require_enabled_bundle(&self, bundle: &BundleIdentifier) -> Result<(), RequestError> {
         if self.enabled_bundle_identifiers.contains(bundle) {
             return Ok(());
@@ -164,6 +159,12 @@ impl GlobalConfig {
         })
     }
 
+    /// Selects the Play Integrity response-encryption keys for `bundle`. Each app family looks up
+    /// its own namespaced key and falls back to `android_default_keys` when that key is not
+    /// configured (or the bundle has no Android mapping). Never errors: a mismatched key simply
+    /// fails decryption rather than passing a bad token, so falling back is safe. Fallbacks are
+    /// counted (metric only; no per-request log, to avoid spam on high-volume bundles) so a
+    /// missing expected key or an unmapped enabled bundle is observable.
     #[must_use]
     pub fn android_response_keys(&self, bundle: &BundleIdentifier) -> &AndroidResponseKeys {
         let configured = match bundle.android_app() {
@@ -610,7 +611,7 @@ impl IntoResponse for RequestError {
             allow_retry: bool,
             error: ErrorObjectResponse,
         }
-        (
+        let mut response = (
             self.code.into_http_status_code(),
             axum::Json(ErrorResponse {
                 allow_retry: self.code.allow_retry(),
@@ -622,7 +623,17 @@ impl IntoResponse for RequestError {
                 },
             }),
         )
-            .into_response()
+            .into_response();
+
+        // RFC 9110: every 401 must carry an authentication challenge.
+        if self.code == ErrorCode::InvalidDeveloperToken {
+            response.headers_mut().insert(
+                axum::http::header::WWW_AUTHENTICATE,
+                axum::http::HeaderValue::from_static("Bearer"),
+            );
+        }
+
+        response
     }
 }
 
@@ -728,7 +739,8 @@ impl ErrorCode {
         }
     }
 
-    /// Determines whether the request is retryable (**as-is**) or not.
+    /// Whether the failure is transient: a retry of the flow (fresh challenge included) can
+    /// eventually succeed. `false` means the failure is permanent for the same inputs.
     const fn allow_retry(self) -> bool {
         match self {
             Self::InternalServerError | Self::RateLimited => true,
@@ -991,6 +1003,19 @@ impl OutputTokenPayload {
 mod tests {
     use super::*;
     use tracing_test::traced_test;
+
+    #[test]
+    fn rate_limited_is_429_and_retryable_on_the_wire() {
+        assert_eq!(ErrorCode::RateLimited.to_string(), "rate_limited");
+        assert_eq!(
+            ErrorCode::RateLimited.into_http_status_code(),
+            axum::http::StatusCode::TOO_MANY_REQUESTS
+        );
+        assert!(ErrorCode::RateLimited.allow_retry());
+        assert!(ErrorCode::InternalServerError.allow_retry());
+        assert!(!ErrorCode::AttestationRejected.allow_retry());
+        assert!(!ErrorCode::Forbidden.allow_retry());
+    }
 
     #[test]
     #[traced_test]

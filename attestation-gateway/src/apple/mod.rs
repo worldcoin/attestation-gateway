@@ -4,7 +4,6 @@ use crate::utils::{BundleIdentifier, ClientException, ErrorCode, VerificationOut
 use base64::{Engine as _, engine::general_purpose};
 use der_parser::parse_der;
 use dynamo::{fetch_apple_public_key, update_apple_public_key_counter_plus};
-use eyre::ContextCompat;
 use openssl::{
     hash::MessageDigest,
     pkey::PKey,
@@ -44,9 +43,9 @@ pub async fn verify_initial_attestation(
     let attestation_result = decode_and_validate_initial_attestation(
         apple_initial_attestation,
         &request_hash,
-        &bundle_identifier.apple_accepted_app_ids().context(format!(
-            "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
-        ))?,
+        &bundle_identifier
+            .apple_accepted_app_ids()
+            .ok_or_else(|| bundle_without_apple_app_ids(&bundle_identifier))?,
         &AAGUID::allowed_for_bundle_identifier(&bundle_identifier)?,
         apple_root_ca_pem,
     )?;
@@ -101,9 +100,9 @@ pub async fn verify(
     let counter = decode_and_validate_assertion(
         apple_assertion,
         key.public_key,
-        &bundle_identifier.apple_accepted_app_ids().context(format!(
-            "Cannot retrieve `app_id` for bundle identifier: {bundle_identifier}"
-        ))?,
+        &bundle_identifier
+            .apple_accepted_app_ids()
+            .ok_or_else(|| bundle_without_apple_app_ids(bundle_identifier))?,
         request_hash,
         key.counter,
     )?;
@@ -188,9 +187,30 @@ impl AAGUID {
                 // production environment (e.g. through TestFlight distribution)
                 Ok([Self::AppAttest, Self::AppAttestDevelop].to_vec())
             }
-            _ => eyre::bail!("Invalid bundle identifier for Apple verification."),
+            _ => Err(eyre::eyre!(ClientException {
+                code: ErrorCode::InvalidAttestationForApp,
+                internal_debug_info: "bundle identifier is not valid for Apple verification."
+                    .to_string(),
+            })),
         }
     }
+}
+
+/// Marks a failure caused by client-supplied bytes so route mappings return a 4xx instead of a
+/// 500. Any bare (unmarked) error on these paths is treated as a server fault.
+fn invalid_token(internal_debug_info: &str) -> eyre::Report {
+    eyre::eyre!(ClientException {
+        code: ErrorCode::InvalidToken,
+        internal_debug_info: internal_debug_info.to_string(),
+    })
+}
+
+/// The client sent Apple material for a bundle identifier that has no Apple app ids.
+fn bundle_without_apple_app_ids(bundle_identifier: &BundleIdentifier) -> eyre::Report {
+    eyre::eyre!(ClientException {
+        code: ErrorCode::InvalidAttestationForApp,
+        internal_debug_info: format!("no Apple app ids for bundle identifier: {bundle_identifier}"),
+    })
 }
 
 #[derive(Debug)]
@@ -283,17 +303,31 @@ pub fn decode_and_validate_initial_attestation(
     hasher.update(&client_data_hash);
     let nonce: &[u8] = &hasher.finish();
 
-    // Step 4: check nonce
-    let (_, res) = X509Certificate::from_der(&attestation.att_stmt.x5c[0])?;
-    let oid = oid!(1.2.840.113635.100.8.2);
-    let extension = res.get_extension_unique(&oid)?;
-    let (_, content) = parse_der(extension.context("Cannot parse nonce.")?.value)?;
-    let value = content.as_sequence()?;
-    let value = &value[0].as_slice()?;
-    let (_, value) = parse_ber_octetstring(value)?;
-    let attested_nonce = value.as_slice()?;
+    // Guards the direct `auth_data` slice indexing below (steps 6-9 read up to byte 87).
+    if attestation.auth_data.len() < 87 {
+        return Err(invalid_token("attestation auth_data is too short."));
+    }
 
-    if nonce != attested_nonce {
+    // Step 4: check nonce
+    let (_, res) = X509Certificate::from_der(&attestation.att_stmt.x5c[0])
+        .map_err(|_| invalid_token("error decoding attestation certificate."))?;
+    let oid = oid!(1.2.840.113635.100.8.2);
+    let extension = res
+        .get_extension_unique(&oid)
+        .map_err(|_| invalid_token("error parsing nonce extension."))?
+        .ok_or_else(|| invalid_token("nonce extension is missing."))?;
+    let (_, content) =
+        parse_der(extension.value).map_err(|_| invalid_token("error parsing nonce."))?;
+    let attested_nonce = content
+        .as_sequence()
+        .ok()
+        .and_then(|value| value.first())
+        .and_then(|value| value.as_slice().ok())
+        .and_then(|value| parse_ber_octetstring(value).ok())
+        .and_then(|(_, value)| value.as_slice().ok().map(<[u8]>::to_vec))
+        .ok_or_else(|| invalid_token("error parsing nonce."))?;
+
+    if nonce != attested_nonce.as_slice() {
         eyre::bail!(ClientException {
             code: ErrorCode::IntegrityFailed,
             internal_debug_info: "nonce in attestation object does not match provided nonce."
@@ -302,8 +336,12 @@ pub fn decode_and_validate_initial_attestation(
     }
 
     // Step 5: get user's public key
-    let cert = X509::from_der(&attestation.att_stmt.x5c[0])?;
-    let public_key_der = cert.public_key()?.public_key_to_der()?;
+    let cert = X509::from_der(&attestation.att_stmt.x5c[0])
+        .map_err(|_| invalid_token("error decoding attestation certificate."))?;
+    let public_key_der = cert
+        .public_key()
+        .and_then(|key| key.public_key_to_der())
+        .map_err(|_| invalid_token("error extracting attestation certificate public key."))?;
     let public_key = res.public_key().subject_public_key.clone().data;
 
     // Step 6: check app_id against the accepted list
@@ -321,7 +359,10 @@ pub fn decode_and_validate_initial_attestation(
     }
 
     // Step 8: verify `aaguid` is as expected from config
-    let aaguid = AAGUID::from_str(std::str::from_utf8(&attestation.auth_data.clone()[37..53])?)?;
+    let aaguid = std::str::from_utf8(&attestation.auth_data.clone()[37..53])
+        .map_err(eyre::Report::from)
+        .and_then(AAGUID::from_str)
+        .map_err(|_| invalid_token("invalid AAGUID."))?;
 
     if !allowed_aaguid.contains(&aaguid) {
         eyre::bail!(ClientException {
@@ -359,31 +400,38 @@ fn internal_verify_cert_chain_with_store(
     let mut cert_chain = Stack::new()?;
 
     for cert_der in attestation.att_stmt.x5c.iter().rev() {
-        let cert = X509::from_der(cert_der)?;
+        let cert = X509::from_der(cert_der)
+            .map_err(|_| invalid_token("error decoding attestation certificate chain."))?;
         cert_chain.push(cert)?;
     }
 
     let target_cert = cert_chain
-        .get(cert_chain.len() - 1)
-        .context("No certificate found")?;
+        .iter()
+        .last()
+        .ok_or_else(|| invalid_token("attestation certificate chain is empty."))?;
 
     let mut context = X509StoreContext::new()?;
 
-    match context.init(
-        store,
-        target_cert,
-        &cert_chain,
-        openssl::x509::X509StoreContextRef::verify_cert,
-    ) {
-        Ok(result) => {
-            if result {
-                Ok(())
-            } else {
-                eyre::bail!("Certificate verification failed ({})", context.error())
-            }
-        }
-        Err(e) => eyre::bail!("Certificate verification failed ({})", e),
+    let verified = context
+        .init(
+            store,
+            target_cert,
+            &cert_chain,
+            openssl::x509::X509StoreContextRef::verify_cert,
+        )
+        .map_err(|e| invalid_token(&format!("certificate chain verification errored ({e})")))?;
+
+    if !verified {
+        return Err(eyre::eyre!(ClientException {
+            code: ErrorCode::IntegrityFailed,
+            internal_debug_info: format!(
+                "certificate chain verification failed ({})",
+                context.error()
+            ),
+        }));
     }
+
+    Ok(())
 }
 
 /// Implements the verification of `DeviceCheck` *assertions* for iOS.
@@ -406,7 +454,13 @@ fn decode_and_validate_assertion(
 
     let cursor = Cursor::new(assertion_bytes);
 
-    let assertion: Assertion = ciborium::from_reader(cursor)?;
+    let assertion: Assertion = ciborium::from_reader(cursor)
+        .map_err(|_| invalid_token("error decoding cbor formatted assertion."))?;
+
+    // Guards the direct `authenticator_data` slice indexing below (steps 4-5 read up to byte 37).
+    if assertion.authenticator_data.len() < 37 {
+        return Err(invalid_token("assertion authenticator_data is too short."));
+    }
 
     // Step 1 and 2: Calculate nonce
     let mut hasher = Sha256::new();
@@ -422,7 +476,10 @@ fn decode_and_validate_assertion(
     let public_key = PKey::public_key_from_der(&general_purpose::STANDARD.decode(public_key)?)?;
     let mut verifier = Verifier::new(MessageDigest::sha256(), &public_key)?;
     verifier.update(nonce)?;
-    if !verifier.verify(&assertion.signature)? {
+    if !verifier
+        .verify(&assertion.signature)
+        .map_err(|_| invalid_token("error verifying assertion signature."))?
+    {
         eyre::bail!(ClientException {
             code: ErrorCode::InvalidToken,
             internal_debug_info:

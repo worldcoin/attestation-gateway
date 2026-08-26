@@ -96,7 +96,7 @@ fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expect
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (self-signed certificate in certificate chain)"
+        "Error Code: `integrity_failed`. Internal debug info: \"certificate chain verification failed (self-signed certificate in certificate chain)\""
     );
 }
 
@@ -140,7 +140,7 @@ fn test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca() {
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (self-signed certificate in certificate chain)"
+        "Error Code: `integrity_failed`. Internal debug info: \"certificate chain verification failed (self-signed certificate in certificate chain)\""
     );
 }
 
@@ -184,7 +184,7 @@ fn test_verify_cert_chain_failure_with_invalid_root_ca() {
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (unable to get local issuer certificate)"
+        "Error Code: `integrity_failed`. Internal debug info: \"certificate chain verification failed (unable to get local issuer certificate)\""
     );
 }
 
@@ -210,7 +210,7 @@ fn test_verify_initial_attestation_failure_on_self_signed_certificate() {
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (self-signed certificate)"
+        "Error Code: `integrity_failed`. Internal debug info: \"certificate chain verification failed (self-signed certificate)\""
     );
 }
 
@@ -246,7 +246,7 @@ fn test_verify_initial_attestation_failure_on_expired_certificate() {
     let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (certificate has expired)"
+        "Error Code: `integrity_failed`. Internal debug info: \"certificate chain verification failed (certificate has expired)\""
     );
 }
 

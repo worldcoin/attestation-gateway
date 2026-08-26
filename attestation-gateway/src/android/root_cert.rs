@@ -50,9 +50,8 @@ impl RootCertError {
         }
     }
 
-    // The terminal certificate is usually the trusted store's anchor, but the legacy factory
-    // fallback keeps the client's own root (pinned by public key only), so parse and serial
-    // failures stay classified as client faults.
+    /// Parse and serial failures stay client-classified: the legacy factory fallback keeps the
+    /// client's own root in the verified chain (pinned by public key only).
     pub const fn is_internal_error(&self) -> bool {
         match self {
             Self::DerEncoding => true,
