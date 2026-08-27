@@ -141,15 +141,19 @@ impl IntegrityTokenPayload {
 fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) -> RequestError {
     metrics::counter!("attestation_gateway.android_error", "reason" => e.reason_tag()).increment(1);
 
-    let request_error = e.to_request_error();
-    if request_error.code == ErrorCode::InternalServerError {
+    let code = e.to_error_code();
+    if code == ErrorCode::InternalServerError {
         tracing::error!(error = ?e, "Error validating Android attestation");
     } else {
         // The precise verify failure stays server-side so rejection reasons don't aid
         // attestation probing.
         tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
     }
-    request_error
+
+    RequestError {
+        code,
+        details: None,
+    }
 }
 
 fn infer_platform(request: &Request) -> Result<Platform, RequestError> {

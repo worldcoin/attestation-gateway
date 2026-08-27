@@ -13,7 +13,7 @@ use crate::{
         rate_limit_service::{RateLimitService, RateLimitServiceTryIncrError},
         revocation_list::{RevocationList, RevocationListError},
     },
-    utils::{BundleIdentifier, ErrorCode, RequestError},
+    utils::{BundleIdentifier, ErrorCode},
 };
 use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::{DateTime, Datelike, Utc};
@@ -355,12 +355,12 @@ impl AndroidAttestationError {
         }
     }
 
-    /// Client-facing policy for this failure. The [`ErrorCode`] decides the HTTP status and
-    /// `allowRetry` value on the wire, so every variant states explicitly how it reaches the
-    /// client.
+    /// Client-facing policy for this failure. The code decides the HTTP status and `allowRetry`
+    /// value on the wire, so every variant states explicitly how it reaches the client. The
+    /// precise reason never leaves the server: it goes to the log and the `reason_tag` metric.
     #[must_use]
-    pub fn to_request_error(&self) -> RequestError {
-        let code = match self {
+    pub const fn to_error_code(&self) -> ErrorCode {
+        match self {
             // Server faults: 500, retryable. (Revocation list failures are fetches of Google's
             // feed; the bad base64 in `BadCertificateDigestEncoding` comes from compiled
             // server constants.)
@@ -383,9 +383,8 @@ impl AndroidAttestationError {
             // Transient client state: the per-day quota resets, so a later retry can succeed.
             Self::RateLimitExceeded => ErrorCode::RateLimited,
 
-            // Permanent client misconfig: Android attestation for a bundle id with no Android
-            // digest. Not device-dependent, so a precise message (below) leaks nothing and a
-            // retry can never succeed.
+            // Permanent client mistake: an Android attestation for an Apple-only bundle id. Not
+            // a verdict on the device, and no retry can succeed.
             Self::MissingCertificateDigest => ErrorCode::BadRequest,
 
             // Device/attestation rejections: permanent for this key, coarse default message.
@@ -401,13 +400,6 @@ impl AndroidAttestationError {
             | Self::InvalidAttestationSignatureDigest
             | Self::InvalidPackageName
             | Self::CertificateRevoked => ErrorCode::AttestationRejected,
-        };
-
-        RequestError {
-            code,
-            details: matches!(self, Self::MissingCertificateDigest).then(|| {
-                "Android attestation is not supported for this bundle identifier.".to_string()
-            }),
         }
     }
 }
@@ -441,21 +433,19 @@ mod tests {
     }
 
     #[test]
-    fn to_request_error_wire_policy() {
-        let rate_limited = AndroidAttestationError::RateLimitExceeded.to_request_error();
-        assert_eq!(rate_limited.code, ErrorCode::RateLimited);
-        assert_eq!(rate_limited.details, None);
-
-        let missing_digest = AndroidAttestationError::MissingCertificateDigest.to_request_error();
-        assert_eq!(missing_digest.code, ErrorCode::BadRequest);
+    fn to_error_code_wire_policy() {
         assert_eq!(
-            missing_digest.details.as_deref(),
-            Some("Android attestation is not supported for this bundle identifier.")
+            AndroidAttestationError::RateLimitExceeded.to_error_code(),
+            ErrorCode::RateLimited
         );
-
-        // Rejections carry no details so rejection reasons don't aid attestation probing.
-        let rejected = AndroidAttestationError::CertificateRevoked.to_request_error();
-        assert_eq!(rejected.code, ErrorCode::AttestationRejected);
-        assert_eq!(rejected.details, None);
+        assert_eq!(
+            AndroidAttestationError::MissingCertificateDigest.to_error_code(),
+            ErrorCode::BadRequest
+        );
+        // Every device rejection collapses to one code so the reason can't be probed.
+        assert_eq!(
+            AndroidAttestationError::CertificateRevoked.to_error_code(),
+            ErrorCode::AttestationRejected
+        );
     }
 }
