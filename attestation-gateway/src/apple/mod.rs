@@ -271,14 +271,7 @@ pub fn decode_and_validate_initial_attestation(
     // REFERENCE https://developer.apple.com/documentation/devicecheck/validating-apps-that-connect-to-your-server#Verify-the-attestation
 
     // Step 1: verify certificate chain against the provided root CA
-    let root_cert = X509::from_pem(apple_root_ca_pem)?;
-    let store_param = X509VerifyParam::new()?;
-    // store_param.set_flags(X509VerifyFlags::X509_STRICT)?;
-    let mut store_builder = X509StoreBuilder::new()?;
-    store_builder.set_param(&store_param)?;
-    store_builder.add_cert(root_cert)?;
-    let store = store_builder.build();
-    internal_verify_cert_chain_with_store(&attestation, &store)?;
+    verify_cert_chain_against_root(&attestation, apple_root_ca_pem)?;
 
     // Step 2 and 3: create clientDataHash from the `challenge` (internally called "request_hash")
     let mut hasher = Sha256::new();
@@ -394,6 +387,22 @@ fn extract_attested_nonce(cert: &X509Certificate) -> eyre::Result<Vec<u8>> {
         .and_then(|value| parse_ber_octetstring(value).ok())
         .and_then(|(_, value)| value.as_slice().ok().map(<[u8]>::to_vec))
         .ok_or_else(|| ClientException::report(ErrorCode::InvalidToken, "error parsing nonce."))
+}
+
+/// Builds a trust store holding `apple_root_ca_pem` and verifies the attestation chain against it.
+/// The PEM is a compiled-in server constant, so failures building the store stay unmarked.
+fn verify_cert_chain_against_root(
+    attestation: &Attestation,
+    apple_root_ca_pem: &[u8],
+) -> eyre::Result<()> {
+    let root_cert = X509::from_pem(apple_root_ca_pem)?;
+    let store_param = X509VerifyParam::new()?;
+    // store_param.set_flags(X509VerifyFlags::X509_STRICT)?;
+    let mut store_builder = X509StoreBuilder::new()?;
+    store_builder.set_param(&store_param)?;
+    store_builder.add_cert(root_cert)?;
+
+    internal_verify_cert_chain_with_store(attestation, &store_builder.build())
 }
 
 /// Implements the verification of the certificate chain for `DeviceCheck` attestations. Expects a store with the trusted root CA from Apple.
