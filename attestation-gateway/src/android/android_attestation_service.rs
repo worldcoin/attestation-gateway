@@ -370,11 +370,14 @@ impl AndroidAttestationError {
             | Self::RevocationList(_)
             | Self::BadCertificateDigestEncoding(_) => ErrorCode::InternalServerError,
 
-            // Mixed source: the nested error knows whether the server or the client's
-            // certificate chain is at fault. Non-internal chain errors fall through to the
-            // rejection arm below.
-            Self::CertChainBuilderBuildChain(e) if e.is_internal_error() => {
-                ErrorCode::InternalServerError
+            // Mixed source: only the nested error knows whether the server or the client's
+            // certificate chain is at fault.
+            Self::CertChainBuilderBuildChain(e) => {
+                if e.is_internal_error() {
+                    ErrorCode::InternalServerError
+                } else {
+                    ErrorCode::AttestationRejected
+                }
             }
 
             // Transient client state: the per-day quota resets, so a later retry can succeed.
@@ -386,8 +389,7 @@ impl AndroidAttestationError {
             Self::MissingCertificateDigest => ErrorCode::BadRequest,
 
             // Device/attestation rejections: permanent for this key, coarse default message.
-            Self::CertChainBuilderBuildChain(_)
-            | Self::InvalidChallenge
+            Self::InvalidChallenge
             | Self::LowSecurityLevel
             | Self::InconsistentSecurityLevels
             | Self::StrongBoxChainMismatch
