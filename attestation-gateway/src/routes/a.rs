@@ -316,15 +316,12 @@ fn validate_apple_attestation_and_get_device_public_key(
     .map_err(|e| {
         // Client-caused failures are marked `ClientException` inside the apple module; a bare
         // error is a server fault.
-        let code = match e.downcast_ref::<ClientException>() {
-            Some(client_error) => {
-                tracing::warn!(endpoint = "/a", error_code = %client_error.code, message = "Apple attestation rejected");
-                client_error.code
-            }
-            None => {
-                tracing::error!(error = ?e, "Error validating Apple attestation");
-                ErrorCode::InternalServerError
-            }
+        let code = if let Some(client_error) = e.downcast_ref::<ClientException>() {
+            tracing::warn!(endpoint = "/a", error_code = %client_error.code, message = "Apple attestation rejected");
+            client_error.code
+        } else {
+            tracing::error!(error = ?e, "Error validating Apple attestation");
+            ErrorCode::InternalServerError
         };
         metrics::counter!("attestation_gateway.apple_error", "reason" => code.to_string())
             .increment(1);
