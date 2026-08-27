@@ -65,7 +65,7 @@ impl GlobalConfig {
     /// # Panics
     /// If required environment variables are not set
     pub fn from_env() -> Self {
-        // Default (legacy) Android response keys — kept required so the service always has a
+        // Default (legacy) Android response keys; kept required so the service always has a
         // working fallback. Per-app namespaced keys are layered on top below.
         let android_default_keys = AndroidResponseKeys {
             outer_jwe_private_key: env::var("ANDROID_OUTER_JWE_PRIVATE_KEY")
@@ -145,11 +145,31 @@ impl GlobalConfig {
         }
     }
 
+    /// # Errors
+    /// [`ErrorCode::Forbidden`] when `bundle` is not enabled on this deployment.
+    pub fn require_enabled_bundle(&self, bundle: &BundleIdentifier) -> Result<(), RequestError> {
+        if self.enabled_bundle_identifiers.contains(bundle) {
+            return Ok(());
+        }
+
+        // Metric only, no per-request log: an app version pinned to a disabled bundle retries
+        // forever and would flood the logs (same reasoning as `android_response_keys` below).
+        metrics::counter!(
+            "attestation_gateway.disabled_bundle_identifier",
+            "bundle_identifier" => bundle.to_string(),
+        )
+        .increment(1);
+        Err(RequestError {
+            code: ErrorCode::Forbidden,
+            details: None,
+        })
+    }
+
     /// Selects the Play Integrity response-encryption keys for `bundle`. Each app family looks up
     /// its own namespaced key and falls back to `android_default_keys` when that key is not
     /// configured (or the bundle has no Android mapping). Never errors: a mismatched key simply
     /// fails decryption rather than passing a bad token, so falling back is safe. Fallbacks are
-    /// counted (metric only — no per-request log, to avoid spam on high-volume bundles) so a
+    /// counted (metric only; no per-request log, to avoid spam on high-volume bundles) so a
     /// missing expected key or an unmapped enabled bundle is observable.
     #[must_use]
     pub fn android_response_keys(&self, bundle: &BundleIdentifier) -> &AndroidResponseKeys {
@@ -556,6 +576,18 @@ pub struct ClientException {
     pub internal_debug_info: String,
 }
 
+impl ClientException {
+    /// Builds an `eyre::Report` marked as client-caused: route mappings downcast for
+    /// `ClientException` and return its `code` as a 4xx, while bare (unmarked) errors are
+    /// treated as server faults.
+    pub fn report(code: ErrorCode, internal_debug_info: impl Into<String>) -> eyre::Report {
+        eyre::eyre!(Self {
+            code,
+            internal_debug_info: internal_debug_info.into(),
+        })
+    }
+}
+
 impl Display for ClientException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -597,10 +629,11 @@ impl IntoResponse for RequestError {
             allow_retry: bool,
             error: ErrorObjectResponse,
         }
-        (
-            self.code.into_http_status_code(),
+        let status = self.code.into_http_status_code();
+        let mut response = (
+            status,
             axum::Json(ErrorResponse {
-                allow_retry: self.code.into_allow_retry(),
+                allow_retry: self.code.allow_retry(),
                 error: ErrorObjectResponse {
                     code: self.code.to_string(),
                     message: self
@@ -609,11 +642,47 @@ impl IntoResponse for RequestError {
                 },
             }),
         )
-            .into_response()
+            .into_response();
+
+        // RFC 9110: every 401 must carry an authentication challenge. Keyed off the status, not
+        // the code, so a second 401 code can't silently ship without the header.
+        if status == axum::http::StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                axum::http::header::WWW_AUTHENTICATE,
+                axum::http::HeaderValue::from_static("Bearer"),
+            );
+        }
+
+        // `allow_retry` is true for 429, so the client needs a bound or it retries hot. The only
+        // rate limit today is the per-device daily quota in `RateLimitService`, which resets at
+        // UTC midnight; revisit this if a limiter on another window is added.
+        if status == axum::http::StatusCode::TOO_MANY_REQUESTS {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(seconds_until_utc_midnight()),
+            );
+        }
+
+        response
     }
 }
 
 impl std::error::Error for RequestError {}
+
+/// Seconds until the daily rate-limit window rolls over, mirroring the key math in
+/// [`RateLimitService::try_incr`](crate::android::rate_limit_service::RateLimitService::try_incr).
+/// Floors at 1 so `Retry-After: 0` never invites an immediate retry.
+fn seconds_until_utc_midnight() -> u64 {
+    let now = chrono::Utc::now();
+    let reset = (now.date_naive() + chrono::Days::new(1))
+        .and_time(chrono::NaiveTime::MIN)
+        .and_utc();
+    reset
+        .signed_duration_since(now)
+        .num_seconds()
+        .clamp(1, 86_400)
+        .unsigned_abs()
+}
 
 /// Session identifier World App sends in the `sessionId` header on every request.
 ///
@@ -634,6 +703,7 @@ pub enum ErrorCode {
     BadRequest,
     DuplicateRequestHash,
     ExpiredToken,
+    Forbidden,
     IntegrityFailed,
     InternalServerError,
     InvalidAttestationForApp,
@@ -642,6 +712,7 @@ pub enum ErrorCode {
     InvalidToken,
     InvalidDeveloperToken,
     NonceNotFound,
+    RateLimited,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -651,6 +722,7 @@ impl std::fmt::Display for ErrorCode {
             Self::BadRequest => write!(f, "bad_request"),
             Self::DuplicateRequestHash => write!(f, "duplicate_request_hash"),
             Self::ExpiredToken => write!(f, "expired_token"),
+            Self::Forbidden => write!(f, "forbidden"),
             Self::IntegrityFailed => write!(f, "integrity_failed"),
             Self::InternalServerError => write!(f, "internal_server_error"),
             Self::InvalidAttestationForApp => write!(f, "invalid_attestation_for_app"),
@@ -659,6 +731,7 @@ impl std::fmt::Display for ErrorCode {
             Self::InvalidToken => write!(f, "invalid_token"),
             Self::InvalidDeveloperToken => write!(f, "invalid_developer_token"),
             Self::NonceNotFound => write!(f, "nonce_not_found"),
+            Self::RateLimited => write!(f, "rate_limited"),
         }
     }
 }
@@ -667,16 +740,19 @@ impl ErrorCode {
     const fn into_http_status_code(self) -> axum::http::StatusCode {
         match self {
             Self::InternalServerError => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Self::DuplicateRequestHash => axum::http::StatusCode::CONFLICT,
+            Self::DuplicateRequestHash | Self::InvalidInitialAttestation => {
+                axum::http::StatusCode::CONFLICT
+            }
+            Self::RateLimited => axum::http::StatusCode::TOO_MANY_REQUESTS,
+            Self::Forbidden => axum::http::StatusCode::FORBIDDEN,
+            Self::InvalidDeveloperToken => axum::http::StatusCode::UNAUTHORIZED,
             Self::AttestationRejected
             | Self::BadRequest
             | Self::ExpiredToken
             | Self::IntegrityFailed
             | Self::InvalidAttestationForApp
-            | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
             | Self::InvalidToken
-            | Self::InvalidDeveloperToken
             | Self::NonceNotFound => axum::http::StatusCode::BAD_REQUEST,
         }
     }
@@ -688,8 +764,11 @@ impl ErrorCode {
                 "The challenge nonce is unknown or has expired. Request a new challenge."
             }
             Self::BadRequest => "The request is malformed.",
-            Self::DuplicateRequestHash => "The `request_hash` has already been used.",
+            Self::DuplicateRequestHash => {
+                "The `request_hash` has already been used. Generate a new one."
+            }
             Self::ExpiredToken => "The integrity token has expired. Please generate a new one.",
+            Self::Forbidden => "This bundle identifier is not enabled on this deployment.",
             Self::IntegrityFailed => "Integrity checks have not passed.",
             Self::InternalServerError => "Internal server error. Please try again.",
             Self::InvalidAttestationForApp => {
@@ -701,24 +780,35 @@ impl ErrorCode {
             Self::InvalidPublicKey => "Public key has not been attested.",
             Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
             Self::InvalidDeveloperToken => "The provided developer token is invalid or malformed.",
+            Self::RateLimited => "Too many attestation attempts. Please try again later.",
         }
     }
 
-    /// Determines whether the request is retryable (**as-is**) or not.
-    const fn into_allow_retry(self) -> bool {
+    /// Whether restarting the flow can succeed. The client is expected to re-run the whole
+    /// attestation (new challenge, new `request_hash`, new attestation object), not to replay the
+    /// identical request, so anything the client can fix by starting over is `true`.
+    ///
+    /// `false` means no amount of retrying helps: the device, the app build or the credential is
+    /// rejected, and the user needs a different device, build or certificate.
+    const fn allow_retry(self) -> bool {
         match self {
-            Self::InternalServerError => true,
+            // Server fault, or client state that clears on its own.
+            Self::InternalServerError
+            | Self::RateLimited
+            // Stale or already-spent inputs. The message for each of these tells the client to
+            // fetch a fresh one, so `false` here would contradict the response body.
+            | Self::DuplicateRequestHash
+            | Self::ExpiredToken
+            | Self::NonceNotFound => true,
             Self::AttestationRejected
             | Self::BadRequest
-            | Self::ExpiredToken
+            | Self::Forbidden
             | Self::IntegrityFailed
             | Self::InvalidAttestationForApp
             | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
             | Self::InvalidToken
-            | Self::InvalidDeveloperToken
-            | Self::DuplicateRequestHash
-            | Self::NonceNotFound => false,
+            | Self::InvalidDeveloperToken => false,
         }
     }
 }
@@ -966,6 +1056,76 @@ impl OutputTokenPayload {
 mod tests {
     use super::*;
     use tracing_test::traced_test;
+
+    #[test]
+    fn rate_limited_is_429_and_retryable_on_the_wire() {
+        assert_eq!(ErrorCode::RateLimited.to_string(), "rate_limited");
+        assert_eq!(
+            ErrorCode::RateLimited.into_http_status_code(),
+            axum::http::StatusCode::TOO_MANY_REQUESTS
+        );
+        assert!(ErrorCode::RateLimited.allow_retry());
+        assert!(ErrorCode::InternalServerError.allow_retry());
+        assert!(!ErrorCode::AttestationRejected.allow_retry());
+        assert!(!ErrorCode::Forbidden.allow_retry());
+    }
+
+    /// Every one of these tells the client, in its own default message, to fetch a fresh input.
+    /// `allow_retry` has to agree or the response contradicts itself.
+    #[test]
+    fn codes_that_ask_for_a_fresh_input_are_retryable() {
+        for code in [
+            ErrorCode::NonceNotFound,
+            ErrorCode::DuplicateRequestHash,
+            ErrorCode::ExpiredToken,
+        ] {
+            assert!(code.allow_retry(), "{code} should be retryable");
+        }
+
+        // Rejections of the device, the build or the credential stay permanent.
+        for code in [
+            ErrorCode::AttestationRejected,
+            ErrorCode::IntegrityFailed,
+            ErrorCode::InvalidDeveloperToken,
+            ErrorCode::InvalidInitialAttestation,
+        ] {
+            assert!(!code.allow_retry(), "{code} should not be retryable");
+        }
+    }
+
+    #[test]
+    fn retryable_429_carries_a_retry_after_bound() {
+        let response = RequestError {
+            code: ErrorCode::RateLimited,
+            details: None,
+        }
+        .into_response();
+
+        let retry_after = response
+            .headers()
+            .get(axum::http::header::RETRY_AFTER)
+            .expect("429 must bound the retry it invites");
+        let seconds: u64 = retry_after.to_str().unwrap().parse().unwrap();
+        assert!((1..=86_400).contains(&seconds), "got {seconds}");
+    }
+
+    #[test]
+    fn unauthorized_carries_an_authentication_challenge() {
+        let response = RequestError {
+            code: ErrorCode::InvalidDeveloperToken,
+            details: None,
+        }
+        .into_response();
+
+        assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::WWW_AUTHENTICATE)
+                .unwrap(),
+            "Bearer"
+        );
+    }
 
     #[test]
     #[traced_test]
@@ -1293,7 +1453,7 @@ mod tests {
 
     #[test]
     fn apple_accepted_app_ids_always_contain_canonical() {
-        // Whatever else is accepted, a bundle's canonical App ID must always be — otherwise
+        // Whatever else is accepted, a bundle's canonical App ID must always be; otherwise
         // real store-signed apps would fail attestation.
         for bundle in [
             BundleIdentifier::OrgWorldId,
@@ -1311,7 +1471,7 @@ mod tests {
     #[test]
     fn production_bundles_accept_only_their_canonical_app_id() {
         // The invariant that keeps re-signed builds out of production: a production bundle must
-        // accept exactly its one canonical App ID — never an extra. (Non-prod bundles may carry
+        // accept exactly its one canonical App ID; never an extra. (Non-prod bundles may carry
         // an extra; the staging one does today, asserted below.)
         for bundle in [
             BundleIdentifier::OrgWorldId,

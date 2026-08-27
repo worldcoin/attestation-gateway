@@ -116,15 +116,7 @@ pub async fn handler(
     )
     .await?;
 
-    if !global_config
-        .enabled_bundle_identifiers
-        .contains(&request.bundle_identifier)
-    {
-        return Err(RequestError {
-            code: ErrorCode::BadRequest,
-            details: Some("This bundle identifier is currently unavailable.".to_string()),
-        });
-    }
+    global_config.require_enabled_bundle(&request.bundle_identifier)?;
 
     metrics::counter!("generate_token",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
 
@@ -326,7 +318,7 @@ async fn verify_android_or_apple_integrity(
         .client_exception
         .map(|err| err.internal_debug_info);
     if let Some(developer_token) = verify_result.developer_token {
-        // `sub` is optional — some certificate roles carry the issuer identity
+        // `sub` is optional: some certificate roles carry the issuer identity
         // in `extra.issuer_email` instead.
         report.dev_check_sub = developer_token.sub;
         report.extra = developer_token.extra;
@@ -479,8 +471,10 @@ async fn handle_client_error_if_applicable(
 ///
 /// Returns `Ok(None)` when the header is absent (i.e. a regular Android/Apple attestation
 /// request). Returns `Ok(Some(token))` for a well-formed `Authorization: Bearer <token>`.
-/// Returns `RequestError` with [`ErrorCode::InvalidDeveloperToken`] if the header is present
-/// but malformed (non-ASCII, missing scheme, missing token, or wrong scheme).
+/// Returns `RequestError` with [`ErrorCode::BadRequest`] if the header is present but
+/// malformed (non-ASCII, missing scheme, missing token, or wrong scheme);
+/// [`ErrorCode::InvalidDeveloperToken`] is reserved for a parsed token that fails
+/// verification.
 ///
 /// The auth scheme name is matched case-insensitively, per RFC 7235 §2.1.
 fn extract_bearer_token(headers: &HeaderMap) -> Result<Option<String>, RequestError> {
@@ -489,18 +483,18 @@ fn extract_bearer_token(headers: &HeaderMap) -> Result<Option<String>, RequestEr
     };
 
     let raw = value.to_str().map_err(|_| RequestError {
-        code: ErrorCode::InvalidDeveloperToken,
+        code: ErrorCode::BadRequest,
         details: Some("Invalid `Authorization` header value.".to_string()),
     })?;
 
     let (scheme, token) = raw.split_once(char::is_whitespace).ok_or(RequestError {
-        code: ErrorCode::InvalidDeveloperToken,
+        code: ErrorCode::BadRequest,
         details: Some("`Authorization` header must use the `Bearer` scheme.".to_string()),
     })?;
 
     if !scheme.eq_ignore_ascii_case("Bearer") {
         return Err(RequestError {
-            code: ErrorCode::InvalidDeveloperToken,
+            code: ErrorCode::BadRequest,
             details: Some("`Authorization` header must use the `Bearer` scheme.".to_string()),
         });
     }
@@ -508,7 +502,7 @@ fn extract_bearer_token(headers: &HeaderMap) -> Result<Option<String>, RequestEr
     let token = token.trim();
     if token.is_empty() {
         return Err(RequestError {
-            code: ErrorCode::InvalidDeveloperToken,
+            code: ErrorCode::BadRequest,
             details: Some("`Authorization: Bearer` token is empty.".to_string()),
         });
     }

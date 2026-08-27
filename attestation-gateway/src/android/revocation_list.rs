@@ -3,7 +3,7 @@
 //! present (time already spent in upstream caches per RFC 7234).
 //!
 //! Construct with [`AndroidRevocationList::connect`] (async) so the first snapshot is loaded before
-//! use. The live cache is an [`Arc`] swapped atomically ([`arc_swap::ArcSwap`]) — no mutexes.
+//! use. The live cache is an [`Arc`] swapped atomically ([`arc_swap::ArcSwap`]): no mutexes.
 //!
 //! **Contract:** do not run two [`Self::refresh`] calls concurrently (e.g. only one background task).
 //! If that is violated, both may still complete; the last successful [`store`](arc_swap::ArcSwap::store)
@@ -242,14 +242,6 @@ impl RevocationListError {
             Self::ReqwestError(_) => "reqwest_error".to_string(),
             Self::FetchRevocationsHttp(_) => "fetch_revocations_http".to_string(),
             Self::FetchRevocationsJsonParsing(_) => "fetch_revocations_json".to_string(),
-        }
-    }
-
-    pub const fn is_internal_error(&self) -> bool {
-        match self {
-            Self::ReqwestError(_)
-            | Self::FetchRevocationsHttp(_)
-            | Self::FetchRevocationsJsonParsing(_) => false,
         }
     }
 }

@@ -13,14 +13,14 @@ use crate::{
         rate_limit_service::{RateLimitService, RateLimitServiceTryIncrError},
         revocation_list::{RevocationList, RevocationListError},
     },
-    utils::BundleIdentifier,
+    utils::{BundleIdentifier, ErrorCode},
 };
 use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::{DateTime, Datelike, Utc};
 use redis::aio::ConnectionManager;
 use thiserror::Error;
 
-/// Android `KM_ORIGIN_GENERATED` — key generated inside secure `KeyMint` / Keymaster (TEE / `StrongBox`), not imported.
+/// Android `KM_ORIGIN_GENERATED`: key generated inside secure `KeyMint` / Keymaster (TEE / `StrongBox`), not imported.
 const KM_ORIGIN_GENERATED: u64 = 0;
 
 #[derive(Debug, Error)]
@@ -355,15 +355,40 @@ impl AndroidAttestationError {
         }
     }
 
-    pub const fn is_internal_error(&self) -> bool {
+    /// Client-facing policy for this failure. The code decides the HTTP status and `allowRetry`
+    /// value on the wire, so every variant states explicitly how it reaches the client. The
+    /// precise reason never leaves the server: it goes to the log and the `reason_tag` metric.
+    #[must_use]
+    pub const fn to_error_code(&self) -> ErrorCode {
         match self {
+            // Server faults: 500, retryable. (Revocation list failures are fetches of Google's
+            // feed; the bad base64 in `BadCertificateDigestEncoding` comes from compiled
+            // server constants.)
             Self::InternalRateLimitServiceTryIncr(_)
             | Self::CertChainBuilderNew(_)
-            | Self::AnalyticsServiceNew(_) => true,
-            Self::RevocationList(e) => e.is_internal_error(),
-            Self::CertChainBuilderBuildChain(e) => e.is_internal_error(),
-            Self::RateLimitExceeded
-            | Self::InvalidChallenge
+            | Self::AnalyticsServiceNew(_)
+            | Self::RevocationList(_)
+            | Self::BadCertificateDigestEncoding(_) => ErrorCode::InternalServerError,
+
+            // Mixed source: only the nested error knows whether the server or the client's
+            // certificate chain is at fault.
+            Self::CertChainBuilderBuildChain(e) => {
+                if e.is_internal_error() {
+                    ErrorCode::InternalServerError
+                } else {
+                    ErrorCode::AttestationRejected
+                }
+            }
+
+            // Transient client state: the per-day quota resets, so a later retry can succeed.
+            Self::RateLimitExceeded => ErrorCode::RateLimited,
+
+            // Permanent client mistake: an Android attestation for an Apple-only bundle id. Not
+            // a verdict on the device, and no retry can succeed.
+            Self::MissingCertificateDigest => ErrorCode::BadRequest,
+
+            // Device/attestation rejections: permanent for this key, coarse default message.
+            Self::InvalidChallenge
             | Self::LowSecurityLevel
             | Self::InconsistentSecurityLevels
             | Self::StrongBoxChainMismatch
@@ -374,8 +399,7 @@ impl AndroidAttestationError {
             | Self::MissingKeyOrigin
             | Self::InvalidAttestationSignatureDigest
             | Self::InvalidPackageName
-            | Self::CertificateRevoked => false,
-            Self::MissingCertificateDigest | Self::BadCertificateDigestEncoding(_) => true,
+            | Self::CertificateRevoked => ErrorCode::AttestationRejected,
         }
     }
 }
@@ -406,5 +430,22 @@ mod tests {
             &SecurityLevel::TrustedEnvironment,
             false
         ));
+    }
+
+    #[test]
+    fn to_error_code_wire_policy() {
+        assert_eq!(
+            AndroidAttestationError::RateLimitExceeded.to_error_code(),
+            ErrorCode::RateLimited
+        );
+        assert_eq!(
+            AndroidAttestationError::MissingCertificateDigest.to_error_code(),
+            ErrorCode::BadRequest
+        );
+        // Every device rejection collapses to one code so the reason can't be probed.
+        assert_eq!(
+            AndroidAttestationError::CertificateRevoked.to_error_code(),
+            ErrorCode::AttestationRejected
+        );
     }
 }
