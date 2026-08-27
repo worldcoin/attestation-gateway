@@ -271,14 +271,7 @@ pub fn decode_and_validate_initial_attestation(
     // REFERENCE https://developer.apple.com/documentation/devicecheck/validating-apps-that-connect-to-your-server#Verify-the-attestation
 
     // Step 1: verify certificate chain against the provided root CA
-    let root_cert = X509::from_pem(apple_root_ca_pem)?;
-    let store_param = X509VerifyParam::new()?;
-    // store_param.set_flags(X509VerifyFlags::X509_STRICT)?;
-    let mut store_builder = X509StoreBuilder::new()?;
-    store_builder.set_param(&store_param)?;
-    store_builder.add_cert(root_cert)?;
-    let store = store_builder.build();
-    internal_verify_cert_chain_with_store(&attestation, &store)?;
+    verify_cert_chain_against_root(&attestation, apple_root_ca_pem)?;
 
     // Step 2 and 3: create clientDataHash from the `challenge` (internally called "request_hash")
     let mut hasher = Sha256::new();
@@ -306,9 +299,18 @@ pub fn decode_and_validate_initial_attestation(
         )
     };
 
+    // The leaf credential certificate. Step 1 already rejects an empty chain, but read it
+    // explicitly instead of indexing: the release profile is `panic = "abort"`, so an `x5c[0]`
+    // that ever became reachable would take the process down rather than fail the request.
+    let leaf_cert_der = attestation.att_stmt.x5c.first().ok_or_else(|| {
+        ClientException::report(
+            ErrorCode::InvalidToken,
+            "attestation certificate chain is empty.",
+        )
+    })?;
+
     // Step 4: check nonce
-    let (_, res) =
-        X509Certificate::from_der(&attestation.att_stmt.x5c[0]).map_err(|_| invalid_cert())?;
+    let (_, res) = X509Certificate::from_der(leaf_cert_der).map_err(|_| invalid_cert())?;
     let attested_nonce = extract_attested_nonce(&res)?;
 
     if nonce != attested_nonce.as_slice() {
@@ -319,7 +321,7 @@ pub fn decode_and_validate_initial_attestation(
     }
 
     // Step 5: get user's public key
-    let cert = X509::from_der(&attestation.att_stmt.x5c[0]).map_err(|_| invalid_cert())?;
+    let cert = X509::from_der(leaf_cert_der).map_err(|_| invalid_cert())?;
     let public_key_der = cert
         .public_key()
         .and_then(|key| key.public_key_to_der())
@@ -404,6 +406,22 @@ fn extract_attested_nonce(cert: &X509Certificate) -> eyre::Result<Vec<u8>> {
         .ok_or_else(|| ClientException::report(ErrorCode::InvalidToken, "error parsing nonce."))
 }
 
+/// Builds a trust store holding `apple_root_ca_pem` and verifies the attestation chain against it.
+/// The PEM is a compiled-in server constant, so failures building the store stay unmarked.
+fn verify_cert_chain_against_root(
+    attestation: &Attestation,
+    apple_root_ca_pem: &[u8],
+) -> eyre::Result<()> {
+    let root_cert = X509::from_pem(apple_root_ca_pem)?;
+    let store_param = X509VerifyParam::new()?;
+    // store_param.set_flags(X509VerifyFlags::X509_STRICT)?;
+    let mut store_builder = X509StoreBuilder::new()?;
+    store_builder.set_param(&store_param)?;
+    store_builder.add_cert(root_cert)?;
+
+    internal_verify_cert_chain_with_store(attestation, &store_builder.build())
+}
+
 /// Implements the verification of the certificate chain for `DeviceCheck` attestations. Expects a store with the trusted root CA from Apple.
 fn internal_verify_cert_chain_with_store(
     attestation: &Attestation,
@@ -430,19 +448,14 @@ fn internal_verify_cert_chain_with_store(
 
     let mut context = X509StoreContext::new()?;
 
-    let verified = context
-        .init(
-            store,
-            target_cert,
-            &cert_chain,
-            openssl::x509::X509StoreContextRef::verify_cert,
-        )
-        .map_err(|e| {
-            ClientException::report(
-                ErrorCode::InvalidToken,
-                format!("certificate chain verification errored ({e})"),
-            )
-        })?;
+    // A rejected chain comes back as `Ok(false)` below; an `Err` here is OpenSSL failing to run
+    // the check at all, which is a server fault and stays unmarked.
+    let verified = context.init(
+        store,
+        target_cert,
+        &cert_chain,
+        openssl::x509::X509StoreContextRef::verify_cert,
+    )?;
 
     if !verified {
         return Err(ClientException::report(
@@ -526,8 +539,11 @@ fn decode_and_validate_assertion(
     let counter = u32::from_be_bytes(assertion.authenticator_data.clone()[33..37].try_into()?);
 
     if counter <= last_counter {
+        // A counter that did not advance is a replayed assertion, not an expired one: retrying
+        // cannot move the device's counter past what we already stored, so this must not come
+        // back as a retryable `ExpiredToken`.
         return Err(ClientException::report(
-            ErrorCode::ExpiredToken,
+            ErrorCode::IntegrityFailed,
             "last_counter is greater than provided counter.",
         ));
     }

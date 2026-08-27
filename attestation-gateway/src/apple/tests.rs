@@ -334,7 +334,7 @@ fn test_verify_initial_attestation_failure_app_id_mismatch() {
     // Build test attestation with staging app_id
     let test_data = build_test_attestation(staging_app_id, request_hash, "appattestdevelop");
 
-    // Verify with prod app_id — should fail
+    // Verify with prod app_id: should fail
     let result = decode_and_validate_initial_attestation(
         test_data.attestation_base64,
         request_hash,
@@ -362,7 +362,7 @@ fn test_verify_initial_attestation_failure_aaguid_mismatch() {
     // Build test attestation with develop AAGUID
     let test_data = build_test_attestation(app_id, request_hash, "appattestdevelop");
 
-    // Only allow production AAGUID — should fail
+    // Only allow production AAGUID: should fail
     let result = decode_and_validate_initial_attestation(
         test_data.attestation_base64,
         request_hash,
@@ -465,7 +465,8 @@ fn verify_assertion_failure_with_invalid_counter() {
 
     let result = result.downcast_ref::<ClientException>().unwrap();
 
-    assert_eq!(result.code, ErrorCode::ExpiredToken);
+    // A stalled counter is a replay, not an expiry: it must not be retryable on the wire.
+    assert_eq!(result.code, ErrorCode::IntegrityFailed);
     assert_eq!(
         result.internal_debug_info,
         "last_counter is greater than provided counter.".to_string()
@@ -610,5 +611,101 @@ fn verify_assertion_failure_with_invalid_authenticator_data() {
         result.internal_debug_info,
         "expected `app_id` for bundle identifier and `rp_id` from assertion object do not match."
             .to_string()
+    );
+}
+
+// SECTION --- malformed input guards ---
+// These three inputs all reach a direct slice index or `x5c[0]`. The release profile is
+// `panic = "abort"`, so an unguarded one takes the pod down instead of failing the request.
+
+#[test]
+fn initial_attestation_rejects_truncated_auth_data() {
+    let app_id = BundleIdentifier::OrgWorldcoinInsightStaging
+        .apple_app_id()
+        .unwrap();
+    let request_hash = "test_request_hash";
+    let test_data = build_test_attestation(app_id, request_hash, "appattestdevelop");
+
+    // Keep the certificate chain intact so step 1 still passes and only the length guard can
+    // reject this.
+    let attestation_bytes = general_purpose::STANDARD
+        .decode(test_data.attestation_base64)
+        .unwrap();
+    let mut attestation: Attestation =
+        ciborium::from_reader(Cursor::new(attestation_bytes)).unwrap();
+    attestation.auth_data = ByteBuf::from(attestation.auth_data[..86].to_vec());
+
+    let mut truncated = Vec::new();
+    ciborium::into_writer(&attestation, &mut truncated).unwrap();
+
+    let result = decode_and_validate_initial_attestation(
+        general_purpose::STANDARD.encode(&truncated),
+        request_hash,
+        &[app_id],
+        &[AAGUID::AppAttestDevelop],
+        &test_data.root_ca_pem,
+    )
+    .unwrap_err();
+
+    let result = result.downcast_ref::<ClientException>().unwrap();
+
+    assert_eq!(result.code, ErrorCode::InvalidToken);
+    assert_eq!(
+        result.internal_debug_info,
+        "attestation auth_data is too short.".to_string()
+    );
+}
+
+#[test]
+fn cert_chain_verification_rejects_empty_chain() {
+    let attestation = Attestation {
+        fmt: "apple-appattest".to_string(),
+        att_stmt: AttestationStatement {
+            x5c: vec![],
+            receipt: ByteBuf::new(),
+        },
+        auth_data: ByteBuf::new(),
+    };
+
+    let result =
+        internal_verify_cert_chain_with_store(&attestation, &apple_root_ca_store()).unwrap_err();
+
+    let result = result.downcast_ref::<ClientException>().unwrap();
+
+    assert_eq!(result.code, ErrorCode::InvalidToken);
+    assert_eq!(
+        result.internal_debug_info,
+        "attestation certificate chain is empty.".to_string()
+    );
+}
+
+#[test]
+fn assertion_rejects_truncated_authenticator_data() {
+    let assertion = Assertion {
+        // One byte short of the 37 the counter and `rp_id` reads need.
+        authenticator_data: ByteBuf::from(vec![0u8; 36]),
+        signature: ByteBuf::from(vec![0u8; 64]),
+    };
+
+    let mut encoded_assertion = Vec::new();
+    ciborium::into_writer(&assertion, &mut encoded_assertion).unwrap();
+
+    let result = decode_and_validate_assertion(
+        general_purpose::STANDARD.encode(&encoded_assertion),
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEh4Bd1IrEnNal/KNplK6VVrByUq4jsVtVVxpMI/mezeQcluflXHikUxYe+xoB/fAL3VnEA5zJlLobpHcfn/4+7w==".to_string(),
+        &[BundleIdentifier::OrgWorldcoinInsightStaging
+            .apple_app_id()
+            .unwrap()],
+        "my_hash",
+        0,
+    )
+    .unwrap_err();
+
+    let result = result.downcast_ref::<ClientException>().unwrap();
+
+    assert_eq!(result.code, ErrorCode::InvalidToken);
+    assert_eq!(
+        result.internal_debug_info,
+        "assertion authenticator_data is too short.".to_string()
     );
 }

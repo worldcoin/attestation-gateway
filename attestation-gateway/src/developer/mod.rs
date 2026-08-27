@@ -97,12 +97,17 @@ async fn verify_and_parse_inner_jwt(
         .verify::<DeveloperTokenExtraClaims>(&outer_token.certificate)
         .await
         .map_err(|e| {
+            // `verify` fetches the JWKS inline, so a certificate authority outage surfaces here
+            // as `Reqwest`. That is our dependency failing, not a bad credential: leaving it
+            // unmarked keeps it a retryable 500 instead of telling every client its token is
+            // invalid and not to come back.
+            if let jwtk::Error::Reqwest(_) = e {
+                return eyre::eyre!("Error fetching developer JWKS: {e}");
+            }
+
             let error_message = format!("Error verifying inner JWT: {e}");
             tracing::warn!(error_message);
-            eyre::eyre!(ClientException {
-                code: ErrorCode::InvalidDeveloperToken,
-                internal_debug_info: error_message,
-            })
+            ClientException::report(ErrorCode::InvalidDeveloperToken, error_message)
         })?;
 
     let claims = serde_json::to_string(jwt.claims()).unwrap();
@@ -144,6 +149,14 @@ fn verify_outer_jwt(
                             .decode(developer_inner_token.public_key.as_bytes())
                     })?;
                 jwtk::SomePublicKey::from_pem(der_to_pem(&der).as_bytes())
+            })
+            // A certificate whose public key parses as none of the three encodings is
+            // permanently unusable. Left unmarked it would be a retryable 500, so the client
+            // would keep re-sending a credential that can never work.
+            .map_err(|e| {
+                let error_message = format!("Inner certificate public key is not parseable: {e}");
+                tracing::warn!(error_message);
+                ClientException::report(ErrorCode::InvalidDeveloperToken, error_message)
             })?;
 
     jwtk::verify::<ActorTokenExtraClaims>(developer_outer_token, &verification_key).map_err(
@@ -215,17 +228,20 @@ fn validate_developer_token_claims(
             right = request_hash
         );
         tracing::warn!(error_message);
-        eyre::bail!(ClientException {
-            code: ErrorCode::InvalidDeveloperToken,
-            internal_debug_info: error_message,
-        });
+        // Not `InvalidDeveloperToken`: the certificate verified, only its `request_hash` claim
+        // disagrees with the request. A 401 would tell the client to replace a valid credential.
+        // Matches how the Android path classifies the same mismatch.
+        return Err(ClientException::report(
+            ErrorCode::IntegrityFailed,
+            error_message,
+        ));
     }
     Ok(())
 }
 
 /// Wraps a SubjectPublicKeyInfo DER blob in a PEM envelope so it can be fed
 /// back into `SomePublicKey::from_pem`. Lines are wrapped at 64 chars as per
-/// RFC 7468 — OpenSSL is lenient about this, but staying conventional avoids
+/// RFC 7468; OpenSSL is lenient about this, but staying conventional avoids
 /// surprises with stricter parsers.
 fn der_to_pem(der: &[u8]) -> String {
     const LINE_WIDTH: usize = 64;
@@ -278,7 +294,7 @@ mod tests {
     }
 
     /// Issuer matching the mock JWKS server, i.e. the JWKS URL minus the
-    /// well-known suffix — mirrors how `validate_inner_certificate_claims`
+    /// well-known suffix. Mirrors how `validate_inner_certificate_claims`
     /// derives the expected issuer.
     fn issuer_for_tests() -> String {
         JWK_SERVER
@@ -497,7 +513,7 @@ mod tests {
         let (developer_kid, developer_some_private_key, client_some_private_key, jwks_url) =
             generate_keys_and_mock_jwks_server().await;
 
-        // 🧪 Same issuer but with a trailing slash — must still be accepted
+        // 🧪 Same issuer but with a trailing slash, must still be accepted
         let inner_token = generate_inner_token_with_claims(
             &developer_some_private_key,
             &developer_kid,
