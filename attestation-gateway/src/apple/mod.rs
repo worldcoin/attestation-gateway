@@ -291,14 +291,6 @@ pub fn decode_and_validate_initial_attestation(
     hasher.update(&client_data_hash);
     let nonce: &[u8] = &hasher.finish();
 
-    // Guards the direct `auth_data` slice indexing below (steps 6-9 read up to byte 87).
-    if attestation.auth_data.len() < 87 {
-        return Err(ClientException::report(
-            ErrorCode::InvalidToken,
-            "attestation auth_data is too short.",
-        ));
-    }
-
     let invalid_cert = || {
         ClientException::report(
             ErrorCode::InvalidToken,
@@ -478,14 +470,6 @@ fn decode_and_validate_assertion(
             "error decoding cbor formatted assertion.",
         )
     })?;
-
-    // Guards the direct `authenticator_data` slice indexing below (steps 4-5 read up to byte 37).
-    if assertion.authenticator_data.len() < 37 {
-        return Err(ClientException::report(
-            ErrorCode::InvalidToken,
-            "assertion authenticator_data is too short.",
-        ));
-    }
 
     // Step 1 and 2: Calculate nonce
     let mut hasher = Sha256::new();
