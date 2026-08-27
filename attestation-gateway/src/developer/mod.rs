@@ -101,8 +101,10 @@ async fn verify_and_parse_inner_jwt(
             // as `Reqwest`. That is our dependency failing, not a bad credential: leaving it
             // unmarked keeps it a retryable 500 instead of telling every client its token is
             // invalid and not to come back.
-            if let jwtk::Error::Reqwest(_) = e {
-                return eyre::eyre!("Error fetching developer JWKS: {e}");
+            if matches!(e, jwtk::Error::Reqwest(_)) {
+                // Keep the transport cause attached: this is the only record of the failure,
+                // and DNS vs TLS vs timeout is what an incident needs to distinguish.
+                return eyre::Report::new(e).wrap_err("Error fetching developer JWKS");
             }
 
             let error_message = format!("Error verifying inner JWT: {e}");
