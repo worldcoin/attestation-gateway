@@ -96,7 +96,7 @@ fn test_verify_initial_attestation_failure_on_attestation_not_signed_from_expect
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (self-signed certificate in certificate chain)"
+        "Error Code: `integrity_failed`. Internal debug info: \"certificate chain verification failed (self-signed certificate in certificate chain)\""
     );
 }
 
@@ -140,7 +140,7 @@ fn test_verify_cert_chain_failure_cert_not_signed_by_apple_root_ca() {
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (self-signed certificate in certificate chain)"
+        "Error Code: `integrity_failed`. Internal debug info: \"certificate chain verification failed (self-signed certificate in certificate chain)\""
     );
 }
 
@@ -184,7 +184,7 @@ fn test_verify_cert_chain_failure_with_invalid_root_ca() {
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (unable to get local issuer certificate)"
+        "Error Code: `integrity_failed`. Internal debug info: \"certificate chain verification failed (unable to get local issuer certificate)\""
     );
 }
 
@@ -210,7 +210,7 @@ fn test_verify_initial_attestation_failure_on_self_signed_certificate() {
 
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (self-signed certificate)"
+        "Error Code: `integrity_failed`. Internal debug info: \"certificate chain verification failed (self-signed certificate)\""
     );
 }
 
@@ -246,7 +246,7 @@ fn test_verify_initial_attestation_failure_on_expired_certificate() {
     let result = internal_verify_cert_chain_with_store(&attestation, &store).unwrap_err();
     assert_eq!(
         result.to_string(),
-        "Certificate verification failed (certificate has expired)"
+        "Error Code: `integrity_failed`. Internal debug info: \"certificate chain verification failed (certificate has expired)\""
     );
 }
 
@@ -334,7 +334,7 @@ fn test_verify_initial_attestation_failure_app_id_mismatch() {
     // Build test attestation with staging app_id
     let test_data = build_test_attestation(staging_app_id, request_hash, "appattestdevelop");
 
-    // Verify with prod app_id — should fail
+    // Verify with prod app_id: should fail
     let result = decode_and_validate_initial_attestation(
         test_data.attestation_base64,
         request_hash,
@@ -362,7 +362,7 @@ fn test_verify_initial_attestation_failure_aaguid_mismatch() {
     // Build test attestation with develop AAGUID
     let test_data = build_test_attestation(app_id, request_hash, "appattestdevelop");
 
-    // Only allow production AAGUID — should fail
+    // Only allow production AAGUID: should fail
     let result = decode_and_validate_initial_attestation(
         test_data.attestation_base64,
         request_hash,
@@ -465,7 +465,8 @@ fn verify_assertion_failure_with_invalid_counter() {
 
     let result = result.downcast_ref::<ClientException>().unwrap();
 
-    assert_eq!(result.code, ErrorCode::ExpiredToken);
+    // A stalled counter is a replay, not an expiry: it must not be retryable on the wire.
+    assert_eq!(result.code, ErrorCode::IntegrityFailed);
     assert_eq!(
         result.internal_debug_info,
         "last_counter is greater than provided counter.".to_string()

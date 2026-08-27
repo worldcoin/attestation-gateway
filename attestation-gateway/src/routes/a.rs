@@ -18,7 +18,10 @@ use crate::{
     android::{AndroidAttestationError, AndroidAttestationService},
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError},
-    utils::{BundleIdentifier, ErrorCode, GlobalConfig, Platform, RequestError, client_session_id},
+    utils::{
+        BundleIdentifier, ClientException, ErrorCode, GlobalConfig, Platform, RequestError,
+        client_session_id,
+    },
 };
 
 fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
@@ -73,9 +76,11 @@ pub struct IntegrityTokenPayload {
 }
 
 impl IntegrityTokenPayload {
-    pub fn generate(&self, issuer: &str) -> eyre::Result<JwtPayload> {
+    pub fn generate(&self, issuer: &str) -> Result<JwtPayload, RequestError> {
+        // The key comes from a validated attestation, but nothing upstream pins its curve, so
+        // a non-P-256 key is a client problem, not a server fault.
         if self.cnf.len() != 65 {
-            return Err(eyre::eyre!("Invalid device public key"));
+            return Err(bad_request("Invalid device public key"));
         }
 
         let cnf_ec_key = EcKey::from_public_key_affine_coordinates(
@@ -88,8 +93,22 @@ impl IntegrityTokenPayload {
         let cnf_pkey =
             PKey::from_ec_key(cnf_ec_key).map_err(|_| bad_request("Invalid device public key"))?;
 
+        self.build_payload(issuer, &cnf_pkey).map_err(|e| {
+            tracing::error!(error = ?e, "Error generating integrity token payload");
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: None,
+            }
+        })
+    }
+
+    fn build_payload(
+        &self,
+        issuer: &str,
+        cnf_pkey: &PKey<openssl::pkey::Public>,
+    ) -> eyre::Result<JwtPayload> {
         let cnf_key_id = Base64.encode(sha256(&self.cnf));
-        let cnf_jwk = keys::public_key_to_jwk(&cnf_pkey, Some(cnf_key_id))?;
+        let cnf_jwk = keys::public_key_to_jwk(cnf_pkey, Some(cnf_key_id))?;
 
         let mut cfn = josekit::Map::new();
         cfn.insert("jwk".to_string(), josekit::Value::Object(cnf_jwk.into()));
@@ -122,21 +141,18 @@ impl IntegrityTokenPayload {
 fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) -> RequestError {
     metrics::counter!("attestation_gateway.android_error", "reason" => e.reason_tag()).increment(1);
 
-    if e.is_internal_error() {
+    let code = e.to_error_code();
+    if code == ErrorCode::InternalServerError {
         tracing::error!(error = ?e, "Error validating Android attestation");
-
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: None,
-        }
     } else {
-        // The precise verify failure stays server-side; the client gets only the coarse
-        // default message so rejection reasons don't aid attestation probing.
+        // The precise verify failure stays server-side so rejection reasons don't aid
+        // attestation probing.
         tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
-        RequestError {
-            code: ErrorCode::AttestationRejected,
-            details: None,
-        }
+    }
+
+    RequestError {
+        code,
+        details: None,
     }
 }
 
@@ -177,14 +193,7 @@ pub async fn handler(
         tracing::span!(tracing::Level::DEBUG, "a", endpoint = "/a", session_id = %session_id);
     let _enter = tracing_span.enter();
 
-    if !global_config
-        .enabled_bundle_identifiers
-        .contains(&request.bundle_identifier)
-    {
-        return Err(bad_request(
-            "This bundle identifier is currently unavailable.",
-        ));
-    }
+    global_config.require_enabled_bundle(&request.bundle_identifier)?;
 
     let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
         if matches!(e, NonceDbError::NonceNotFound) {
@@ -293,8 +302,10 @@ fn validate_apple_attestation_and_get_device_public_key(
     let allowed_aaguid_vec = apple::AAGUID::allowed_for_bundle_identifier(bundle_identifier)
         .map_err(|_| bad_request("Invalid bundle identifier"))?;
 
-    // Canonical App ID only — the re-signed-build allow-list is intentionally scoped to the
+    // Canonical App ID only: the re-signed-build allow-list is intentionally scoped to the
     // `/g` token flow (via `apple_accepted_app_ids`); this `/a` route is unchanged.
+    // The precise failure stays server-side (mirrors the Android mapping above): the client
+    // gets only a coarse code so rejection reasons don't aid attestation probing.
     let initial_attestation = apple::decode_and_validate_initial_attestation(
         apple_attestation,
         challenge,
@@ -302,7 +313,23 @@ fn validate_apple_attestation_and_get_device_public_key(
         allowed_aaguid_vec.as_slice(),
         apple_root_ca_pem,
     )
-    .map_err(|e| bad_request(e.to_string()))?;
+    .map_err(|e| {
+        // Client-caused failures are marked `ClientException` inside the apple module; a bare
+        // error is a server fault.
+        let code = if let Some(client_error) = e.downcast_ref::<ClientException>() {
+            tracing::warn!(endpoint = "/a", error_code = %client_error.code, message = "Apple attestation rejected");
+            client_error.code
+        } else {
+            tracing::error!(error = ?e, "Error validating Apple attestation");
+            ErrorCode::InternalServerError
+        };
+        metrics::counter!("attestation_gateway.apple_error", "reason" => code.to_string())
+            .increment(1);
+        RequestError {
+            code,
+            details: None,
+        }
+    })?;
 
     Ok(initial_attestation.key_public_key)
 }
@@ -313,13 +340,7 @@ async fn generate_integrity_token(
     issuer: &str,
     integrity_token_payload: IntegrityTokenPayload,
 ) -> Result<String, RequestError> {
-    let integrity_token_payload = integrity_token_payload.generate(issuer).map_err(|e| {
-        tracing::error!(error = ?e, "Error generating integrity token payload");
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: None,
-        }
-    })?;
+    let integrity_token_payload = integrity_token_payload.generate(issuer)?;
 
     let kms_key = keys::fetch_active_key(redis, aws_config)
         .await
