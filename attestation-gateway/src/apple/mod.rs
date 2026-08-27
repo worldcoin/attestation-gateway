@@ -284,6 +284,22 @@ pub fn decode_and_validate_initial_attestation(
     hasher.update(&client_data_hash);
     let nonce: &[u8] = &hasher.finish();
 
+    // Guards the direct `auth_data` slice indexing below (steps 6-9 read up to byte 87).
+    if attestation.auth_data.len() < 87 {
+        return Err(ClientException::report(
+            ErrorCode::InvalidToken,
+            "attestation auth_data is too short.",
+        ));
+    }
+
+    // Step 1 rejects an empty chain, but that invariant is too far away to index on trust.
+    let leaf_cert_der = attestation.att_stmt.x5c.first().ok_or_else(|| {
+        ClientException::report(
+            ErrorCode::InvalidToken,
+            "attestation certificate chain is empty.",
+        )
+    })?;
+
     let invalid_cert = || {
         ClientException::report(
             ErrorCode::InvalidToken,
@@ -292,8 +308,7 @@ pub fn decode_and_validate_initial_attestation(
     };
 
     // Step 4: check nonce
-    let (_, res) =
-        X509Certificate::from_der(&attestation.att_stmt.x5c[0]).map_err(|_| invalid_cert())?;
+    let (_, res) = X509Certificate::from_der(leaf_cert_der).map_err(|_| invalid_cert())?;
     let attested_nonce = extract_attested_nonce(&res)?;
 
     if nonce != attested_nonce.as_slice() {
@@ -304,7 +319,7 @@ pub fn decode_and_validate_initial_attestation(
     }
 
     // Step 5: get user's public key
-    let cert = X509::from_der(&attestation.att_stmt.x5c[0]).map_err(|_| invalid_cert())?;
+    let cert = X509::from_der(leaf_cert_der).map_err(|_| invalid_cert())?;
     let public_key_der = cert
         .public_key()
         .and_then(|key| key.public_key_to_der())
@@ -479,6 +494,14 @@ fn decode_and_validate_assertion(
             "error decoding cbor formatted assertion.",
         )
     })?;
+
+    // Guards the direct `authenticator_data` slice indexing below (steps 4-5 read up to byte 37).
+    if assertion.authenticator_data.len() < 37 {
+        return Err(ClientException::report(
+            ErrorCode::InvalidToken,
+            "assertion authenticator_data is too short.",
+        ));
+    }
 
     // Step 1 and 2: Calculate nonce
     let mut hasher = Sha256::new();
