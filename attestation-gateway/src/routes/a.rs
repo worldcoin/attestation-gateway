@@ -15,9 +15,9 @@ use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
 use crate::{
-    android::{AndroidAttestationError, AndroidAttestationService},
+    android::{AndroidAttestationError, AndroidAttestationInput, AndroidAttestationService},
     apple, keys, kms_jws,
-    nonces::{NonceDb, NonceDbError},
+    nonces::{NonceDb, NonceDbError, TokenDetails},
     utils::{
         BundleIdentifier, ClientException, ErrorCode, GlobalConfig, Platform, RequestError,
         client_session_id,
@@ -179,6 +179,43 @@ fn infer_platform(request: &Request) -> Result<Platform, RequestError> {
     ))
 }
 
+async fn validate_android_attestation_and_get_device_public_key(
+    android_attestation: &mut AndroidAttestationService,
+    headers: &HeaderMap,
+    request: &Request,
+    token_details: &TokenDetails,
+    session_id: &str,
+) -> Result<Vec<u8>, RequestError> {
+    let raw_cert_chain = request
+        .android_attestation
+        .as_ref()
+        .ok_or_else(|| bad_request("Android attestation is required"))?;
+    let request_headers = headers_to_map(headers);
+
+    let attestation_output = android_attestation
+        .verify(AndroidAttestationInput {
+            raw_cert_chain,
+            nonce: &request.nonce,
+            requested_exp: request.exp,
+            app_version: &request.app_version,
+            bundle_identifier: &request.bundle_identifier,
+            device_model: request.device_model.as_deref(),
+            request_headers: &request_headers,
+            token_details,
+        })
+        .await
+        .map_err(|e| map_android_attestation_error(&e, session_id))?;
+
+    if let Some(os_patch_level_delta) = attestation_output.os_patch_level_delta {
+        metrics::gauge!("attestation_gateway.android_os_patch_level_delta")
+            .set(f64::from(os_patch_level_delta));
+    } else {
+        metrics::counter!("attestation_gateway.android_missing_os_patch_level").increment(1);
+    }
+
+    Ok(attestation_output.device_public_key)
+}
+
 pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
@@ -229,34 +266,14 @@ pub async fn handler(
             )?
         }
         Platform::Android => {
-            let android_cert_chain = request
-                .android_attestation
-                .ok_or_else(|| bad_request("Android attestation is required"))?;
-
-            let attestation_result = android_attestation
-                .verify(
-                    &android_cert_chain,
-                    &token_details.aud,
-                    &request.nonce,
-                    &request.app_version,
-                    &request.bundle_identifier,
-                    headers_to_map(&headers),
-                    request.device_model.clone(),
-                )
-                .await;
-
-            let attestation_output =
-                attestation_result.map_err(|e| map_android_attestation_error(&e, session_id))?;
-
-            if let Some(os_patch_level_delta) = attestation_output.os_patch_level_delta {
-                metrics::gauge!("attestation_gateway.android_os_patch_level_delta")
-                    .set(f64::from(os_patch_level_delta));
-            } else {
-                metrics::counter!("attestation_gateway.android_missing_os_patch_level")
-                    .increment(1);
-            }
-
-            attestation_output.device_public_key
+            validate_android_attestation_and_get_device_public_key(
+                &mut android_attestation,
+                &headers,
+                &request,
+                &token_details,
+                session_id,
+            )
+            .await?
         }
     };
 

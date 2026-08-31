@@ -13,11 +13,26 @@ mod intermediate_cert;
 mod key_description;
 pub mod rate_limit_service;
 mod revocation_list;
+mod risk_evaluator;
 mod root_cert;
 mod serde_hex;
 mod session_cert;
 
-pub use android_attestation_service::{AndroidAttestationError, AndroidAttestationService};
+pub use android_attestation_service::{
+    AndroidAttestationError, AndroidAttestationOutput, AndroidAttestationService,
+};
+pub use cert_chain::{CertChain, CertSerial};
+pub use intermediate_cert::IntermediateCert;
+pub use key_description::{
+    AttestationApplicationId, AttestationPackageInfo, AuthorizationList, KeyDescription,
+    RootOfTrust, SecurityLevel, VerifiedBootState,
+};
+pub use risk_evaluator::{
+    AllowAllAndroidRiskEvaluator, AndroidAttestationInput, AndroidRiskContext, AndroidRiskDecision,
+    AndroidRiskEvaluator,
+};
+pub use root_cert::RootCert;
+pub use session_cert::SessionCert;
 
 #[allow(unused_imports)]
 pub use cert_chain_builder::CertChainBuilder;

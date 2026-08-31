@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::SystemTime};
+use std::{sync::Arc, time::SystemTime};
 
 use crate::{
     android::{
@@ -12,6 +12,9 @@ use crate::{
         key_description::{SecurityLevel, VerifiedBootState},
         rate_limit_service::{RateLimitService, RateLimitServiceTryIncrError},
         revocation_list::{RevocationList, RevocationListError},
+        risk_evaluator::{
+            AndroidAttestationInput, AndroidRiskContext, AndroidRiskDecision, AndroidRiskEvaluator,
+        },
     },
     utils::{BundleIdentifier, ErrorCode},
 };
@@ -39,6 +42,9 @@ pub enum AndroidAttestationError {
 
     #[error("rate limit exceeded")]
     RateLimitExceeded,
+
+    #[error("risk evaluator rejected attestation")]
+    RiskRejected,
 
     #[error("invalid challenge")]
     InvalidChallenge,
@@ -97,6 +103,7 @@ pub struct AndroidAttestationService {
     revocation_list: RevocationList,
     rate_limit_service: RateLimitService,
     analytics_service: AnalyticsService,
+    risk_evaluator: Arc<dyn AndroidRiskEvaluator>,
 }
 
 impl AndroidAttestationService {
@@ -106,12 +113,14 @@ impl AndroidAttestationService {
         revocation_list: RevocationList,
         rate_limit_service: RateLimitService,
         analytics_service: AnalyticsService,
+        risk_evaluator: Arc<dyn AndroidRiskEvaluator>,
     ) -> Self {
         Self {
             cert_chain_builder,
             revocation_list,
             rate_limit_service,
             analytics_service,
+            risk_evaluator,
         }
     }
 
@@ -120,6 +129,7 @@ impl AndroidAttestationService {
         redis: ConnectionManager,
         limit_per_day: Option<isize>,
         analytics_kinesis_stream_arn: String,
+        risk_evaluator: Arc<dyn AndroidRiskEvaluator>,
     ) -> Result<Self, AndroidAttestationError> {
         let cert_chain_builder = CertChainBuilder::new_from_default_pem()
             .map_err(AndroidAttestationError::CertChainBuilderNew)?;
@@ -138,6 +148,7 @@ impl AndroidAttestationService {
             revocation_list,
             rate_limit_service,
             analytics_service,
+            risk_evaluator,
         ))
     }
 
@@ -149,17 +160,11 @@ impl AndroidAttestationService {
 
     pub async fn verify(
         &mut self,
-        base64_cert_chain: &[String],
-        aud: &str,
-        nonce: &String,
-        app_version: &String,
-        bundle_identifier: &BundleIdentifier,
-        request_headers: HashMap<String, String>,
-        device_model: Option<String>,
+        input: AndroidAttestationInput<'_>,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
         let build_result = self
             .cert_chain_builder
-            .build_chain_from_base64(base64_cert_chain);
+            .build_chain_from_base64(input.raw_cert_chain);
 
         let (cert_chain, verify_result) = match build_result {
             Err(e) => (
@@ -167,36 +172,72 @@ impl AndroidAttestationService {
                 Err(AndroidAttestationError::CertChainBuilderBuildChain(e)),
             ),
             Ok(chain) => {
-                let verify_result = self
-                    .verify_chain(&chain, aud, nonce, app_version, bundle_identifier)
-                    .await;
+                let verify_result = match self.verify_chain(
+                    &chain,
+                    input.nonce,
+                    input.app_version,
+                    input.bundle_identifier,
+                ) {
+                    Ok(output) => {
+                        let risk_context = AndroidRiskContext {
+                            raw_cert_chain: input.raw_cert_chain,
+                            parsed_cert_chain: &chain,
+                            nonce: input.nonce,
+                            requested_exp: input.requested_exp,
+                            app_version: input.app_version,
+                            bundle_identifier: input.bundle_identifier,
+                            device_model: input.device_model,
+                            request_headers: input.request_headers,
+                            token_details: input.token_details,
+                            evaluated_at: SystemTime::now(),
+                        };
+
+                        if self.risk_evaluator.evaluate(&risk_context)
+                            == AndroidRiskDecision::Reject
+                        {
+                            Err(AndroidAttestationError::RiskRejected)
+                        } else {
+                            match self
+                                .rate_limit_service
+                                .try_incr(&input.token_details.aud, &chain)
+                                .await
+                            {
+                                Ok(true) => Ok(output),
+                                Ok(false) => Err(AndroidAttestationError::RateLimitExceeded),
+                                Err(error) => Err(
+                                    AndroidAttestationError::InternalRateLimitServiceTryIncr(error),
+                                ),
+                            }
+                        }
+                    }
+                    Err(error) => Err(error),
+                };
                 (Some(chain), verify_result)
             }
         };
 
         self.analytics_service
             .spawn_record(AndroidAttestationAnalyticsEvent {
-                base64_cert_chain: base64_cert_chain.to_vec(),
-                aud: aud.to_string(),
-                nonce: nonce.clone(),
-                app_version: app_version.clone(),
-                bundle_identifier: bundle_identifier.clone(),
+                base64_cert_chain: input.raw_cert_chain.to_vec(),
+                aud: input.token_details.aud.clone(),
+                nonce: input.nonce.to_string(),
+                app_version: input.app_version.to_string(),
+                bundle_identifier: input.bundle_identifier.clone(),
                 cert_chain,
                 error: verify_result.as_ref().err().map(ToString::to_string),
-                request_headers,
-                device_model,
+                request_headers: input.request_headers.clone(),
+                device_model: input.device_model.map(str::to_string),
                 timestamp: SystemTime::now(),
             });
 
         verify_result
     }
 
-    async fn verify_chain(
-        &mut self,
+    fn verify_chain(
+        &self,
         cert_chain: &CertChain,
-        aud: &str,
-        nonce: &String,
-        app_version: &String,
+        nonce: &str,
+        app_version: &str,
         bundle_identifier: &BundleIdentifier,
     ) -> Result<AndroidAttestationOutput, AndroidAttestationError> {
         if cert_chain.any_serial_revoked(&self.revocation_list) {
@@ -293,16 +334,6 @@ impl AndroidAttestationService {
                     now - os_patch_level
                 });
 
-        let rate_limit_passed = self
-            .rate_limit_service
-            .try_incr(aud, cert_chain)
-            .await
-            .map_err(AndroidAttestationError::InternalRateLimitServiceTryIncr)?;
-
-        if !rate_limit_passed {
-            return Err(AndroidAttestationError::RateLimitExceeded);
-        }
-
         Ok(AndroidAttestationOutput {
             device_public_key: cert_chain.session_cert().public_key(),
             os_patch_level_delta,
@@ -331,6 +362,7 @@ impl AndroidAttestationError {
                 format!("revocation_list_{}", e.reason_tag())
             }
             Self::RateLimitExceeded => "rate_limit_exceeded".to_string(),
+            Self::RiskRejected => "risk_evaluator_rejected".to_string(),
             Self::InvalidChallenge => "invalid_challenge".to_string(),
             Self::LowSecurityLevel => "low_security_level".to_string(),
             Self::InconsistentSecurityLevels => "inconsistent_security_levels".to_string(),
@@ -388,7 +420,8 @@ impl AndroidAttestationError {
             Self::MissingCertificateDigest => ErrorCode::BadRequest,
 
             // Device/attestation rejections: permanent for this key, coarse default message.
-            Self::InvalidChallenge
+            Self::RiskRejected
+            | Self::InvalidChallenge
             | Self::LowSecurityLevel
             | Self::InconsistentSecurityLevels
             | Self::StrongBoxChainMismatch
@@ -445,6 +478,10 @@ mod tests {
         // Every device rejection collapses to one code so the reason can't be probed.
         assert_eq!(
             AndroidAttestationError::CertificateRevoked.to_error_code(),
+            ErrorCode::AttestationRejected
+        );
+        assert_eq!(
+            AndroidAttestationError::RiskRejected.to_error_code(),
             ErrorCode::AttestationRejected
         );
     }

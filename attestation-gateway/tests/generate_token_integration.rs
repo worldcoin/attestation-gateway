@@ -154,6 +154,7 @@ async fn extension_android_attestation(
             )
             .await
             .unwrap(),
+            Arc::new(attestation_gateway::android::AllowAllAndroidRiskEvaluator),
         ),
     )
 }
