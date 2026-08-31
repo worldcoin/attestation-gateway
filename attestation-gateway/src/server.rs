@@ -1,7 +1,9 @@
-use std::{env, net::SocketAddr, time::Duration};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use crate::{
-    android::AndroidAttestationService, audience_authorizer::AudienceAuthorizer, nonces::NonceDb,
+    android::{AndroidAttestationService, AndroidRiskEvaluator},
+    audience_authorizer::AudienceAuthorizer,
+    nonces::NonceDb,
 };
 use aide::openapi::{Info, OpenApi};
 use aws_sdk_kinesis::Client as KinesisClient;
@@ -27,6 +29,7 @@ pub async fn start(
     aws_config: aws_config::SdkConfig,
     global_config: GlobalConfig,
     kinesis_client: KinesisClient,
+    android_risk_evaluator: Arc<dyn AndroidRiskEvaluator>,
 ) {
     let mut openapi = OpenApi {
         info: Info {
@@ -51,6 +54,7 @@ pub async fn start(
         redis.clone(),
         android_rate_limit_per_day,
         android_analytics_kinesis_stream_arn,
+        android_risk_evaluator,
     )
     .await
     .expect("failed to construct Android attestation service");

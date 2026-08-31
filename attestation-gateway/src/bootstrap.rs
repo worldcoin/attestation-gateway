@@ -1,4 +1,4 @@
-use std::{env, fmt};
+use std::{env, fmt, sync::Arc};
 
 use aws_sdk_kinesis::Client as KinesisClient;
 use dotenvy::dotenv;
@@ -6,9 +6,25 @@ use metrics_exporter_statsd::StatsdBuilder;
 use redis::aio::ConnectionManager;
 use regex::Regex;
 
-use crate::{server, utils::GlobalConfig};
+use crate::{
+    android::{AllowAllAndroidRiskEvaluator, AndroidRiskEvaluator},
+    server,
+    utils::GlobalConfig,
+};
 
 pub async fn start_from_env() {
+    start_from_env_with_android_risk_evaluator(Arc::new(AllowAllAndroidRiskEvaluator)).await;
+}
+
+/// Starts the gateway with a deployment-provided Android risk evaluator.
+///
+/// # Panics
+///
+/// Panics when required environment configuration is invalid or a required service cannot be
+/// initialized.
+pub async fn start_from_env_with_android_risk_evaluator(
+    android_risk_evaluator: Arc<dyn AndroidRiskEvaluator>,
+) {
     // initialize logging early to make sure everything is reported
     tracing_subscriber::fmt()
         .json()
@@ -45,7 +61,14 @@ pub async fn start_from_env() {
     let kinesis_client = environment.kinesis_client().await;
     tracing::info!("✅ Kinesis client created.");
 
-    server::start(redis, aws_config, GlobalConfig::from_env(), kinesis_client).await;
+    server::start(
+        redis,
+        aws_config,
+        GlobalConfig::from_env(),
+        kinesis_client,
+        android_risk_evaluator,
+    )
+    .await;
 }
 
 fn set_up_metrics(environment: Environment) -> eyre::Result<()> {

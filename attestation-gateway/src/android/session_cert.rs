@@ -77,6 +77,10 @@ impl SessionCert {
         &self.serial
     }
 
+    pub const fn key_description(&self) -> &KeyDescription {
+        &self.key_description
+    }
+
     pub fn public_key(&self) -> Vec<u8> {
         self.public_key.clone()
     }
