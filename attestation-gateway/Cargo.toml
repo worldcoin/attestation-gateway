@@ -23,7 +23,7 @@ aws-sdk-kinesis = { version = "1.109.0", default-features = false, features = ["
 aws-sdk-kms = { version = "1.111.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
 axum = "0.7.9"
 axum-jsonschema = { version = "0.8.0", features = ["aide"] }
-base64 = "0.22.1"
+base64 = "0.23.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 ciborium = "0.2.2"
 der-parser = "10.0.0"
