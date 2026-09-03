@@ -426,7 +426,8 @@ async fn release_request_hash(
     Ok(())
 }
 
-/// If the request comes with a `client_error` from the mobile apps, log it and return an integrity failed response. Note the request hash is not locked.
+/// If the request comes with a `client_error` from the mobile apps, log it and return a
+/// `client_failure` response. Note the request hash is not locked.
 async fn handle_client_error_if_applicable(
     integrity_verification_input: &IntegrityVerificationInput,
     request: &TokenGenerationRequest,
@@ -458,8 +459,11 @@ async fn handle_client_error_if_applicable(
             );
         }
 
+        // Not `IntegrityFailed`: we ran no checks, we are echoing the client's own report. Both
+        // apps treat `integrity_failed` as a permanent device verdict (iOS abandons the PCP over
+        // it), and a device that could not reach Apple or Play has not been rejected by us.
         return Err(RequestError {
-            code: ErrorCode::IntegrityFailed,
+            code: ErrorCode::ClientFailure,
             details: None,
         });
     }
