@@ -238,9 +238,11 @@ fn validate_developer_token_claims(
         tracing::warn!(error_message);
         // Not `InvalidDeveloperToken`: the certificate verified, only its `request_hash` claim
         // disagrees with the request. A 401 would tell the client to replace a valid credential.
-        // Matches how the Android path classifies the same mismatch.
+        // Not `IntegrityFailed` either: iOS reads that code as a permanent device rejection and
+        // abandons the PCP, and a self-signed outer token bound to the wrong hash is a client
+        // binding bug, not a verdict on the device.
         eyre::bail!(ClientException {
-            code: ErrorCode::IntegrityFailed,
+            code: ErrorCode::BadRequest,
             internal_debug_info: error_message,
         });
     }
@@ -249,7 +251,7 @@ fn validate_developer_token_claims(
 
 /// Wraps a SubjectPublicKeyInfo DER blob in a PEM envelope so it can be fed
 /// back into `SomePublicKey::from_pem`. Lines are wrapped at 64 chars as per
-/// RFC 7468 — OpenSSL is lenient about this, but staying conventional avoids
+/// RFC 7468. OpenSSL is lenient about this, but staying conventional avoids
 /// surprises with stricter parsers.
 fn der_to_pem(der: &[u8]) -> String {
     const LINE_WIDTH: usize = 64;
@@ -302,7 +304,7 @@ mod tests {
     }
 
     /// Issuer matching the mock JWKS server, i.e. the JWKS URL minus the
-    /// well-known suffix — mirrors how `validate_inner_certificate_claims`
+    /// well-known suffix, mirroring how `validate_inner_certificate_claims`
     /// derives the expected issuer.
     fn issuer_for_tests() -> String {
         JWK_SERVER
@@ -521,7 +523,7 @@ mod tests {
         let (developer_kid, developer_some_private_key, client_some_private_key, jwks_url) =
             generate_keys_and_mock_jwks_server().await;
 
-        // 🧪 Same issuer but with a trailing slash — must still be accepted
+        // 🧪 Same issuer but with a trailing slash, must still be accepted
         let inner_token = generate_inner_token_with_claims(
             &developer_some_private_key,
             &developer_kid,

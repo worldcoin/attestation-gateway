@@ -2001,7 +2001,8 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
         .unwrap();
 
     // The certificate itself verified; only its `request_hash` claim disagrees, so this is not a
-    // credential problem and the client must not be told to replace a valid one.
+    // credential problem and the client must not be told to replace a valid one. Deliberately not
+    // `integrity_failed`: iOS treats that code as a permanent device rejection.
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&body).unwrap();
@@ -2011,8 +2012,8 @@ async fn test_developer_token_generation_e2e_request_hash_mismatch() {
         json!({
             "allowRetry": false,
             "error": {
-                "code": "integrity_failed",
-                "message": "Integrity checks have not passed."
+                "code": "bad_request",
+                "message": "The request is malformed."
             }
         })
     );
