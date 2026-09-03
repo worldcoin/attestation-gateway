@@ -47,10 +47,23 @@ pub async fn verify(
 
     // Initialize the verifier if it's not already initialized
     let developer_token_verifier = DEVELOPER_VERIFIER
-        .get_or_init(|| async {
-            RemoteJwksVerifier::new(jwks_url.to_string(), None, Duration::from_secs(3600))
+        .get_or_try_init(|| async {
+            // `verify` fetches the JWKS inline once the cache goes stale, so this timeout is on
+            // the request path. It has to stay under the 5s route timeout, or a stalled
+            // certificate authority is answered by that layer with a bare 408 instead of the
+            // classified 500 below.
+            let http_client = reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(2))
+                .timeout(Duration::from_secs(3))
+                .build()?;
+
+            Ok::<_, eyre::Report>(RemoteJwksVerifier::new(
+                jwks_url.to_string(),
+                Some(http_client),
+                Duration::from_secs(3600),
+            ))
         })
-        .await;
+        .await?;
 
     // Parse outer JWT
     let outer_jwt_payload = parse_outer_jwt(developer_token)?;
@@ -236,13 +249,13 @@ fn validate_developer_token_claims(
             right = request_hash
         );
         tracing::warn!(error_message);
-        // Not `InvalidDeveloperToken`: the certificate verified, only its `request_hash` claim
-        // disagrees with the request. A 401 would tell the client to replace a valid credential.
-        // Not `IntegrityFailed` either: iOS reads that code as a permanent device rejection and
-        // abandons the PCP, and a self-signed outer token bound to the wrong hash is a client
-        // binding bug, not a verdict on the device.
+        // Its own code, and a retryable one. The certificate verified and only its `request_hash`
+        // claim disagrees, so this is neither a bad credential (`InvalidDeveloperToken`, a 401
+        // telling the client to replace something valid) nor a device verdict (`IntegrityFailed`,
+        // which iOS reads as permanent and abandons the PCP over). Any code carrying
+        // `allowRetry: false` lands back on that permanent reading once clients key off the flag.
         eyre::bail!(ClientException {
-            code: ErrorCode::BadRequest,
+            code: ErrorCode::RequestHashMismatch,
             internal_debug_info: error_message,
         });
     }
