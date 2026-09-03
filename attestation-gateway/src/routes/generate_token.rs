@@ -459,6 +459,11 @@ async fn handle_client_error_if_applicable(
             );
         }
 
+        // This path returns before the `generate_token` counter below, so without this a spike in
+        // client-side attestation failures is only visible in Kinesis. `client_error` itself is
+        // client-supplied free text and stays out of the labels.
+        metrics::counter!("generate_token.client_failure", "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
+
         // Not `IntegrityFailed`: we ran no checks, we are echoing the client's own report. Both
         // apps treat `integrity_failed` as a permanent device verdict (iOS abandons the PCP over
         // it), and a device that could not reach Apple or Play has not been rejected by us.
