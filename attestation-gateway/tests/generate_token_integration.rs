@@ -2138,10 +2138,12 @@ async fn test_client_error_gets_logged_to_kinesis() {
     assert_eq!(
         body,
         json!({
-            "allowRetry": false,
+            // We ran no checks, so we hold no verdict on this device. `play_integrity_api_is_down`
+            // is exactly the kind of failure that clears on its own.
+            "allowRetry": true,
             "error": {
-                "code": "integrity_failed",
-                "message": "Integrity checks have not passed."
+                "code": "client_failure",
+                "message": "The client reported it could not attest. Attestation was not attempted."
             }
         })
     );
