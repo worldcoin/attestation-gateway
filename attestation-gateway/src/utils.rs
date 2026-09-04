@@ -713,6 +713,7 @@ pub enum ErrorCode {
     InvalidDeveloperToken,
     NonceNotFound,
     RateLimited,
+    RequestHashMismatch,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -732,6 +733,7 @@ impl std::fmt::Display for ErrorCode {
             Self::InvalidDeveloperToken => write!(f, "invalid_developer_token"),
             Self::NonceNotFound => write!(f, "nonce_not_found"),
             Self::RateLimited => write!(f, "rate_limited"),
+            Self::RequestHashMismatch => write!(f, "request_hash_mismatch"),
         }
     }
 }
@@ -753,7 +755,8 @@ impl ErrorCode {
             | Self::InvalidAttestationForApp
             | Self::InvalidPublicKey
             | Self::InvalidToken
-            | Self::NonceNotFound => axum::http::StatusCode::BAD_REQUEST,
+            | Self::NonceNotFound
+            | Self::RequestHashMismatch => axum::http::StatusCode::BAD_REQUEST,
         }
     }
 
@@ -781,6 +784,9 @@ impl ErrorCode {
             Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
             Self::InvalidDeveloperToken => "The provided developer token is invalid or malformed.",
             Self::RateLimited => "Too many attestation attempts. Please try again later.",
+            Self::RequestHashMismatch => {
+                "The token is bound to a different `request_hash` than this request. Mint a new one."
+            }
         }
     }
 
@@ -799,7 +805,10 @@ impl ErrorCode {
             // fetch a fresh one, so `false` here would contradict the response body.
             | Self::DuplicateRequestHash
             | Self::ExpiredToken
-            | Self::NonceNotFound => true,
+            | Self::NonceNotFound
+            // Minting a fresh token against the hash we actually received succeeds, so this must
+            // not read as a verdict on the credential or the device.
+            | Self::RequestHashMismatch => true,
             Self::AttestationRejected
             | Self::BadRequest
             | Self::Forbidden
@@ -1078,6 +1087,7 @@ mod tests {
             ErrorCode::NonceNotFound,
             ErrorCode::DuplicateRequestHash,
             ErrorCode::ExpiredToken,
+            ErrorCode::RequestHashMismatch,
         ] {
             assert!(code.allow_retry(), "{code} should be retryable");
         }
