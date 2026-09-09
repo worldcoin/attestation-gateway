@@ -701,6 +701,7 @@ pub fn client_session_id(headers: &axum::http::HeaderMap) -> &str {
 pub enum ErrorCode {
     AttestationRejected,
     BadRequest,
+    ClientFailure,
     DuplicateRequestHash,
     ExpiredToken,
     Forbidden,
@@ -721,6 +722,7 @@ impl std::fmt::Display for ErrorCode {
         match self {
             Self::AttestationRejected => write!(f, "attestation_rejected"),
             Self::BadRequest => write!(f, "bad_request"),
+            Self::ClientFailure => write!(f, "client_failure"),
             Self::DuplicateRequestHash => write!(f, "duplicate_request_hash"),
             Self::ExpiredToken => write!(f, "expired_token"),
             Self::Forbidden => write!(f, "forbidden"),
@@ -750,6 +752,7 @@ impl ErrorCode {
             Self::InvalidDeveloperToken => axum::http::StatusCode::UNAUTHORIZED,
             Self::AttestationRejected
             | Self::BadRequest
+            | Self::ClientFailure
             | Self::ExpiredToken
             | Self::IntegrityFailed
             | Self::InvalidAttestationForApp
@@ -767,6 +770,9 @@ impl ErrorCode {
                 "The challenge nonce is unknown or has expired. Request a new challenge."
             }
             Self::BadRequest => "The request is malformed.",
+            Self::ClientFailure => {
+                "The client reported it could not attest. Attestation was not attempted."
+            }
             Self::DuplicateRequestHash => {
                 "The `request_hash` has already been used. Generate a new one."
             }
@@ -808,7 +814,11 @@ impl ErrorCode {
             | Self::NonceNotFound
             // Minting a fresh token against the hash we actually received succeeds, so this must
             // not read as a verdict on the credential or the device.
-            | Self::RequestHashMismatch => true,
+            | Self::RequestHashMismatch
+            // The client's own attestation failed before we checked anything, and those failures
+            // are usually transient (a bad minute from Apple or Play). We hold no verdict on this
+            // device, so we must not answer as if we rejected it.
+            | Self::ClientFailure => true,
             Self::AttestationRejected
             | Self::BadRequest
             | Self::Forbidden
@@ -1088,6 +1098,7 @@ mod tests {
             ErrorCode::DuplicateRequestHash,
             ErrorCode::ExpiredToken,
             ErrorCode::RequestHashMismatch,
+            ErrorCode::ClientFailure,
         ] {
             assert!(code.allow_retry(), "{code} should be retryable");
         }
