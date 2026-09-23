@@ -12,6 +12,8 @@ use crate::utils::GlobalConfig;
 
 const CACHE_KEY_PREFIX: &str = "audience_authorization:v1:";
 const DEVELOPER_PORTAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const DEVELOPER_PORTAL_USER_AGENT: &str =
+    concat!("attestation-gateway/", env!("CARGO_PKG_VERSION"));
 // Starts with "app_" or "app_staging_" followed by 32 lowercase hex characters
 static APP_ID_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^app(_staging)?_[a-f0-9]{32}$").expect("valid app ID regex"));
@@ -159,6 +161,7 @@ fn is_rp_id(rp_id: &str) -> bool {
 fn build_http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(DEVELOPER_PORTAL_REQUEST_TIMEOUT)
+        .user_agent(DEVELOPER_PORTAL_USER_AGENT)
         .build()
         .expect("failed to build developer portal audience HTTP client")
 }
@@ -178,6 +181,28 @@ mod tests {
     const RP_ID: &str = "rp_0123456789abcdef";
     const MALFORMED_APP_ID: &str = "app_/../../../../public/v1/miniapps/prices";
     const APP_STATUS_RESPONSE: &str = r#"{"verified":false}"#;
+
+    #[tokio::test]
+    async fn developer_portal_client_sends_user_agent() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/v4/app-status/rp_0123456789abcdef")
+            .match_header(
+                "user-agent",
+                concat!("attestation-gateway/", env!("CARGO_PKG_VERSION")),
+            )
+            .with_status(200)
+            .create_async()
+            .await;
+
+        build_http_client()
+            .get(format!("{}/api/v4/app-status/{RP_ID}", server.url()))
+            .send()
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
+    }
 
     async fn redis_client() -> redis::aio::ConnectionManager {
         let client = redis::Client::open("redis://localhost").unwrap();
