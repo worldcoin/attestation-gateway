@@ -104,6 +104,7 @@ fn get_global_config_extension_with_pem(
         jwt_issuer: "attestation.worldcoin.org".to_string(),
         developer_portal_base_url: None,
         aud_authorization_cache_ttl_secs: 60 * 60,
+        output_token_expiration_by_aud: std::collections::HashMap::new(),
     };
     Extension(config)
 }
@@ -766,6 +767,7 @@ async fn test_server_error_is_properly_logged() {
             jwt_issuer: "attestation.worldcoin.org".to_string(),
             developer_portal_base_url: None,
             aud_authorization_cache_ttl_secs: 60 * 60,
+            output_token_expiration_by_aud: std::collections::HashMap::new(),
         };
         Extension(config)
     }

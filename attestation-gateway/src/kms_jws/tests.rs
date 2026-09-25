@@ -97,6 +97,7 @@ async fn test_generate_output_token() {
         app_version: Some("1.25.0".to_string()),
         check_type: Some(CheckType::Developer),
         extra: Some(HashMap::from([("foo".to_string(), "bar".to_string())])),
+        expiration: std::time::Duration::from_mins(10),
     }
     .generate()
     .unwrap();

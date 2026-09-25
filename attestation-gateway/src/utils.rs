@@ -5,10 +5,15 @@ use josekit::{JoseError, jwt::JwtPayload};
 use redis::RedisError;
 use schemars::JsonSchema;
 use std::collections::HashMap;
-use std::{env, fmt::Display, time::SystemTime};
+use std::{
+    env,
+    fmt::Display,
+    time::{Duration, SystemTime},
+};
 use uuid::Uuid;
 
-static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_mins(10);
+const DEFAULT_OUTPUT_TOKEN_EXPIRATION: Duration = Duration::from_mins(10);
+const MAX_OUTPUT_TOKEN_EXPIRATION: Duration = Duration::from_hours(24);
 
 /// A Play Integrity response-encryption key pair (the self-managed "download my keys" pair):
 /// the outer JWE decryption key (AES-256, base64) and the inner JWS verification key (EC, base64).
@@ -57,6 +62,8 @@ pub struct GlobalConfig {
     pub jwt_issuer: String,
     pub developer_portal_base_url: Option<String>,
     pub aud_authorization_cache_ttl_secs: u64,
+    /// Output token lifetime per `aud`; unlisted audiences get `DEFAULT_OUTPUT_TOKEN_EXPIRATION`.
+    pub output_token_expiration_by_aud: HashMap<String, TokenExpiration>,
 }
 
 impl GlobalConfig {
@@ -123,6 +130,10 @@ impl GlobalConfig {
             .map_or(Ok(60 * 60), |value| value.parse::<u64>())
             .expect("AUD_AUTHORIZATION_CACHE_TTL_SECS must be a valid u64");
 
+        let output_token_expiration_by_aud = env::var("OUTPUT_TOKEN_EXPIRATION_SECS_BY_AUD")
+            .map_or_else(|_| Ok(HashMap::new()), |val| serde_json::from_str(&val))
+            .unwrap_or_else(|e| panic!("invalid `OUTPUT_TOKEN_EXPIRATION_SECS_BY_AUD`: {e}"));
+
         tracing::info!(
             "Running with enabled bundle identifiers: {:?}",
             enabled_bundle_identifiers
@@ -142,7 +153,15 @@ impl GlobalConfig {
             jwt_issuer,
             developer_portal_base_url,
             aud_authorization_cache_ttl_secs,
+            output_token_expiration_by_aud,
         }
+    }
+
+    #[must_use]
+    pub fn output_token_expiration(&self, aud: &str) -> Duration {
+        self.output_token_expiration_by_aud
+            .get(aud)
+            .map_or(DEFAULT_OUTPUT_TOKEN_EXPIRATION, |expiration| expiration.0)
     }
 
     /// # Errors
@@ -943,6 +962,26 @@ impl DataReport {
     }
 }
 
+/// An output token lifetime, only constructible within `1..=MAX_OUTPUT_TOKEN_EXPIRATION`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(try_from = "u64")]
+pub struct TokenExpiration(Duration);
+
+impl TryFrom<u64> for TokenExpiration {
+    type Error = String;
+
+    fn try_from(secs: u64) -> Result<Self, Self::Error> {
+        let expiration = Duration::from_secs(secs);
+        if expiration.is_zero() || expiration > MAX_OUTPUT_TOKEN_EXPIRATION {
+            return Err(format!(
+                "{secs}s is outside 1..={}s",
+                MAX_OUTPUT_TOKEN_EXPIRATION.as_secs()
+            ));
+        }
+        Ok(Self(expiration))
+    }
+}
+
 #[derive(Debug)]
 pub struct OutputTokenPayload {
     pub issuer: String,
@@ -955,6 +994,7 @@ pub struct OutputTokenPayload {
     pub app_version: Option<String>,
     pub check_type: Option<CheckType>,
     pub extra: Option<HashMap<String, String>>,
+    pub expiration: Duration,
 }
 
 #[expect(clippy::needless_pass_by_value)]
@@ -1001,7 +1041,7 @@ impl OutputTokenPayload {
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(handle_system_time_error)?
             .as_secs();
-        let expires_at = issued_at + OUTPUT_TOKEN_EXPIRATION.as_secs();
+        let expires_at = issued_at + self.expiration.as_secs();
 
         payload
             .set_claim("iat", Some(josekit::Value::Number(issued_at.into())))
@@ -1177,6 +1217,7 @@ mod tests {
             app_version: Some("1.25.0".to_string()),
             check_type: Some(CheckType::Developer),
             extra: None,
+            expiration: DEFAULT_OUTPUT_TOKEN_EXPIRATION,
         };
 
         let jwt_payload = payload.generate().unwrap();
@@ -1191,7 +1232,7 @@ mod tests {
             jwt_payload.issued_at().unwrap()
                 < (now +
                 // expiration time
-                OUTPUT_TOKEN_EXPIRATION +
+                DEFAULT_OUTPUT_TOKEN_EXPIRATION +
                 // tolerance time
                 std::time::Duration::from_secs(5))
         );
@@ -1210,7 +1251,7 @@ mod tests {
         assert!(exp.is_u64(), "`exp` must be an integer, got {exp}");
         assert_eq!(
             exp.as_u64().unwrap() - iat.as_u64().unwrap(),
-            OUTPUT_TOKEN_EXPIRATION.as_secs(),
+            DEFAULT_OUTPUT_TOKEN_EXPIRATION.as_secs(),
             "`exp` must be exactly the expiration window after `iat`"
         );
 
@@ -1434,6 +1475,52 @@ mod tests {
             jwt_issuer: String::new(),
             developer_portal_base_url: None,
             aud_authorization_cache_ttl_secs: 0,
+            output_token_expiration_by_aud: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn output_token_expiration_uses_override_for_listed_aud_only() {
+        let mut config = config_with_android_keys(None, None);
+        config.output_token_expiration_by_aud =
+            serde_json::from_str(r#"{"app.orb.worldcoin.org": 1800}"#).unwrap();
+
+        assert_eq!(
+            config.output_token_expiration("app.orb.worldcoin.org"),
+            Duration::from_mins(30)
+        );
+        assert_eq!(
+            config.output_token_expiration("app.face.worldcoin.org"),
+            DEFAULT_OUTPUT_TOKEN_EXPIRATION
+        );
+    }
+
+    #[test]
+    fn token_expiration_accepts_bounds() {
+        assert_eq!(
+            TokenExpiration::try_from(1),
+            Ok(TokenExpiration(Duration::from_secs(1)))
+        );
+        assert_eq!(
+            TokenExpiration::try_from(MAX_OUTPUT_TOKEN_EXPIRATION.as_secs()),
+            Ok(TokenExpiration(MAX_OUTPUT_TOKEN_EXPIRATION))
+        );
+    }
+
+    #[test]
+    fn token_expiration_by_aud_rejects_invalid_values() {
+        for value in [
+            r#"{"a": 0}"#,
+            r#"{"a": 86401}"#,
+            r#"{"a": -1}"#,
+            r#"{"a": "60"}"#,
+            r#"{"a": 1.5}"#,
+            "a=60",
+        ] {
+            assert!(
+                serde_json::from_str::<HashMap<String, TokenExpiration>>(value).is_err(),
+                "`{value}` should be rejected"
+            );
         }
     }
 
