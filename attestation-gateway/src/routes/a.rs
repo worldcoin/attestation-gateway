@@ -2,7 +2,7 @@ use aws_config::SdkConfig;
 
 use axum::{Extension, Json, http::HeaderMap};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
-use chrono::{DateTime, SubsecRound, Utc};
+use chrono::Utc;
 use josekit::jwt::JwtPayload;
 use openssl::{
     bn::BigNum,
@@ -114,13 +114,12 @@ impl IntegrityTokenPayload {
         cfn.insert("jwk".to_string(), josekit::Value::Object(cnf_jwk.into()));
 
         let mut payload = JwtPayload::new();
-        payload.set_issued_at(&Utc::now().round_subsecs(0).into());
+        payload.set_claim(
+            "iat",
+            Some(josekit::Value::Number(Utc::now().timestamp().into())),
+        )?;
         payload.set_issuer(issuer);
-        payload.set_expires_at(
-            &DateTime::<Utc>::from_timestamp(self.exp, 0)
-                .ok_or(eyre::Error::msg("Unreachable exp conversion"))?
-                .into(),
-        );
+        payload.set_claim("exp", Some(josekit::Value::Number(self.exp.into())))?;
         payload.set_claim("v", Some(josekit::Value::String(self.v.clone())))?;
         payload.set_claim(
             "app_version",
@@ -439,5 +438,30 @@ mod tests {
         let map = headers_to_map(&headers);
         assert_eq!(map["header-1"], "value-1, value-1b");
         assert_eq!(map["header-2"], "value-2");
+    }
+
+    #[test]
+    fn integrity_token_numeric_dates_are_integers() {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let private_key = EcKey::generate(&group).unwrap();
+        let public_key = EcKey::from_public_key(&group, private_key.public_key()).unwrap();
+        let cnf_pkey = PKey::from_ec_key(public_key).unwrap();
+        let exp = Utc::now().timestamp() + 60;
+        let payload = IntegrityTokenPayload {
+            v: "1".to_string(),
+            platform: Platform::AppleIOS,
+            app_version: "1.0.0".to_string(),
+            aud: "test".to_string(),
+            cnf: vec![0; 65],
+            pass: true,
+            exp,
+        }
+        .build_payload("issuer", &cnf_pkey)
+        .unwrap();
+
+        let iat = payload.claim("iat").unwrap().as_i64().unwrap();
+        assert!(iat <= exp);
+        assert_eq!(payload.claim("exp").unwrap().as_i64(), Some(exp));
+        assert_eq!(payload.issuer(), Some("issuer"));
     }
 }
