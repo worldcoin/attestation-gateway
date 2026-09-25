@@ -10,9 +10,8 @@ pub struct TokenDetails {
 
 impl TokenDetails {
     #[must_use]
-    pub fn from_aud(aud: String) -> Self {
+    pub fn from_aud(aud: String, ttl: Duration) -> Self {
         let now = DateTime::<Utc>::from(SystemTime::now());
-        let ttl = Duration::from_mins(5);
         let exp_max = (now + ttl).timestamp();
 
         Self { aud, exp_max }
@@ -25,15 +24,16 @@ mod tests {
 
     #[test]
     fn test_from_aud() {
-        let token_details = TokenDetails::from_aud("android".to_string());
+        let now = DateTime::<Utc>::from(SystemTime::now()).timestamp();
+        let token_details = TokenDetails::from_aud("android".to_string(), Duration::from_mins(30));
 
         assert_eq!(token_details.aud, "android");
-        assert!(token_details.exp_max > DateTime::<Utc>::from(SystemTime::now()).timestamp());
+        assert!((now + 30 * 60..=now + 30 * 60 + 1).contains(&token_details.exp_max));
     }
 
     #[test]
     fn test_to_json() {
-        let token_details = TokenDetails::from_aud("android".to_string());
+        let token_details = TokenDetails::from_aud("android".to_string(), Duration::from_mins(5));
         let json = serde_json::to_string(&token_details).unwrap();
 
         assert!(json.contains("\"aud\":\"android\""));
@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_serialize_deserialize() {
-        let original = TokenDetails::from_aud("roundtrip-aud".to_string());
+        let original = TokenDetails::from_aud("roundtrip-aud".to_string(), Duration::from_mins(5));
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: TokenDetails = serde_json::from_str(&json).unwrap();
 
