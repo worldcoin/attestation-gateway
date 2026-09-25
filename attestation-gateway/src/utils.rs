@@ -13,7 +13,7 @@ use std::{
 use uuid::Uuid;
 
 const DEFAULT_OUTPUT_TOKEN_EXPIRATION: Duration = Duration::from_mins(10);
-const MAX_OUTPUT_TOKEN_EXPIRATION: Duration = Duration::from_hours(24);
+const MAX_OUTPUT_TOKEN_EXPIRATION: Duration = Duration::from_hours(5 * 24);
 
 /// A Play Integrity response-encryption key pair (the self-managed "download my keys" pair):
 /// the outer JWE decryption key (AES-256, base64) and the inner JWS verification key (EC, base64).
@@ -1511,7 +1511,7 @@ mod tests {
     fn token_expiration_by_aud_rejects_invalid_values() {
         for value in [
             r#"{"a": 0}"#,
-            r#"{"a": 86401}"#,
+            r#"{"a": 432001}"#,
             r#"{"a": -1}"#,
             r#"{"a": "60"}"#,
             r#"{"a": 1.5}"#,
