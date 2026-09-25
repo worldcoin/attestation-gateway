@@ -5,7 +5,11 @@ use josekit::{JoseError, jwt::JwtPayload};
 use redis::RedisError;
 use schemars::JsonSchema;
 use std::collections::HashMap;
-use std::{env, fmt::Display, time::SystemTime};
+use std::{
+    env,
+    fmt::Display,
+    time::{Duration, SystemTime},
+};
 use uuid::Uuid;
 
 static OUTPUT_TOKEN_EXPIRATION: std::time::Duration = std::time::Duration::from_mins(10);
@@ -57,6 +61,8 @@ pub struct GlobalConfig {
     pub jwt_issuer: String,
     pub developer_portal_base_url: Option<String>,
     pub aud_authorization_cache_ttl_secs: u64,
+    /// `/a` token lifetime per `aud`; unlisted audiences get `DEFAULT_TOKEN_EXP_MAX`.
+    pub token_exp_max_by_aud: HashMap<String, TokenExpiration>,
 }
 
 impl GlobalConfig {
@@ -123,6 +129,10 @@ impl GlobalConfig {
             .map_or(Ok(60 * 60), |value| value.parse::<u64>())
             .expect("AUD_AUTHORIZATION_CACHE_TTL_SECS must be a valid u64");
 
+        let token_exp_max_by_aud = env::var("TOKEN_EXP_MAX_SECS_BY_AUD")
+            .map_or_else(|_| Ok(HashMap::new()), |val| serde_json::from_str(&val))
+            .unwrap_or_else(|e| panic!("invalid `TOKEN_EXP_MAX_SECS_BY_AUD`: {e}"));
+
         tracing::info!(
             "Running with enabled bundle identifiers: {:?}",
             enabled_bundle_identifiers
@@ -142,7 +152,16 @@ impl GlobalConfig {
             jwt_issuer,
             developer_portal_base_url,
             aud_authorization_cache_ttl_secs,
+            token_exp_max_by_aud,
         }
+    }
+
+    /// How long an `/a` integrity token for `aud` may live.
+    #[must_use]
+    pub fn token_exp_max_ttl(&self, aud: &str) -> Duration {
+        self.token_exp_max_by_aud
+            .get(aud)
+            .map_or(DEFAULT_TOKEN_EXP_MAX, |ttl| ttl.0)
     }
 
     /// # Errors
@@ -213,6 +232,33 @@ pub const SIGNING_CONFIG: SigningConfigDefinition = SigningConfigDefinition {
     key_ttl_signing: 60 * 60 * 24 * 180,      // 180 days
     key_ttl_verification: 60 * 60 * 24 * 182, // 182 days
 };
+
+const DEFAULT_TOKEN_EXP_MAX: Duration = Duration::from_mins(5);
+/// A token must expire before its signing key drops out of the JWKS, so no token may outlive the
+/// window where a key still verifies but no longer signs.
+const TOKEN_EXP_MAX_CEILING: Duration = Duration::from_secs(
+    (SIGNING_CONFIG.key_ttl_verification - SIGNING_CONFIG.key_ttl_signing).cast_unsigned(),
+);
+
+/// An integrity token lifetime, only constructible within `1..=TOKEN_EXP_MAX_CEILING`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(try_from = "u64")]
+pub struct TokenExpiration(Duration);
+
+impl TryFrom<u64> for TokenExpiration {
+    type Error = String;
+
+    fn try_from(secs: u64) -> Result<Self, Self::Error> {
+        let ttl = Duration::from_secs(secs);
+        if ttl.is_zero() || ttl > TOKEN_EXP_MAX_CEILING {
+            return Err(format!(
+                "{secs}s is outside 1..={}s",
+                TOKEN_EXP_MAX_CEILING.as_secs()
+            ));
+        }
+        Ok(Self(ttl))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
@@ -1434,6 +1480,58 @@ mod tests {
             jwt_issuer: String::new(),
             developer_portal_base_url: None,
             aud_authorization_cache_ttl_secs: 0,
+            token_exp_max_by_aud: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn token_exp_max_ttl_uses_override_for_listed_aud_only() {
+        let mut config = config_with_android_keys(None, None);
+        config.token_exp_max_by_aud =
+            serde_json::from_str(r#"{"app.orb.worldcoin.org": 1800}"#).unwrap();
+
+        assert_eq!(
+            config.token_exp_max_ttl("app.orb.worldcoin.org"),
+            Duration::from_mins(30)
+        );
+        assert_eq!(
+            config.token_exp_max_ttl("app.face.worldcoin.org"),
+            DEFAULT_TOKEN_EXP_MAX
+        );
+    }
+
+    #[test]
+    fn token_exp_max_ceiling_is_the_key_verification_overlap() {
+        assert_eq!(TOKEN_EXP_MAX_CEILING, Duration::from_hours(2 * 24));
+    }
+
+    #[test]
+    fn token_expiration_accepts_bounds() {
+        assert_eq!(
+            TokenExpiration::try_from(1),
+            Ok(TokenExpiration(Duration::from_secs(1)))
+        );
+        assert_eq!(
+            TokenExpiration::try_from(TOKEN_EXP_MAX_CEILING.as_secs()),
+            Ok(TokenExpiration(TOKEN_EXP_MAX_CEILING))
+        );
+    }
+
+    #[test]
+    fn token_exp_max_by_aud_rejects_invalid_values() {
+        let over_ceiling = format!(r#"{{"a": {}}}"#, TOKEN_EXP_MAX_CEILING.as_secs() + 1);
+        for value in [
+            r#"{"a": 0}"#,
+            over_ceiling.as_str(),
+            r#"{"a": -1}"#,
+            r#"{"a": "60"}"#,
+            r#"{"a": 1.5}"#,
+            "a=60",
+        ] {
+            assert!(
+                serde_json::from_str::<HashMap<String, TokenExpiration>>(value).is_err(),
+                "`{value}` should be rejected"
+            );
         }
     }
 
