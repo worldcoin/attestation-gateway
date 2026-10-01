@@ -206,6 +206,9 @@ async fn get_challenge_router() -> (aide::axum::ApiRouter, redis::aio::Connectio
             &redis_ext.0,
             &global_config_ext.0,
         ))
+        .layer(Extension(
+            attestation_gateway::nonces::TokenDetailsFactory::from_config(&global_config_ext.0),
+        ))
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext);
 

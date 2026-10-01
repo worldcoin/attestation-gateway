@@ -61,7 +61,7 @@ pub struct GlobalConfig {
     pub jwt_issuer: String,
     pub developer_portal_base_url: Option<String>,
     pub aud_authorization_cache_ttl_secs: u64,
-    /// `/a` token lifetime per `aud`; unlisted audiences get `DEFAULT_TOKEN_EXP_MAX`.
+    /// `/a` token lifetime per `aud`; unlisted audiences get the 5 min default.
     pub token_exp_max_by_aud: HashMap<String, TokenExpiration>,
 }
 
@@ -137,6 +137,7 @@ impl GlobalConfig {
             "Running with enabled bundle identifiers: {:?}",
             enabled_bundle_identifiers
         );
+        tracing::info!("Running with token_exp_max overrides: {token_exp_max_by_aud:?}");
 
         Self {
             android_default_keys,
@@ -154,14 +155,6 @@ impl GlobalConfig {
             aud_authorization_cache_ttl_secs,
             token_exp_max_by_aud,
         }
-    }
-
-    /// How long an `/a` integrity token for `aud` may live.
-    #[must_use]
-    pub fn token_exp_max_ttl(&self, aud: &str) -> Duration {
-        self.token_exp_max_by_aud
-            .get(aud)
-            .map_or(DEFAULT_TOKEN_EXP_MAX, |ttl| ttl.0)
     }
 
     /// # Errors
@@ -233,7 +226,6 @@ pub const SIGNING_CONFIG: SigningConfigDefinition = SigningConfigDefinition {
     key_ttl_verification: 60 * 60 * 24 * 182, // 182 days
 };
 
-const DEFAULT_TOKEN_EXP_MAX: Duration = Duration::from_mins(5);
 /// A token must expire before its signing key drops out of the JWKS, so no token may outlive the
 /// window where a key still verifies but no longer signs.
 const TOKEN_EXP_MAX_CEILING: Duration = Duration::from_secs(
@@ -244,6 +236,13 @@ const TOKEN_EXP_MAX_CEILING: Duration = Duration::from_secs(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(try_from = "u64")]
 pub struct TokenExpiration(Duration);
+
+impl TokenExpiration {
+    #[must_use]
+    pub const fn as_duration(self) -> Duration {
+        self.0
+    }
+}
 
 impl TryFrom<u64> for TokenExpiration {
     type Error = String;
@@ -1482,22 +1481,6 @@ mod tests {
             aud_authorization_cache_ttl_secs: 0,
             token_exp_max_by_aud: HashMap::new(),
         }
-    }
-
-    #[test]
-    fn token_exp_max_ttl_uses_override_for_listed_aud_only() {
-        let mut config = config_with_android_keys(None, None);
-        config.token_exp_max_by_aud =
-            serde_json::from_str(r#"{"app.orb.worldcoin.org": 1800}"#).unwrap();
-
-        assert_eq!(
-            config.token_exp_max_ttl("app.orb.worldcoin.org"),
-            Duration::from_mins(30)
-        );
-        assert_eq!(
-            config.token_exp_max_ttl("app.face.worldcoin.org"),
-            DEFAULT_TOKEN_EXP_MAX
-        );
     }
 
     #[test]

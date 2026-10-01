@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 
 use crate::audience_authorizer::{AudienceAuthorizationError, AudienceAuthorizer};
-use crate::nonces::{NonceDb, TokenDetails};
-use crate::utils::{ErrorCode, GlobalConfig, RequestError, client_session_id};
+use crate::nonces::{NonceDb, TokenDetailsFactory};
+use crate::utils::{ErrorCode, RequestError, client_session_id};
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct Request {
@@ -39,7 +39,7 @@ pub struct Response {
 /// }
 /// ```
 pub async fn handler(
-    Extension(global_config): Extension<GlobalConfig>,
+    Extension(token_details_factory): Extension<TokenDetailsFactory>,
     Extension(mut nonce_db): Extension<NonceDb>,
     Extension(audience_authorizer): Extension<AudienceAuthorizer>,
     headers: HeaderMap,
@@ -70,10 +70,7 @@ pub async fn handler(
             RequestError::from(error)
         })?;
 
-    let token_details = TokenDetails::from_aud(
-        request.aud.clone(),
-        global_config.token_exp_max_ttl(&request.aud),
-    );
+    let token_details = token_details_factory.from_aud(request.aud.clone());
     let nonce = nonce_db.generate_nonce(&token_details).await.map_err(|e| {
         tracing::error!(error = ?e, "Failed to generate nonce.");
 
