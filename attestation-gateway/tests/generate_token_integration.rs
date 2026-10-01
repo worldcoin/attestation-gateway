@@ -104,6 +104,7 @@ fn get_global_config_extension_with_pem(
         jwt_issuer: "attestation.worldcoin.org".to_string(),
         developer_portal_base_url: None,
         aud_authorization_cache_ttl_secs: 60 * 60,
+        token_exp_max_by_aud: std::collections::HashMap::new(),
     };
     Extension(config)
 }
@@ -204,6 +205,9 @@ async fn get_challenge_router() -> (aide::axum::ApiRouter, redis::aio::Connectio
         .layer(extension_audience_authorizer(
             &redis_ext.0,
             &global_config_ext.0,
+        ))
+        .layer(Extension(
+            attestation_gateway::nonces::TokenDetailsFactory::from_config(&global_config_ext.0),
         ))
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext);
@@ -766,6 +770,7 @@ async fn test_server_error_is_properly_logged() {
             jwt_issuer: "attestation.worldcoin.org".to_string(),
             developer_portal_base_url: None,
             aud_authorization_cache_ttl_secs: 60 * 60,
+            token_exp_max_by_aud: std::collections::HashMap::new(),
         };
         Extension(config)
     }
