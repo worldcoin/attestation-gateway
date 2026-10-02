@@ -148,7 +148,7 @@ pub async fn handler(
         // Check if we have a `ClientException` in the error chain and return to the client without further logging
         if let Some(client_error) = e.downcast_ref::<ClientException>() {
             if global_config.log_client_errors {
-                tracing::info!(error = ?e, request_hash = request_hash, bundle_identifier = %request.bundle_identifier, check_type = ?check_type, "Client exception verifying Android or Apple integrity");
+                tracing::info!(error = ?e, rejection_reason = %client_error.internal_debug_info, request_hash = request_hash, bundle_identifier = %request.bundle_identifier, check_type = ?check_type, "Client exception verifying Android or Apple integrity");
             }else {
                 tracing::debug!(error = ?e, check_type = ?check_type, "Client exception verifying Android or Apple integrity");
             }
