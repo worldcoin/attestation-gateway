@@ -71,6 +71,9 @@ pub async fn start(
     let aat_issuer = Box::pin(AatIssuer::from_env(&aws_config, now))
         .await
         .map(Arc::new);
+    if let Some(issuer) = &aat_issuer {
+        issuer.spawn_refresh();
+    }
 
     let app = routes::handler()
         .finish_api(&mut openapi)
