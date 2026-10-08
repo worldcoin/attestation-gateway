@@ -5399,7 +5399,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 [[package]]
 name = "world-id-primitives"
 version = "0.14.1"
-source = "git+https://github.com/worldcoin/world-id-protocol?rev=7ccc23cdb5416e7eebd7af5f118edaf097d206c5#7ccc23cdb5416e7eebd7af5f118edaf097d206c5"
+source = "git+https://github.com/worldcoin/world-id-protocol?rev=784446ee33c058f8c3fb05e1c6de9f1bb45db5b7#784446ee33c058f8c3fb05e1c6de9f1bb45db5b7"
 dependencies = [
  "alloy-primitives",
  "ark-ff 0.6.0",
