@@ -78,6 +78,11 @@ impl AatKeyStore {
                 .encrypt()
                 .key_id(&self.kms_key_arn)
                 .plaintext(Blob::new(key.key.to_bytes()))
+                .set_encryption_context(Some(encryption_context(
+                    key.slot,
+                    key.not_before,
+                    key.not_after,
+                )))
                 .send(),
         )
         .await?
@@ -129,6 +134,13 @@ impl AatKeyStore {
             .and_then(|s| s.strip_prefix("slot#"))
             .ok_or_else(|| eyre::eyre!("AAT key item is missing `slot`"))?
             .parse()?;
+        let not_before = number("not_before")?;
+        let not_after = number("not_after")?;
+        // Required, so a missing flag never reads as "not revoked".
+        let revoked = *item
+            .get("revoked")
+            .and_then(|v| v.as_bool().ok())
+            .ok_or_else(|| eyre::eyre!("AAT key item is missing `revoked`"))?;
         let secret = item
             .get("secret")
             .and_then(|v| v.as_b().ok())
@@ -138,6 +150,7 @@ impl AatKeyStore {
                 .decrypt()
                 .key_id(&self.kms_key_arn)
                 .ciphertext_blob(secret.clone())
+                .set_encryption_context(Some(encryption_context(slot, not_before, not_after)))
                 .send(),
         )
         .await?
@@ -150,15 +163,21 @@ impl AatKeyStore {
         Ok(StoredKey {
             slot,
             key: EdDSAPrivateKey::from_bytes(bytes),
-            not_before: number("not_before")?,
-            not_after: number("not_after")?,
-            revoked: item
-                .get("revoked")
-                .and_then(|v| v.as_bool().ok())
-                .copied()
-                .unwrap_or(false),
+            not_before,
+            not_after,
+            revoked,
         })
     }
+}
+
+/// Binds a secret to its slot and validity window: an item whose fields were changed, or a
+/// secret moved to another item, no longer decrypts.
+fn encryption_context(slot: u64, not_before: u64, not_after: u64) -> HashMap<String, String> {
+    HashMap::from([
+        ("slot".to_string(), slot.to_string()),
+        ("not_before".to_string(), not_before.to_string()),
+        ("not_after".to_string(), not_after.to_string()),
+    ])
 }
 
 fn slot_id(slot: u64) -> String {
