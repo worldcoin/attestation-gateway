@@ -64,6 +64,14 @@ pub async fn start(
     #[expect(clippy::let_underscore_future)] // do not await, it's a handler for background tasks
     let _ = android_attestation_service.spawn_refresh_loop();
 
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock is after the Unix epoch")
+        .as_secs();
+    let aat_issuer = Box::pin(AatIssuer::from_env(&aws_config, now))
+        .await
+        .map(Arc::new);
+
     let app = routes::handler()
         .finish_api(&mut openapi)
         .layer(Extension(nonce_db))
@@ -73,7 +81,7 @@ pub async fn start(
         .layer(Extension(openapi))
         .layer(Extension(aws_config))
         .layer(Extension(global_config))
-        .layer(Extension(AatIssuer::from_env().map(Arc::new)))
+        .layer(Extension(aat_issuer))
         .layer(CompressionLayer::new())
         .layer(Extension(kinesis_client))
         .layer(Extension(android_attestation_service))
