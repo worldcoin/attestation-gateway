@@ -51,7 +51,7 @@ tower-http = { version = "0.7.0", features = ["compression-br", "trace", "timeou
 tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json"] }
 uuid = { version = "1.23.4", default-features = false, features = ["v4"] }
-# PROTOTYPE: pinned to an unmerged branch that moves the WIP-106 module here (worldcoin/world-id-protocol#1073).
+# TODO: pin a release; this is an unmerged branch that moves the WIP-106 module here (worldcoin/world-id-protocol#1073).
 world-id-primitives = { git = "https://github.com/worldcoin/world-id-protocol", rev = "205beed6cdb6052e280f4d06698782e436dcd1e0", default-features = false }
 x509-parser = "0.18.1"
 

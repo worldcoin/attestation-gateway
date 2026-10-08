@@ -1,6 +1,6 @@
 //! WIP-106 Authenticator Assertion Token (AAT) issuance.
 //!
-//! PROTOTYPE: the `authenticator_provider_key` is a `BabyJubJub` key that KMS cannot hold, so it is
+//! The `authenticator_provider_key` is a `BabyJubJub` key that KMS cannot hold, so it is
 //! loaded from the environment. It should move to a TEE or HSM before production (WIP-106 §3.2.7).
 
 use std::env;
