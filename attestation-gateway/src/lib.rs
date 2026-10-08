@@ -1,5 +1,6 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
+pub mod aat_issuer;
 pub mod android;
 pub mod apple;
 pub mod audience_authorizer;

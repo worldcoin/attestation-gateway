@@ -28,6 +28,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 ciborium = "0.2.2"
 der-parser = "10.0.0"
 dotenvy = "0.15.7"
+eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.6.0" }
 eyre = "0.6.12"
 hex.workspace = true
 josekit = "0.10.3"
@@ -50,6 +51,8 @@ tower-http = { version = "0.7.0", features = ["compression-br", "trace", "timeou
 tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json"] }
 uuid = { version = "1.23.4", default-features = false, features = ["v4"] }
+# TODO: pin a release; this unmerged branch adds the `protocol` feature (worldcoin/world-id-protocol#1075).
+world-id-primitives = { git = "https://github.com/worldcoin/world-id-protocol", rev = "784446ee33c058f8c3fb05e1c6de9f1bb45db5b7", default-features = false }
 x509-parser = "0.18.1"
 
 [build-dependencies]

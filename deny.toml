@@ -32,3 +32,8 @@ allow = [
   "Zlib",
 ]
 
+[advisories]
+ignore = [
+  "RUSTSEC-2024-0388", # Unmaintained `derivative`; transitive via `world-id-primitives` (ark-ff), ignored upstream too
+  "RUSTSEC-2024-0436", # Unmaintained `paste`; transitive via `world-id-primitives` (alloy-primitives), ignored upstream too
+]
