@@ -23,17 +23,18 @@ const AAT_COMMITMENT_LOCK_TTL: u64 = 60 * 60;
 
 /// Request for a WIP-106 Authenticator Assertion Token.
 ///
-/// The platform evidence's challenge is the canonical `aat_commitment` string: it is the App Attest
-/// `clientDataHash` preimage and the Play Integrity `nonce`.
+/// The platform evidence's challenge is [`challenge`] over every value the AAT signs on the
+/// Authenticator's word: it is the App Attest `clientDataHash` preimage and the Play Integrity
+/// `nonce`.
 #[derive(Debug, serde::Deserialize, JsonSchema)]
 pub struct AatRequest {
     pub bundle_identifier: BundleIdentifier,
     /// `H_8(DS_REQ; aud, nonce, cdh, blind)` as `0x`-prefixed, 32-byte big-endian hex.
     pub aat_commitment: String,
-    /// The Authenticator's build, used where the platform does not attest one (iOS).
-    pub build_version: Option<u32>,
+    /// The Authenticator's build. Play Integrity attests it, and a different value is rejected.
+    pub build_version: u32,
     /// The presence check the Authenticator ran for this request (WIP-106 §3.5.1).
-    pub user_presence: Option<u8>,
+    pub user_presence: u8,
     pub integrity_token: Option<String>,
     pub apple_assertion: Option<String>,
     pub apple_public_key: Option<String>,
@@ -100,16 +101,17 @@ pub async fn handler(
 
     let aat_commitment = FieldElement::from_str(&request.aat_commitment)
         .map_err(|_| bad_request("`aat_commitment` must be a 32-byte hex field element."))?;
-    // Canonical form, so equal commitments always yield the same challenge and lock.
-    let challenge = aat_commitment.to_string();
-    let user_presence = UserPresence::try_from(request.user_presence.unwrap_or(0))
+    let user_presence = UserPresence::try_from(request.user_presence)
         .map_err(|_| bad_request("`user_presence` must be between 0 and 4."))?;
+    let challenge = challenge(aat_commitment, user_presence, request.build_version);
+    // Canonical form, so a commitment is signed at most once whatever flags it is sent with.
+    let lock_key = aat_commitment.to_string();
     let evidence = Evidence::from_request(&request)?;
     let platform = evidence.platform();
 
     metrics::counter!("aat.request", "platform" => platform).increment(1);
 
-    if !lock_commitment(&challenge, &mut redis).await? {
+    if !lock_commitment(&lock_key, &mut redis).await? {
         return Err(RequestError {
             code: ErrorCode::DuplicateRequestHash,
             details: None,
@@ -136,7 +138,7 @@ pub async fn handler(
         Err(e) => {
             metrics::counter!("aat.failure", "platform" => platform, "error_code" => e.code.to_string())
                 .increment(1);
-            release_commitment(&challenge, &mut redis).await?;
+            release_commitment(&lock_key, &mut redis).await?;
             Err(e)
         }
     }
@@ -190,15 +192,17 @@ async fn issue(
         });
     }
 
-    // WIP-106 §3.6.4: the attested version where the platform provides one (Play Integrity
-    // `versionCode`), otherwise the Authenticator's report.
-    let build_version = match output.app_version {
-        Some(version) => version.parse().map_err(|_| {
-            tracing::error!(version, "Attested app version is not a u32");
-            internal_error()
-        })?,
-        None => request.build_version.unwrap_or(0),
-    };
+    // WIP-106 §3.6.2/§3.6.4: the reported build is in the challenge; where the platform attests one
+    // (Play Integrity `versionCode`) it must agree.
+    if let Some(version) = output.app_version
+        && version.parse::<u32>().ok() != Some(request.build_version)
+    {
+        return Err(RequestError {
+            code: ErrorCode::IntegrityFailed,
+            details: Some("`build_version` does not match the attested app version.".to_string()),
+        });
+    }
+    let build_version = request.build_version;
     let sec_flags = SecFlags::new(
         platform.into(),
         sec_level.into(),
@@ -220,6 +224,23 @@ async fn issue(
         internal_error()
     })?;
     Ok(URL_SAFE_NO_PAD.encode(cwt))
+}
+
+/// The platform challenge: lowercase hex of
+/// `SHA-256(aat_commitment (32 bytes, big-endian) || user_presence (1 byte) || build_version (4 bytes, big-endian))`.
+///
+/// Binding the reported values into the evidence keeps them from being changed after the
+/// Authenticator produced it (WIP-106 §3.5.1).
+fn challenge(
+    aat_commitment: FieldElement,
+    user_presence: UserPresence,
+    build_version: u32,
+) -> String {
+    let mut preimage = Vec::with_capacity(37);
+    preimage.extend_from_slice(&aat_commitment.to_be_bytes());
+    preimage.push(user_presence.into());
+    preimage.extend_from_slice(&build_version.to_be_bytes());
+    hex::encode(openssl::sha::sha256(&preimage))
 }
 
 fn map_verification_error(e: &eyre::Report) -> RequestError {
@@ -250,7 +271,7 @@ pub async fn metadata_handler(
 }
 
 async fn lock_commitment(
-    challenge: &str,
+    aat_commitment: &str,
     redis: &mut ConnectionManager,
 ) -> Result<bool, RequestError> {
     let options = SetOptions::default()
@@ -258,7 +279,7 @@ async fn lock_commitment(
         .with_expiration(SetExpiry::EX(AAT_COMMITMENT_LOCK_TTL));
     redis
         .set_options::<String, bool, bool>(
-            format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{challenge}"),
+            format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{aat_commitment}"),
             true,
             options,
         )
@@ -267,11 +288,11 @@ async fn lock_commitment(
 }
 
 async fn release_commitment(
-    challenge: &str,
+    aat_commitment: &str,
     redis: &mut ConnectionManager,
 ) -> Result<(), RequestError> {
     redis
-        .del::<String, usize>(format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{challenge}"))
+        .del::<String, usize>(format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{aat_commitment}"))
         .await
         .map_err(handle_redis_error)?;
     Ok(())
@@ -288,5 +309,46 @@ const fn internal_error() -> RequestError {
     RequestError {
         code: ErrorCode::InternalServerError,
         details: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn challenge_binds_every_reported_value() {
+        let commitment = FieldElement::from(42u64);
+        let reference = challenge(commitment, UserPresence::PresentVerified, 2006);
+        assert_eq!(reference.len(), 64);
+        assert_ne!(
+            challenge(
+                FieldElement::from(43u64),
+                UserPresence::PresentVerified,
+                2006
+            ),
+            reference
+        );
+        assert_ne!(
+            challenge(commitment, UserPresence::Undetermined, 2006),
+            reference
+        );
+        assert_ne!(
+            challenge(commitment, UserPresence::PresentVerified, 2007),
+            reference
+        );
+    }
+
+    #[test]
+    fn challenge_matches_known_answer() {
+        // Computed independently: SHA-256(31 zero bytes || 0x2a || 0x02 || 0x000007d6).
+        assert_eq!(
+            challenge(
+                FieldElement::from(42u64),
+                UserPresence::PresentVerified,
+                2006
+            ),
+            "a45df5e6f762c267a8a8113537d125588592712dab90d33a58158e66d2404ca6"
+        );
     }
 }
