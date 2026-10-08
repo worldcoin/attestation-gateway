@@ -606,3 +606,40 @@ async fn test_instances_racing_on_first_start_create_one_key() {
     assert_eq!(stored_slots(&aws_config).await, ["slot#0"]);
     assert_eq!(signing_kid(&a, now).await, signing_kid(&b, now).await);
 }
+
+/// A store over a table with slot 0's key, and the item update to apply to it.
+async fn store_after(update: &str, values: Option<(&str, AttributeValue)>) -> AatKeyStore {
+    let aws_config = aws_config().await;
+    reset_aat_keys(&aws_config).await;
+    let kms_key = kms_key(&aws_config).await;
+    issuer_with(&aws_config, kms_key.clone(), now()).await;
+
+    let mut request = aws_sdk_dynamodb::Client::new(&aws_config)
+        .update_item()
+        .table_name(AAT_KEYS_TABLE)
+        .key("slot", AttributeValue::S("slot#0".to_string()))
+        .update_expression(update);
+    if let Some((name, value)) = values {
+        request = request.expression_attribute_values(name, value);
+    }
+    request.send().await.unwrap();
+    AatKeyStore::new(&aws_config, AAT_KEYS_TABLE.to_string(), kms_key)
+}
+
+#[tokio::test]
+#[serial]
+async fn test_key_item_with_a_changed_window_does_not_decrypt() {
+    let store = store_after(
+        "SET not_after = :not_after",
+        Some((":not_after", AttributeValue::N(u64::MAX.to_string()))),
+    )
+    .await;
+    assert!(store.load(0).await.is_err());
+}
+
+#[tokio::test]
+#[serial]
+async fn test_key_item_without_revoked_does_not_load() {
+    let store = store_after("REMOVE revoked", None).await;
+    assert!(store.load(0).await.is_err());
+}
