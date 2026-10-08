@@ -7724,7 +7724,7 @@ dependencies = [
 [[package]]
 name = "world-id-primitives"
 version = "0.14.1"
-source = "git+https://github.com/worldcoin/world-id-protocol?rev=25742661c11d8af40e746ff450e5011e2bdec3e5#25742661c11d8af40e746ff450e5011e2bdec3e5"
+source = "git+https://github.com/worldcoin/world-id-protocol?rev=def715398387002cd3d3377eaf215f936325cfc2#def715398387002cd3d3377eaf215f936325cfc2"
 dependencies = [
  "alloy",
  "alloy-primitives",
@@ -7759,7 +7759,7 @@ dependencies = [
 [[package]]
 name = "world-id-proof"
 version = "0.14.1"
-source = "git+https://github.com/worldcoin/world-id-protocol?rev=25742661c11d8af40e746ff450e5011e2bdec3e5#25742661c11d8af40e746ff450e5011e2bdec3e5"
+source = "git+https://github.com/worldcoin/world-id-protocol?rev=def715398387002cd3d3377eaf215f936325cfc2#def715398387002cd3d3377eaf215f936325cfc2"
 dependencies = [
  "ark-serialize 0.6.0",
  "eyre",
