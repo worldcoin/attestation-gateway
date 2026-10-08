@@ -53,8 +53,8 @@ tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json"] }
 uuid = { version = "1.23.4", default-features = false, features = ["v4"] }
 x509-parser = "0.18.1"
-world-id-primitives = { git = "https://github.com/worldcoin/world-id-protocol", rev = "def715398387002cd3d3377eaf215f936325cfc2", default-features = false }
-world-id-proof = { git = "https://github.com/worldcoin/world-id-protocol", rev = "def715398387002cd3d3377eaf215f936325cfc2", default-features = false }
+world-id-primitives = { git = "https://github.com/worldcoin/world-id-protocol", rev = "0f7951d704e4e236e9fdc408c7f215341ad2e413", default-features = false }
+world-id-proof = { git = "https://github.com/worldcoin/world-id-protocol", rev = "0f7951d704e4e236e9fdc408c7f215341ad2e413", default-features = false }
 
 [build-dependencies]
 chrono = "0.4.45"
