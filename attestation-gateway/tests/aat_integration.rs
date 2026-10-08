@@ -7,7 +7,8 @@ use std::{
 };
 
 use attestation_gateway::{
-    aat_issuer::AatIssuer,
+    aat_issuer::{AatIssuer, IssueError, KeySchedule},
+    aat_keys::AatKeyStore,
     apple,
     utils::{AndroidResponseKeys, BundleIdentifier, GlobalConfig},
 };
@@ -21,7 +22,7 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use eddsa_babyjubjub::EdDSAPrivateKey;
+use eddsa_babyjubjub::EdDSAPublicKey;
 use http_body_util::BodyExt;
 use josekit::{
     jwe::{A256KW, JweContext, JweHeader},
@@ -35,11 +36,17 @@ use serial_test::serial;
 use tower::ServiceExt;
 use world_id_primitives::{
     FieldElement,
-    authenticator_assertion::{SignedAuthenticatorAssertionToken, UserPresence},
+    authenticator_assertion::{
+        Platform, SecFlags, SecLevel, SignedAuthenticatorAssertionToken, UserPresence,
+    },
 };
 
 static APPLE_KEYS_DYNAMO_TABLE_NAME: &str = "attestation-gateway-apple-keys";
 static APPLE_KEY_ID: &str = "aat-integration-test-key";
+/// Must match `tests/aws-seed.sh`.
+static AAT_KEYS_TABLE: &str = "attestation-gateway-aat-keys";
+const HOUR: u64 = 60 * 60;
+const DAY: u64 = 24 * HOUR;
 /// `versionCode` in the generated Play Integrity token.
 const ANDROID_VERSION_CODE: u32 = 25700;
 const AAT_LIFETIME_SECS: u32 = 1200;
@@ -51,10 +58,6 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
-}
-
-fn issuer_key() -> EdDSAPrivateKey {
-    EdDSAPrivateKey::from_bytes([7u8; 32])
 }
 
 fn global_config() -> GlobalConfig {
@@ -108,16 +111,109 @@ async fn router(issuer: Option<AatIssuer>) -> aide::axum::ApiRouter {
         .layer(Extension(issuer.map(Arc::new)))
 }
 
-/// An issuer whose key signs for the next day.
-fn issuer() -> AatIssuer {
-    let now = now();
-    AatIssuer::new(
-        issuer_key(),
-        "test-provider".to_string(),
-        now - 60,
-        now + 24 * 60 * 60,
-        AAT_LIFETIME_SECS,
+/// One-day slots; slot 0 started an hour ago. Keys sign as soon as they are created, and the next
+/// one is created two hours before its slot.
+fn schedule(now: u64) -> KeySchedule {
+    KeySchedule::new(now - HOUR, DAY, 0, 2 * HOUR, AAT_LIFETIME_SECS)
+}
+
+/// Start of slot 1 for `schedule(now)`.
+const fn slot_1_start(now: u64) -> u64 {
+    now - HOUR + DAY
+}
+
+/// A fresh KMS key that encrypts the stored secrets.
+async fn kms_key(aws_config: &aws_config::SdkConfig) -> String {
+    aws_sdk_kms::Client::new(aws_config)
+        .create_key()
+        .send()
+        .await
+        .unwrap()
+        .key_metadata
+        .unwrap()
+        .arn
+        .unwrap()
+}
+
+/// Empties the AAT keys table.
+async fn reset_aat_keys(aws_config: &aws_config::SdkConfig) {
+    let client = aws_sdk_dynamodb::Client::new(aws_config);
+    for slot in stored_slots(aws_config).await {
+        client
+            .delete_item()
+            .table_name(AAT_KEYS_TABLE)
+            .key("slot", AttributeValue::S(slot))
+            .send()
+            .await
+            .unwrap();
+    }
+}
+
+async fn stored_slots(aws_config: &aws_config::SdkConfig) -> Vec<String> {
+    let items = aws_sdk_dynamodb::Client::new(aws_config)
+        .scan()
+        .table_name(AAT_KEYS_TABLE)
+        .send()
+        .await
+        .unwrap();
+    let mut slots: Vec<String> = items
+        .items()
+        .iter()
+        .map(|item| item["slot"].as_s().unwrap().clone())
+        .collect();
+    slots.sort();
+    slots
+}
+
+async fn issuer_with(aws_config: &aws_config::SdkConfig, kms_key: String, now: u64) -> AatIssuer {
+    let store = AatKeyStore::new(aws_config, AAT_KEYS_TABLE.to_string(), kms_key);
+    AatIssuer::new(store, schedule(now), "test-provider".to_string(), now)
+        .await
+        .unwrap()
+}
+
+/// An issuer on an empty table, as on first start.
+async fn issuer() -> AatIssuer {
+    let aws_config = aws_config().await;
+    reset_aat_keys(&aws_config).await;
+    let kms_key = kms_key(&aws_config).await;
+    issuer_with(&aws_config, kms_key, now()).await
+}
+
+fn flags() -> SecFlags {
+    SecFlags::new(
+        Platform::Ios.into(),
+        SecLevel::HardwareKey.into(),
+        41,
+        0,
+        UserPresence::Undetermined,
     )
+    .unwrap()
+}
+
+/// The `kid` of the key that signs at `at`.
+async fn signing_kid(issuer: &AatIssuer, at: u64) -> [u8; 32] {
+    let cwt = issuer
+        .keys(at)
+        .await
+        .issue(FieldElement::from(1u64), flags(), at)
+        .unwrap();
+    SignedAuthenticatorAssertionToken::decode(&cwt)
+        .unwrap()
+        .kid
+        .unwrap()
+}
+
+async fn statuses(issuer: &AatIssuer, at: u64) -> Vec<&'static str> {
+    issuer
+        .keys(at)
+        .await
+        .metadata("test-provider", at)
+        .unwrap()
+        .authenticator_provider_keys
+        .iter()
+        .map(|k| k.status)
+        .collect()
 }
 
 async fn post_aat(router: &aide::axum::ApiRouter, request: &Value) -> (StatusCode, Value) {
@@ -272,17 +368,14 @@ fn android_request(n: u64, build_version: u32) -> Value {
     })
 }
 
-/// Decodes the AAT in a response and checks its signature against the issuer key.
+/// Decodes the AAT in a response and checks its signature against the key its `kid` names.
 fn decode_aat(body: &Value) -> SignedAuthenticatorAssertionToken {
     let cwt = URL_SAFE_NO_PAD
         .decode(body["aat"].as_str().unwrap())
         .unwrap();
     let aat = SignedAuthenticatorAssertionToken::decode(&cwt).unwrap();
-    assert!(
-        issuer_key()
-            .public()
-            .verify(*aat.token.message_hash(), &aat.signature)
-    );
+    let key = EdDSAPublicKey::from_compressed_bytes(aat.kid.unwrap()).unwrap();
+    assert!(key.verify(*aat.token.message_hash(), &aat.signature));
     aat
 }
 
@@ -291,7 +384,7 @@ fn decode_aat(body: &Value) -> SignedAuthenticatorAssertionToken {
 #[tokio::test]
 #[serial]
 async fn test_aat_android_success() {
-    let router = router(Some(issuer())).await;
+    let router = router(Some(issuer().await)).await;
     let (status, body) = post_aat(&router, &android_request(1, ANDROID_VERSION_CODE)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
@@ -308,7 +401,7 @@ async fn test_aat_android_success() {
 #[tokio::test]
 #[serial]
 async fn test_aat_apple_assertion_success() {
-    let router = router(Some(issuer())).await;
+    let router = router(Some(issuer().await)).await;
     let sk = register_apple_key().await;
     let request = json!({
         "bundle_identifier": "org.worldcoin.insight.staging",
@@ -329,7 +422,7 @@ async fn test_aat_apple_assertion_success() {
 #[tokio::test]
 #[serial]
 async fn test_aat_apple_rejects_changed_user_presence() {
-    let router = router(Some(issuer())).await;
+    let router = router(Some(issuer().await)).await;
     let sk = register_apple_key().await;
     // The assertion covers `user_presence = 0`; the request claims `2`.
     let request = json!({
@@ -348,7 +441,7 @@ async fn test_aat_apple_rejects_changed_user_presence() {
 #[tokio::test]
 #[serial]
 async fn test_aat_rejects_build_version_not_matching_play_integrity() {
-    let router = router(Some(issuer())).await;
+    let router = router(Some(issuer().await)).await;
     let (status, body) = post_aat(&router, &android_request(4, ANDROID_VERSION_CODE + 1)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["code"], "integrity_failed");
@@ -357,7 +450,7 @@ async fn test_aat_rejects_build_version_not_matching_play_integrity() {
 #[tokio::test]
 #[serial]
 async fn test_aat_commitment_is_signed_once_and_released_on_failure() {
-    let router = router(Some(issuer())).await;
+    let router = router(Some(issuer().await)).await;
 
     // A failed request does not consume the commitment...
     let (status, _) = post_aat(&router, &android_request(5, ANDROID_VERSION_CODE + 1)).await;
@@ -374,7 +467,7 @@ async fn test_aat_commitment_is_signed_once_and_released_on_failure() {
 #[tokio::test]
 #[serial]
 async fn test_aat_rejects_invalid_requests() {
-    let router = router(Some(issuer())).await;
+    let router = router(Some(issuer().await)).await;
 
     let mut request = android_request(6, ANDROID_VERSION_CODE);
     request["aat_commitment"] = json!("0x01");
@@ -414,7 +507,7 @@ async fn test_aat_routes_are_disabled_without_a_signing_key() {
 #[tokio::test]
 #[serial]
 async fn test_authenticator_metadata() {
-    let router = router(Some(issuer())).await;
+    let router = router(Some(issuer().await)).await;
     let response = router
         .oneshot(
             Request::builder()
@@ -430,10 +523,123 @@ async fn test_authenticator_metadata() {
     let metadata: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(metadata["version"], 1);
     assert_eq!(metadata["provider_id"], "test-provider");
-    let key = &metadata["authenticator_provider_keys"][0];
+    let keys = metadata["authenticator_provider_keys"].as_array().unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0]["kid"].as_str().unwrap().len(), 64);
+    assert_eq!(keys[0]["status"], "active");
+}
+
+#[tokio::test]
+#[serial]
+async fn test_first_start_creates_the_current_key() {
+    let issuer = issuer().await;
+    assert_eq!(stored_slots(&aws_config().await).await, ["slot#0"]);
+    assert_eq!(statuses(&issuer, now()).await, ["active"]);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_next_key_is_created_ahead_and_takes_over_at_the_boundary() {
+    let now = now();
+    let issuer = issuer().await;
+    let boundary = slot_1_start(now);
+
+    // Within the create lead, a request creates slot 1's key; slot 0 still signs.
+    let before = signing_kid(&issuer, boundary - HOUR).await;
     assert_eq!(
-        key["kid"],
-        hex::encode(issuer_key().public().to_compressed_bytes().unwrap())
+        stored_slots(&aws_config().await).await,
+        ["slot#0", "slot#1"]
     );
-    assert_eq!(key["status"], "active");
+    assert_eq!(
+        statuses(&issuer, boundary - HOUR).await,
+        ["active", "active"]
+    );
+
+    // From the boundary on, slot 1 signs and slot 0 is retired.
+    let after = signing_kid(&issuer, boundary + 10 * 60).await;
+    assert_ne!(before, after);
+    assert_eq!(
+        statuses(&issuer, boundary + 10 * 60).await,
+        ["retired", "active"]
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_revoked_key_stops_signing() {
+    let now = now();
+    let issuer = issuer().await;
+    aws_sdk_dynamodb::Client::new(&aws_config().await)
+        .update_item()
+        .table_name(AAT_KEYS_TABLE)
+        .key("slot", AttributeValue::S("slot#0".to_string()))
+        .update_expression("SET #revoked = :revoked")
+        .expression_attribute_names("#revoked", "revoked")
+        .expression_attribute_values(":revoked", AttributeValue::Bool(true))
+        .send()
+        .await
+        .unwrap();
+
+    // Seen once the cache expires.
+    let later = now + 10 * 60;
+    let result = issuer
+        .keys(later)
+        .await
+        .issue(FieldElement::from(1u64), flags(), later);
+    assert!(matches!(result, Err(IssueError::KeyNotValid)));
+    assert_eq!(statuses(&issuer, later).await, ["revoked"]);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_instances_racing_on_first_start_create_one_key() {
+    let now = now();
+    let aws_config = aws_config().await;
+    reset_aat_keys(&aws_config).await;
+    let kms_key = kms_key(&aws_config).await;
+
+    let (a, b) = tokio::join!(
+        issuer_with(&aws_config, kms_key.clone(), now),
+        issuer_with(&aws_config, kms_key, now),
+    );
+
+    assert_eq!(stored_slots(&aws_config).await, ["slot#0"]);
+    assert_eq!(signing_kid(&a, now).await, signing_kid(&b, now).await);
+}
+
+/// A store over a table with slot 0's key, and the item update to apply to it.
+async fn store_after(update: &str, values: Option<(&str, AttributeValue)>) -> AatKeyStore {
+    let aws_config = aws_config().await;
+    reset_aat_keys(&aws_config).await;
+    let kms_key = kms_key(&aws_config).await;
+    issuer_with(&aws_config, kms_key.clone(), now()).await;
+
+    let mut request = aws_sdk_dynamodb::Client::new(&aws_config)
+        .update_item()
+        .table_name(AAT_KEYS_TABLE)
+        .key("slot", AttributeValue::S("slot#0".to_string()))
+        .update_expression(update);
+    if let Some((name, value)) = values {
+        request = request.expression_attribute_values(name, value);
+    }
+    request.send().await.unwrap();
+    AatKeyStore::new(&aws_config, AAT_KEYS_TABLE.to_string(), kms_key)
+}
+
+#[tokio::test]
+#[serial]
+async fn test_key_item_with_a_changed_window_does_not_decrypt() {
+    let store = store_after(
+        "SET not_after = :not_after",
+        Some((":not_after", AttributeValue::N(u64::MAX.to_string()))),
+    )
+    .await;
+    assert!(store.load(0).await.is_err());
+}
+
+#[tokio::test]
+#[serial]
+async fn test_key_item_without_revoked_does_not_load() {
+    let store = store_after("REMOVE revoked", None).await;
+    assert!(store.load(0).await.is_err());
 }

@@ -155,13 +155,13 @@ pub async fn handler(
     let platform = platform_tag(&request);
     metrics::counter!("aat.request", "platform" => platform).increment(1);
 
-    match handle(
+    match Box::pin(handle(
         issuer.as_deref(),
         &request,
         &global_config,
         &aws_config,
         &mut redis,
-    )
+    ))
     .await
     {
         Ok(aat) => {
@@ -308,6 +308,8 @@ async fn issue(
 
     let now = unix_now().map_err(|()| signing_error())?;
     let cwt = issuer
+        .keys(now)
+        .await
         .issue(aat_commitment, sec_flags, now)
         .map_err(|e| match e {
             // High-frequency once it happens; alert on the `key_not_valid` metric instead of logging.
@@ -367,10 +369,14 @@ pub async fn metadata_handler(
         details: None,
     })?;
     let now = unix_now().map_err(|()| internal_error())?;
-    let metadata = issuer.metadata(now).map_err(|e| {
-        tracing::error!(error = ?e, "Error building authenticator metadata");
-        internal_error()
-    })?;
+    let metadata = issuer
+        .keys(now)
+        .await
+        .metadata(issuer.provider_id(), now)
+        .map_err(|e| {
+            tracing::error!(error = ?e, "Error building authenticator metadata");
+            internal_error()
+        })?;
     Ok(axum::Json(metadata))
 }
 
