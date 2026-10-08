@@ -285,11 +285,13 @@ async fn issue(
             (output, Platform::Ios, SecLevel::HardwareKey)
         }
     };
-    let output = output.map_err(|e| map_verification_error(&e))?;
+    let output = output.map_err(|e| map_verification_error(&e, config.log_client_errors))?;
     if !output.success {
-        return Err(fail(
-            FailureReason::IntegrityFailed,
-            ErrorCode::IntegrityFailed,
+        // Android claim failures are soft-fails (`Ok` + `client_exception`); Apple returns `Err`.
+        // Propagate the exception so codes like `ExpiredToken` stay retryable.
+        return Err(map_soft_fail(
+            output.client_exception,
+            config.log_client_errors,
         ));
     }
 
@@ -360,9 +362,9 @@ fn challenge(
     hex::encode(openssl::sha::sha256(&preimage))
 }
 
-fn map_verification_error(e: &eyre::Report) -> Failure {
+fn map_verification_error(e: &eyre::Report, log_client_errors: bool) -> Failure {
     if let Some(client_error) = e.downcast_ref::<ClientException>() {
-        tracing::debug!(error = ?e, "Client exception verifying AAT evidence");
+        log_client_exception(client_error, log_client_errors);
         return fail(FailureReason::EvidenceRejected, client_error.code);
     }
     tracing::error!(error = ?e, "Error verifying AAT evidence");
@@ -370,6 +372,30 @@ fn map_verification_error(e: &eyre::Report) -> Failure {
         FailureReason::VerificationError,
         ErrorCode::InternalServerError,
     )
+}
+
+fn map_soft_fail(client_exception: Option<ClientException>, log_client_errors: bool) -> Failure {
+    if let Some(client_error) = client_exception {
+        log_client_exception(&client_error, log_client_errors);
+        return fail(FailureReason::EvidenceRejected, client_error.code);
+    }
+    fail(FailureReason::IntegrityFailed, ErrorCode::IntegrityFailed)
+}
+
+fn log_client_exception(client_error: &ClientException, log_client_errors: bool) {
+    if log_client_errors {
+        tracing::info!(
+            rejection_reason = %client_error.internal_debug_info,
+            error_code = %client_error.code,
+            "Client exception verifying AAT evidence"
+        );
+    } else {
+        tracing::debug!(
+            rejection_reason = %client_error.internal_debug_info,
+            error_code = %client_error.code,
+            "Client exception verifying AAT evidence"
+        );
+    }
 }
 
 /// Serves `/.well-known/world-id-authenticator.json` (WIP-106 §3.8).
