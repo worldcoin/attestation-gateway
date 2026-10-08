@@ -9,7 +9,7 @@ use world_id_primitives::FieldElement;
 use world_id_primitives::authenticator_assertion::{Platform, SecFlags, SecLevel, UserPresence};
 
 use crate::{
-    aat_issuer::{AatIssuer, AuthenticatorMetadata},
+    aat_issuer::{AatIssuer, AuthenticatorMetadata, IssueError},
     android, apple,
     utils::{
         BundleIdentifier, ClientException, ErrorCode, GlobalConfig, RequestError,
@@ -26,7 +26,7 @@ const AAT_COMMITMENT_LOCK_TTL: u64 = 60 * 60;
 /// The platform evidence's challenge is [`challenge`] over every value the AAT signs on the
 /// Authenticator's word: it is the App Attest `clientDataHash` preimage and the Play Integrity
 /// `nonce`.
-#[derive(Debug, serde::Deserialize, JsonSchema)]
+#[derive(serde::Deserialize, JsonSchema)]
 pub struct AatRequest {
     pub bundle_identifier: BundleIdentifier,
     /// `H_8(DS_REQ; aud, nonce, cdh, blind)` as `0x`-prefixed, 32-byte big-endian hex.
@@ -92,6 +92,8 @@ enum FailureReason {
     BuildVersionMismatch,
     /// Unexpected error verifying the evidence.
     VerificationError,
+    /// The signing key is outside the window in which it may sign; needs a key rotation.
+    KeyNotValid,
     /// Unexpected error building or signing the token.
     SigningError,
     StorageError,
@@ -108,6 +110,7 @@ impl FailureReason {
             Self::IntegrityFailed => "integrity_failed",
             Self::BuildVersionMismatch => "build_version_mismatch",
             Self::VerificationError => "verification_error",
+            Self::KeyNotValid => "key_not_valid",
             Self::SigningError => "signing_error",
             Self::StorageError => "storage_error",
         }
@@ -197,16 +200,18 @@ async fn handle(
         .map_err(|_| bad_request("`aat_commitment` must be a 32-byte hex field element."))?;
     let user_presence = UserPresence::try_from(request.user_presence)
         .map_err(|_| bad_request("`user_presence` must be between 0 and 4."))?;
-    let challenge = challenge(aat_commitment, user_presence, request.build_version);
     let evidence = Evidence::from_request(request)?;
 
     // Canonical form, so a commitment is signed at most once whatever flags it is sent with.
     let lock_key = aat_commitment.to_string();
     if !lock_commitment(&lock_key, redis).await? {
-        return Err(fail(
-            FailureReason::DuplicateCommitment,
-            ErrorCode::DuplicateRequestHash,
-        ));
+        return Err(Failure {
+            reason: FailureReason::DuplicateCommitment,
+            error: RequestError {
+                code: ErrorCode::DuplicateRequestHash,
+                details: Some("This `aat_commitment` has already been used.".to_string()),
+            },
+        });
     }
 
     let result = issue(
@@ -214,7 +219,6 @@ async fn handle(
         evidence,
         request,
         aat_commitment,
-        &challenge,
         user_presence,
         config,
         aws_config,
@@ -228,18 +232,17 @@ async fn handle(
     result
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn issue(
     issuer: &AatIssuer,
     evidence: Evidence,
     request: &AatRequest,
     aat_commitment: FieldElement,
-    challenge: &str,
     user_presence: UserPresence,
     config: &GlobalConfig,
     aws_config: &aws_config::SdkConfig,
 ) -> Result<String, Failure> {
     let bundle = &request.bundle_identifier;
+    let challenge = &challenge(aat_commitment, user_presence, request.build_version);
     let (output, platform, sec_level) = match evidence {
         Evidence::Android { integrity_token } => {
             let keys = config.android_response_keys(bundle);
@@ -303,18 +306,27 @@ async fn issue(
         signing_error()
     })?;
 
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|e| {
-            tracing::error!(error = ?e, "System clock is before the Unix epoch");
-            signing_error()
-        })?
-        .as_secs();
-    let cwt = issuer.issue(aat_commitment, sec_flags, now).map_err(|e| {
-        tracing::error!(error = ?e, "Error issuing AAT");
-        signing_error()
-    })?;
+    let now = unix_now().map_err(|()| signing_error())?;
+    let cwt = issuer
+        .issue(aat_commitment, sec_flags, now)
+        .map_err(|e| match e {
+            // High-frequency once it happens; alert on the `key_not_valid` metric instead of logging.
+            IssueError::KeyNotValid => {
+                fail(FailureReason::KeyNotValid, ErrorCode::InternalServerError)
+            }
+            IssueError::Token(e) => {
+                tracing::error!(error = ?e, "Error issuing AAT");
+                signing_error()
+            }
+        })?;
     Ok(URL_SAFE_NO_PAD.encode(cwt))
+}
+
+fn unix_now() -> Result<u64, ()> {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|e| tracing::error!(error = ?e, "System clock is before the Unix epoch"))
 }
 
 /// The platform challenge: lowercase hex of
@@ -354,7 +366,8 @@ pub async fn metadata_handler(
         code: ErrorCode::NotFound,
         details: None,
     })?;
-    let metadata = issuer.metadata().map_err(|e| {
+    let now = unix_now().map_err(|()| internal_error())?;
+    let metadata = issuer.metadata(now).map_err(|e| {
         tracing::error!(error = ?e, "Error building authenticator metadata");
         internal_error()
     })?;
@@ -465,6 +478,7 @@ mod tests {
             IntegrityFailed,
             BuildVersionMismatch,
             VerificationError,
+            KeyNotValid,
             SigningError,
             StorageError,
         ];

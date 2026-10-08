@@ -20,6 +20,16 @@ const MAX_KEY_VALIDITY_SECS: u64 = 15_552_000;
 /// reject fresh tokens.
 const DEFAULT_AAT_LIFETIME_SECS: u32 = 1200;
 
+/// Why an AAT could not be issued.
+#[derive(Debug, thiserror::Error)]
+pub enum IssueError {
+    /// `now` is outside the window in which the key may sign (see [`AatIssuer::issue`]).
+    #[error("AAT key may not sign at this time")]
+    KeyNotValid,
+    #[error(transparent)]
+    Token(#[from] eyre::Report),
+}
+
 /// Issues AATs with the Authenticator Provider's key.
 pub struct AatIssuer {
     key: EdDSAPrivateKey,
@@ -62,7 +72,8 @@ impl AatIssuer {
     }
 
     /// # Panics
-    /// If the validity window or lifetime break WIP-106 §3.2.5 or §3.6.3.
+    /// If the validity window or lifetime break WIP-106 §3.2.5 or §3.6.3, or the window is not
+    /// longer than one AAT lifetime.
     #[must_use]
     pub fn new(
         key: EdDSAPrivateKey,
@@ -79,6 +90,10 @@ impl AatIssuer {
             lifetime_secs > 0 && lifetime_secs <= MAX_AAT_LIFETIME_SECS,
             "`AAT_LIFETIME_SECS` must be in (0, {MAX_AAT_LIFETIME_SECS}]"
         );
+        assert!(
+            not_after - not_before > u64::from(lifetime_secs),
+            "AAT key validity window must be longer than one AAT lifetime"
+        );
         Self {
             key,
             provider_id,
@@ -88,30 +103,41 @@ impl AatIssuer {
         }
     }
 
+    /// Last second (exclusive) at which the key signs, so every AAT expires within the key's
+    /// validity window and RPs never see a token from a key past `not_after`.
+    fn signing_end(&self) -> u64 {
+        self.not_after - u64::from(self.lifetime_secs)
+    }
+
     /// Signs an AAT for `aat_commitment` and returns its CWT encoding.
     ///
     /// # Errors
-    /// If `now` is outside the key's validity window, or encoding fails.
+    /// [`IssueError::KeyNotValid`] if `now` is outside `[not_before, not_after - lifetime)`;
+    /// [`IssueError::Token`] if the token can not be built or encoded.
     pub fn issue(
         &self,
         aat_commitment: FieldElement,
         sec_flags: SecFlags,
         now: u64,
-    ) -> eyre::Result<Vec<u8>> {
-        eyre::ensure!(
-            (self.not_before..self.not_after).contains(&now),
-            "AAT key is outside its validity window"
-        );
-        let exp = u32::try_from(now)? + self.lifetime_secs;
-        let token = AuthenticatorAssertionToken::new(exp, aat_commitment, sec_flags)?;
-        Ok(token.sign(&self.key)?)
+    ) -> Result<Vec<u8>, IssueError> {
+        if !(self.not_before..self.signing_end()).contains(&now) {
+            return Err(IssueError::KeyNotValid);
+        }
+        let exp = u32::try_from(now)
+            .ok()
+            .and_then(|now| now.checked_add(self.lifetime_secs))
+            .ok_or_else(|| eyre::eyre!("AAT expiry does not fit in a u32"))?;
+        let token = AuthenticatorAssertionToken::new(exp, aat_commitment, sec_flags)
+            .map_err(eyre::Report::from)?;
+        Ok(token.sign(&self.key).map_err(eyre::Report::from)?)
     }
 
-    /// The Authenticator Metadata document (WIP-106 §3.8).
+    /// The Authenticator Metadata document (WIP-106 §3.8). The key is `retired` once it stops
+    /// signing.
     ///
     /// # Errors
     /// If the public key can not be encoded.
-    pub fn metadata(&self) -> eyre::Result<AuthenticatorMetadata> {
+    pub fn metadata(&self, now: u64) -> eyre::Result<AuthenticatorMetadata> {
         let public = self.key.public();
         Ok(AuthenticatorMetadata {
             version: 1,
@@ -120,7 +146,11 @@ impl AatIssuer {
                 kid: hex::encode(public.to_compressed_bytes()?),
                 x: FieldElement::from(public.pk.x).to_string(),
                 y: FieldElement::from(public.pk.y).to_string(),
-                status: "active",
+                status: if now < self.signing_end() {
+                    "active"
+                } else {
+                    "retired"
+                },
                 not_before: self.not_before,
                 not_after: self.not_after,
             }],
@@ -159,12 +189,13 @@ mod tests {
 
     const NOW: u64 = 1_783_446_000;
 
+    /// Valid from `NOW - 100`; signs until `NOW + 100`, then expires its last tokens.
     fn issuer() -> AatIssuer {
         AatIssuer::new(
             EdDSAPrivateKey::from_bytes([7u8; 32]),
             "test".into(),
             NOW - 100,
-            NOW + 100,
+            NOW + 100 + u64::from(DEFAULT_AAT_LIFETIME_SECS),
             DEFAULT_AAT_LIFETIME_SECS,
         )
     }
@@ -202,28 +233,30 @@ mod tests {
     }
 
     #[test]
-    fn refuses_to_sign_outside_validity_window() {
+    fn signs_only_while_tokens_expire_within_key_validity() {
         let issuer = issuer();
-        assert!(
-            issuer
-                .issue(FieldElement::ZERO, flags(), NOW + 100)
-                .is_err()
-        );
-        assert!(
-            issuer
-                .issue(FieldElement::ZERO, flags(), NOW - 101)
-                .is_err()
-        );
+        let issue = |now| issuer.issue(FieldElement::ZERO, flags(), now);
+        assert!(issue(NOW - 100).is_ok());
+        assert!(issue(NOW + 99).is_ok());
+        assert!(matches!(issue(NOW - 101), Err(IssueError::KeyNotValid)));
+        assert!(matches!(issue(NOW + 100), Err(IssueError::KeyNotValid)));
     }
 
     #[test]
     fn metadata_matches_spec_test_vector_key() {
         // WIP-106 Appendix A1 uses the same key.
-        let key = &issuer().metadata().unwrap().authenticator_provider_keys[0];
+        let key = &issuer().metadata(NOW).unwrap().authenticator_provider_keys[0];
         assert_eq!(
             key.kid,
             "2d4bdf6ee60feda0975c770bb7a23dc6e4e0ed1e35ff3c2426cded4ec030d987"
         );
+        assert_eq!(key.status, "active");
+    }
+
+    #[test]
+    fn metadata_retires_key_once_it_stops_signing() {
+        let metadata = issuer().metadata(NOW + 100).unwrap();
+        assert_eq!(metadata.authenticator_provider_keys[0].status, "retired");
     }
 
     #[test]
