@@ -30,6 +30,8 @@ const PUBLISH_LEAD_SECS: u64 = 48 * 60 * 60;
 /// margin over `PUBLISH_LEAD_SECS` covers days without requests.
 const CREATE_LEAD_SECS: u64 = 7 * 24 * 60 * 60;
 const CACHE_TTL_SECS: u64 = 5 * 60;
+/// How often the refresh task checks the cache, so keys are created and reloaded without traffic.
+const REFRESH_TICK: std::time::Duration = std::time::Duration::from_mins(1);
 /// Delay before retrying a failed reload, so an outage is not retried on every request.
 const RELOAD_BACKOFF_SECS: u64 = 30;
 
@@ -66,8 +68,10 @@ impl KeySchedule {
         lifetime_secs: u32,
     ) -> Self {
         assert!(
-            slot_secs > 0 && slot_secs + u64::from(lifetime_secs) <= MAX_KEY_VALIDITY_SECS,
-            "an AAT key slot must be at most 180 days including the AAT lifetime"
+            slot_secs > 0
+                && slot_secs + publish_lead_secs + u64::from(lifetime_secs)
+                    <= MAX_KEY_VALIDITY_SECS,
+            "an AAT key must be valid for at most 180 days, including its overlap and AAT lifetime"
         );
         assert!(
             lifetime_secs > 0 && lifetime_secs <= MAX_AAT_LIFETIME_SECS,
@@ -108,13 +112,16 @@ impl KeySchedule {
     }
 
     /// A new key for `slot`, created at `now`. It is published at once and signs no earlier than
-    /// `publish_lead_secs` later, also when it is created late (e.g. on first start).
+    /// `publish_lead_secs` later, also when it is created late (e.g. on first start). It may sign
+    /// until `publish_lead_secs` into the next slot, so a late next key never leaves a gap.
     fn new_key(&self, slot: u64, now: u64, key: EdDSAPrivateKey) -> StoredKey {
         StoredKey {
             slot,
             key,
             not_before: self.start(slot).max(now + self.publish_lead_secs),
-            not_after: self.start(slot + 1) + u64::from(self.lifetime_secs),
+            not_after: self.start(slot + 1)
+                + self.publish_lead_secs
+                + u64::from(self.lifetime_secs),
             revoked: false,
         }
     }
@@ -132,11 +139,18 @@ impl KeySet {
         key.not_after - u64::from(self.lifetime_secs)
     }
 
+    /// The newest unrevoked key that may sign at `now`: once a slot's key may sign, it takes over
+    /// from the previous one, which may still sign until its own window ends.
     fn signing_key(&self, now: u64) -> Option<&StoredKey> {
         self.keys
             .iter()
             .filter(|k| !k.revoked && k.not_before <= now && now < self.signing_end(k))
             .max_by_key(|k| k.slot)
+    }
+
+    /// Whether `key` no longer signs: its window ended, or a newer key took over.
+    fn is_retired(&self, key: &StoredKey, now: u64) -> bool {
+        now >= self.signing_end(key) || self.signing_key(now).is_some_and(|k| k.slot > key.slot)
     }
 
     /// Signs an AAT for `aat_commitment` and returns its CWT encoding.
@@ -182,10 +196,10 @@ impl KeySet {
                     y: FieldElement::from(public.pk.y).to_string(),
                     status: if k.revoked {
                         "revoked"
-                    } else if now < self.signing_end(k) {
-                        "active"
-                    } else {
+                    } else if self.is_retired(k, now) {
                         "retired"
+                    } else {
+                        "active"
                     },
                     not_before: k.not_before,
                     not_after: k.not_after,
@@ -204,6 +218,7 @@ impl KeySet {
 struct Cache {
     keys: Arc<KeySet>,
     refresh_at: u64,
+    loaded_at: u64,
 }
 
 /// Issues AATs with the Authenticator Provider's rotating keys.
@@ -271,6 +286,7 @@ impl AatIssuer {
             cache: ArcSwap::from_pointee(Cache {
                 keys: Arc::new(keys),
                 refresh_at: now + CACHE_TTL_SECS,
+                loaded_at: now,
             }),
             reload: tokio::sync::Mutex::new(()),
         })
@@ -281,8 +297,25 @@ impl AatIssuer {
         &self.provider_id
     }
 
-    /// The current keys, reloaded when the cache has expired. A failed reload keeps the last keys
-    /// and is retried after `RELOAD_BACKOFF_SECS`; only one request reloads at a time.
+    /// Spawns a task that keeps the keys fresh without traffic: it creates the next slot's key on
+    /// time and reloads revocations, through the same path as requests.
+    pub fn spawn_refresh(self: &Arc<Self>) {
+        let issuer = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(REFRESH_TICK);
+            loop {
+                tick.tick().await;
+                if let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                {
+                    issuer.keys(now.as_secs()).await;
+                }
+            }
+        });
+    }
+
+    /// The current keys, reloaded when the cache has expired. A failed reload keeps the last keys,
+    /// with no age limit so an outage does not stop issuance, and is retried after
+    /// `RELOAD_BACKOFF_SECS`; only one caller reloads at a time.
     pub async fn keys(&self, now: u64) -> Arc<KeySet> {
         let cache = self.cache.load();
         if now < cache.refresh_at {
@@ -291,15 +324,23 @@ impl AatIssuer {
         let Ok(_guard) = self.reload.try_lock() else {
             return cache.keys.clone();
         };
-        let (keys, refresh_at, outcome) = match reload_keys(&self.store, &self.schedule, now).await
-        {
-            Ok(keys) => (Arc::new(keys), now + CACHE_TTL_SECS, "ok"),
-            Err(e) => {
-                tracing::warn!(error = ?e, "Failed to reload AAT keys; keeping the last ones");
-                (cache.keys.clone(), now + RELOAD_BACKOFF_SECS, "error")
-            }
-        };
+        let (keys, refresh_at, loaded_at, outcome) =
+            match reload_keys(&self.store, &self.schedule, now).await {
+                Ok(keys) => (Arc::new(keys), now + CACHE_TTL_SECS, now, "ok"),
+                Err(e) => {
+                    tracing::warn!(error = ?e, "Failed to reload AAT keys; keeping the last ones");
+                    (
+                        cache.keys.clone(),
+                        now + RELOAD_BACKOFF_SECS,
+                        cache.loaded_at,
+                        "error",
+                    )
+                }
+            };
         metrics::counter!("aat.keys.refresh", "outcome" => outcome).increment(1);
+        // Alert on a growing age: revocations are not seen while reloads fail.
+        #[allow(clippy::cast_precision_loss)]
+        metrics::gauge!("aat.keys.age").set(now.saturating_sub(loaded_at) as f64);
         metrics::gauge!("aat.keys.signable").set(if keys.signing_key(now).is_some() {
             1.0
         } else {
@@ -308,6 +349,7 @@ impl AatIssuer {
         self.cache.store(Arc::new(Cache {
             keys: keys.clone(),
             refresh_at,
+            loaded_at,
         }));
         keys
     }
@@ -434,7 +476,10 @@ mod tests {
             EdDSAPrivateKey::from_bytes([1; 32]),
         );
         assert_eq!(on_time.not_before, s.start(1));
-        assert_eq!(on_time.not_after, s.start(2) + u64::from(LIFETIME));
+        assert_eq!(
+            on_time.not_after,
+            s.start(2) + PUBLISH_LEAD_SECS + u64::from(LIFETIME)
+        );
 
         let late = s.new_key(1, s.start(1) + 10, EdDSAPrivateKey::from_bytes([1; 32]));
         assert_eq!(late.not_before, s.start(1) + 10 + PUBLISH_LEAD_SECS);
@@ -448,7 +493,31 @@ mod tests {
         assert_eq!(keys.signing_key(s.start(1) - 1).unwrap().slot, 0);
         assert_eq!(keys.signing_key(s.start(1)).unwrap().slot, 1);
         assert!(keys.signing_key(EPOCH - 1).is_none());
-        assert!(keys.signing_key(s.start(2)).is_none());
+        // Slot 1 overlaps into slot 2 by the publish lead, then stops.
+        assert_eq!(keys.signing_key(s.start(2)).unwrap().slot, 1);
+        assert!(keys.signing_key(s.start(2) + PUBLISH_LEAD_SECS).is_none());
+    }
+
+    #[test]
+    fn a_late_next_key_leaves_no_gap() {
+        let s = schedule();
+        // Slot 1's key is created only at the boundary, so it signs 48h later.
+        let keys = KeySet {
+            keys: vec![
+                s.new_key(0, EPOCH - 3 * DAY, EdDSAPrivateKey::from_bytes([7u8; 32])),
+                s.new_key(1, s.start(1), EdDSAPrivateKey::from_bytes([8u8; 32])),
+            ],
+            lifetime_secs: LIFETIME,
+        };
+        for at in [s.start(1), s.start(1) + PUBLISH_LEAD_SECS - 1] {
+            assert_eq!(keys.signing_key(at).unwrap().slot, 0);
+        }
+        assert_eq!(
+            keys.signing_key(s.start(1) + PUBLISH_LEAD_SECS)
+                .unwrap()
+                .slot,
+            1
+        );
     }
 
     #[test]
@@ -481,8 +550,9 @@ mod tests {
             .collect();
         assert_eq!(statuses, ["retired", "active"]);
 
-        // Dropped once its last AAT has expired plus `MAX_AAT_LIFETIME_SECS`.
-        let gone = s.start(1) + u64::from(LIFETIME) + u64::from(MAX_AAT_LIFETIME_SECS);
+        // Dropped once its window and last AAT have ended plus `MAX_AAT_LIFETIME_SECS`.
+        let gone =
+            s.start(1) + PUBLISH_LEAD_SECS + u64::from(LIFETIME) + u64::from(MAX_AAT_LIFETIME_SECS);
         assert_eq!(
             keys.metadata("test", gone)
                 .unwrap()
