@@ -138,7 +138,11 @@ pub async fn handler(
         Err(e) => {
             metrics::counter!("aat.failure", "platform" => platform, "error_code" => e.code.to_string())
                 .increment(1);
-            release_commitment(&lock_key, &mut redis).await?;
+            // Keep the original error: a failed release is already logged by `handle_redis_error`,
+            // and the lock expires on its own after `AAT_COMMITMENT_LOCK_TTL`.
+            if release_commitment(&lock_key, &mut redis).await.is_err() {
+                metrics::counter!("aat.lock_release_failure").increment(1);
+            }
             Err(e)
         }
     }
