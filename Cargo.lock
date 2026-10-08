@@ -7391,7 +7391,7 @@ dependencies = [
 [[package]]
 name = "world-id-primitives"
 version = "0.14.1"
-source = "git+https://github.com/worldcoin/world-id-protocol?rev=bdf2548b97b2ff96ac3b50ca4fc9044f319ac97e#bdf2548b97b2ff96ac3b50ca4fc9044f319ac97e"
+source = "git+https://github.com/worldcoin/world-id-protocol?rev=205beed6cdb6052e280f4d06698782e436dcd1e0#205beed6cdb6052e280f4d06698782e436dcd1e0"
 dependencies = [
  "alloy",
  "alloy-primitives",
