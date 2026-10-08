@@ -215,8 +215,7 @@ async fn handle(
         reason: FailureReason::StorageError,
         error: handle_redis_error(e),
     })?
-    .map(|lock| lock.with_release_failure_metric("aat.lock_release_failure"))
-    else {
+    .map(|lock| lock.with_release_failure_metric("aat.lock_release_failure")) else {
         return Err(Failure {
             reason: FailureReason::DuplicateCommitment,
             error: RequestError {
