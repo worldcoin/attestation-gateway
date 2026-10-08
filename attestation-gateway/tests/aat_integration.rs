@@ -120,6 +120,18 @@ fn issuer() -> AatIssuer {
     )
 }
 
+/// An issuer whose key has already passed `signing_end` (still within `not_after`).
+fn retired_issuer() -> AatIssuer {
+    let now = now();
+    AatIssuer::new(
+        issuer_key(),
+        "test-provider".to_string(),
+        now - u64::from(AAT_LIFETIME_SECS) - 100,
+        now,
+        AAT_LIFETIME_SECS,
+    )
+}
+
 async fn post_aat(router: &aide::axum::ApiRouter, request: &Value) -> (StatusCode, Value) {
     let response = router
         .clone()
@@ -154,6 +166,11 @@ fn challenge(n: u64, user_presence: u8, build_version: u32) -> String {
 
 /// A Play Integrity token as Google would issue it for `nonce`.
 fn play_integrity_token(nonce: &str) -> String {
+    play_integrity_token_at(nonce, chrono::Utc::now().timestamp_millis())
+}
+
+/// Like [`play_integrity_token`], but with an explicit `timestampMillis` (for expiry tests).
+fn play_integrity_token_at(nonce: &str, timestamp_millis: i64) -> String {
     // Matches `inner_jws_public_key` in `global_config`.
     let verifier_private_key = "-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFU28VNv+wsvcC0rR
@@ -164,7 +181,7 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
         "requestDetails": {
             "requestPackageName": "com.worldcoin.dev",
             "nonce": nonce,
-            "timestampMillis": chrono::Utc::now().timestamp_millis().to_string(),
+            "timestampMillis": timestamp_millis.to_string(),
         },
         "appIntegrity": {
             "appRecognitionVerdict": "PLAY_RECOGNIZED",
@@ -356,6 +373,26 @@ async fn test_aat_rejects_build_version_not_matching_play_integrity() {
 
 #[tokio::test]
 #[serial]
+async fn test_aat_android_expired_token_is_retryable() {
+    let router = router(Some(issuer())).await;
+    let challenge = challenge(8, 2, ANDROID_VERSION_CODE);
+    // Older than Android's 10-minute acceptance window.
+    let stale_millis = chrono::Utc::now().timestamp_millis() - 11 * 60 * 1000;
+    let request = json!({
+        "bundle_identifier": "com.worldcoin.dev",
+        "aat_commitment": commitment(8),
+        "build_version": ANDROID_VERSION_CODE,
+        "user_presence": 2,
+        "integrity_token": play_integrity_token_at(&challenge, stale_millis),
+    });
+    let (status, body) = post_aat(&router, &request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "expired_token");
+    assert_eq!(body["allowRetry"], true);
+}
+
+#[tokio::test]
+#[serial]
 async fn test_aat_commitment_is_signed_once_and_released_on_failure() {
     let router = router(Some(issuer())).await;
 
@@ -390,6 +427,16 @@ async fn test_aat_rejects_invalid_requests() {
     request["apple_assertion"] = json!("both platforms");
     let (status, _) = post_aat(&router, &request).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_aat_key_outside_signing_window_is_not_retryable() {
+    let router = router(Some(retired_issuer())).await;
+    let (status, body) = post_aat(&router, &android_request(9, ANDROID_VERSION_CODE)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"]["code"], "signing_key_not_valid");
+    assert_eq!(body["allowRetry"], false);
 }
 
 #[tokio::test]

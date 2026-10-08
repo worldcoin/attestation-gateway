@@ -3,7 +3,7 @@ use std::{str::FromStr, sync::Arc, time::SystemTime};
 use axum::Extension;
 use axum_jsonschema::Json;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::ConnectionManager};
+use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 use world_id_primitives::FieldElement;
 use world_id_primitives::authenticator_assertion::{Platform, SecFlags, SecLevel, UserPresence};
@@ -11,6 +11,7 @@ use world_id_primitives::authenticator_assertion::{Platform, SecFlags, SecLevel,
 use crate::{
     aat_issuer::{AatIssuer, AuthenticatorMetadata, IssueError},
     android, apple,
+    redis_lock::RedisNxLock,
     utils::{
         BundleIdentifier, ClientException, ErrorCode, GlobalConfig, RequestError,
         handle_redis_error,
@@ -203,8 +204,18 @@ async fn handle(
     let evidence = Evidence::from_request(request)?;
 
     // Canonical form, so a commitment is signed at most once whatever flags it is sent with.
-    let lock_key = aat_commitment.to_string();
-    if !lock_commitment(&lock_key, redis).await? {
+    // The guard releases on failure or cancellation; `keep` retains it until TTL on success.
+    let Some(lock) = RedisNxLock::acquire(
+        redis,
+        format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{aat_commitment}"),
+        AAT_COMMITMENT_LOCK_TTL,
+    )
+    .await
+    .map_err(|e| Failure {
+        reason: FailureReason::StorageError,
+        error: handle_redis_error(e),
+    })?
+    .map(|lock| lock.with_release_failure_metric("aat.lock_release_failure")) else {
         return Err(Failure {
             reason: FailureReason::DuplicateCommitment,
             error: RequestError {
@@ -212,7 +223,7 @@ async fn handle(
                 details: Some("This `aat_commitment` has already been used.".to_string()),
             },
         });
-    }
+    };
 
     let result = issue(
         issuer,
@@ -224,10 +235,12 @@ async fn handle(
         aws_config,
     )
     .await;
-    // Keep the original error: a failed release is already logged by `handle_redis_error`, and the
-    // lock expires on its own after `AAT_COMMITMENT_LOCK_TTL`.
-    if result.is_err() && release_commitment(&lock_key, redis).await.is_err() {
-        metrics::counter!("aat.lock_release_failure").increment(1);
+    match &result {
+        Ok(_) => lock.keep(),
+        // Keep the original error: a failed release is logged/metric'd by the guard.
+        Err(_) => {
+            let _ = lock.release().await;
+        }
     }
     result
 }
@@ -271,11 +284,13 @@ async fn issue(
             (output, Platform::Ios, SecLevel::HardwareKey)
         }
     };
-    let output = output.map_err(|e| map_verification_error(&e))?;
+    let output = output.map_err(|e| map_verification_error(&e, config.log_client_errors))?;
     if !output.success {
-        return Err(fail(
-            FailureReason::IntegrityFailed,
-            ErrorCode::IntegrityFailed,
+        // Android claim failures are soft-fails (`Ok` + `client_exception`); Apple returns `Err`.
+        // Propagate the exception so codes like `ExpiredToken` stay retryable.
+        return Err(map_soft_fail(
+            output.client_exception,
+            config.log_client_errors,
         ));
     }
 
@@ -311,8 +326,9 @@ async fn issue(
         .issue(aat_commitment, sec_flags, now)
         .map_err(|e| match e {
             // High-frequency once it happens; alert on the `key_not_valid` metric instead of logging.
+            // Non-retryable: the env key will not start signing again without an ops rotation.
             IssueError::KeyNotValid => {
-                fail(FailureReason::KeyNotValid, ErrorCode::InternalServerError)
+                fail(FailureReason::KeyNotValid, ErrorCode::SigningKeyNotValid)
             }
             IssueError::Token(e) => {
                 tracing::error!(error = ?e, "Error issuing AAT");
@@ -346,9 +362,9 @@ fn challenge(
     hex::encode(openssl::sha::sha256(&preimage))
 }
 
-fn map_verification_error(e: &eyre::Report) -> Failure {
+fn map_verification_error(e: &eyre::Report, log_client_errors: bool) -> Failure {
     if let Some(client_error) = e.downcast_ref::<ClientException>() {
-        tracing::debug!(error = ?e, "Client exception verifying AAT evidence");
+        log_client_exception(client_error, log_client_errors);
         return fail(FailureReason::EvidenceRejected, client_error.code);
     }
     tracing::error!(error = ?e, "Error verifying AAT evidence");
@@ -356,6 +372,30 @@ fn map_verification_error(e: &eyre::Report) -> Failure {
         FailureReason::VerificationError,
         ErrorCode::InternalServerError,
     )
+}
+
+fn map_soft_fail(client_exception: Option<ClientException>, log_client_errors: bool) -> Failure {
+    if let Some(client_error) = client_exception {
+        log_client_exception(&client_error, log_client_errors);
+        return fail(FailureReason::EvidenceRejected, client_error.code);
+    }
+    fail(FailureReason::IntegrityFailed, ErrorCode::IntegrityFailed)
+}
+
+fn log_client_exception(client_error: &ClientException, log_client_errors: bool) {
+    if log_client_errors {
+        tracing::info!(
+            rejection_reason = %client_error.internal_debug_info,
+            error_code = %client_error.code,
+            "Client exception verifying AAT evidence"
+        );
+    } else {
+        tracing::debug!(
+            rejection_reason = %client_error.internal_debug_info,
+            error_code = %client_error.code,
+            "Client exception verifying AAT evidence"
+        );
+    }
 }
 
 /// Serves `/.well-known/world-id-authenticator.json` (WIP-106 §3.8).
@@ -372,37 +412,6 @@ pub async fn metadata_handler(
         internal_error()
     })?;
     Ok(axum::Json(metadata))
-}
-
-async fn lock_commitment(
-    aat_commitment: &str,
-    redis: &mut ConnectionManager,
-) -> Result<bool, Failure> {
-    let options = SetOptions::default()
-        .conditional_set(ExistenceCheck::NX)
-        .with_expiration(SetExpiry::EX(AAT_COMMITMENT_LOCK_TTL));
-    redis
-        .set_options::<String, bool, bool>(
-            format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{aat_commitment}"),
-            true,
-            options,
-        )
-        .await
-        .map_err(|e| Failure {
-            reason: FailureReason::StorageError,
-            error: handle_redis_error(e),
-        })
-}
-
-async fn release_commitment(
-    aat_commitment: &str,
-    redis: &mut ConnectionManager,
-) -> Result<(), RequestError> {
-    redis
-        .del::<String, usize>(format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{aat_commitment}"))
-        .await
-        .map_err(handle_redis_error)?;
-    Ok(())
 }
 
 fn bad_request(details: &str) -> Failure {

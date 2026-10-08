@@ -43,6 +43,8 @@ impl AatIssuer {
     /// Loads the issuer from the environment. Returns `None` if `AAT_SIGNING_KEY` is unset, which
     /// disables the `/aat` route.
     ///
+    /// TODO: Key shouldn't be loaded from env. Setup something more secure.
+    ///
     /// # Panics
     /// If any `AAT_*` variable is malformed, so a misconfigured issuer fails at startup.
     #[must_use]
