@@ -57,7 +57,7 @@ enum Evidence {
 }
 
 impl Evidence {
-    fn from_request(request: &AatRequest) -> Result<Self, RequestError> {
+    fn from_request(request: &AatRequest) -> Result<Self, Failure> {
         match (
             &request.integrity_token,
             &request.apple_assertion,
@@ -75,12 +75,68 @@ impl Evidence {
             )),
         }
     }
+}
 
-    const fn platform(&self) -> &'static str {
+/// Why an AAT request failed, as the bounded `reason` tag of the `aat.failure` metric.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureReason {
+    /// `AAT_SIGNING_KEY` is unset.
+    Disabled,
+    BundleDisabled,
+    InvalidRequest,
+    DuplicateCommitment,
+    /// The platform rejected the evidence (bad token, unknown key, counter, ...); see `error_code`.
+    EvidenceRejected,
+    /// The evidence verified but its integrity verdict did not pass.
+    IntegrityFailed,
+    BuildVersionMismatch,
+    /// Unexpected error verifying the evidence.
+    VerificationError,
+    /// Unexpected error building or signing the token.
+    SigningError,
+    StorageError,
+}
+
+impl FailureReason {
+    const fn tag(self) -> &'static str {
         match self {
-            Self::Android { .. } => "android",
-            Self::AppleAssertion { .. } => "ios",
+            Self::Disabled => "disabled",
+            Self::BundleDisabled => "bundle_disabled",
+            Self::InvalidRequest => "invalid_request",
+            Self::DuplicateCommitment => "duplicate_commitment",
+            Self::EvidenceRejected => "evidence_rejected",
+            Self::IntegrityFailed => "integrity_failed",
+            Self::BuildVersionMismatch => "build_version_mismatch",
+            Self::VerificationError => "verification_error",
+            Self::SigningError => "signing_error",
+            Self::StorageError => "storage_error",
         }
+    }
+}
+
+struct Failure {
+    reason: FailureReason,
+    error: RequestError,
+}
+
+const fn fail(reason: FailureReason, code: ErrorCode) -> Failure {
+    Failure {
+        reason,
+        error: RequestError {
+            code,
+            details: None,
+        },
+    }
+}
+
+/// Platform tag from the evidence fields, before they are validated.
+const fn platform_tag(request: &AatRequest) -> &'static str {
+    if request.integrity_token.is_some() {
+        "android"
+    } else if request.apple_assertion.is_some() {
+        "ios"
+    } else {
+        "unknown"
     }
 }
 
@@ -93,59 +149,83 @@ pub async fn handler(
     Extension(issuer): Extension<Option<Arc<AatIssuer>>>,
     Json(request): Json<AatRequest>,
 ) -> Result<Json<AatResponse>, RequestError> {
-    let issuer = issuer.ok_or(RequestError {
-        code: ErrorCode::NotFound,
-        details: None,
-    })?;
-    global_config.require_enabled_bundle(&request.bundle_identifier)?;
+    let platform = platform_tag(&request);
+    metrics::counter!("aat.request", "platform" => platform).increment(1);
+
+    match handle(
+        issuer.as_deref(),
+        &request,
+        &global_config,
+        &aws_config,
+        &mut redis,
+    )
+    .await
+    {
+        Ok(aat) => {
+            metrics::counter!("aat.success", "platform" => platform).increment(1);
+            Ok(Json(AatResponse { aat }))
+        }
+        Err(Failure { reason, error }) => {
+            metrics::counter!(
+                "aat.failure",
+                "platform" => platform,
+                "reason" => reason.tag(),
+                "error_code" => error.code.to_string(),
+            )
+            .increment(1);
+            Err(error)
+        }
+    }
+}
+
+async fn handle(
+    issuer: Option<&AatIssuer>,
+    request: &AatRequest,
+    config: &GlobalConfig,
+    aws_config: &aws_config::SdkConfig,
+    redis: &mut ConnectionManager,
+) -> Result<String, Failure> {
+    let issuer = issuer.ok_or(fail(FailureReason::Disabled, ErrorCode::NotFound))?;
+    config
+        .require_enabled_bundle(&request.bundle_identifier)
+        .map_err(|error| Failure {
+            reason: FailureReason::BundleDisabled,
+            error,
+        })?;
 
     let aat_commitment = FieldElement::from_str(&request.aat_commitment)
         .map_err(|_| bad_request("`aat_commitment` must be a 32-byte hex field element."))?;
     let user_presence = UserPresence::try_from(request.user_presence)
         .map_err(|_| bad_request("`user_presence` must be between 0 and 4."))?;
     let challenge = challenge(aat_commitment, user_presence, request.build_version);
+    let evidence = Evidence::from_request(request)?;
+
     // Canonical form, so a commitment is signed at most once whatever flags it is sent with.
     let lock_key = aat_commitment.to_string();
-    let evidence = Evidence::from_request(&request)?;
-    let platform = evidence.platform();
-
-    metrics::counter!("aat.request", "platform" => platform).increment(1);
-
-    if !lock_commitment(&lock_key, &mut redis).await? {
-        return Err(RequestError {
-            code: ErrorCode::DuplicateRequestHash,
-            details: None,
-        });
+    if !lock_commitment(&lock_key, redis).await? {
+        return Err(fail(
+            FailureReason::DuplicateCommitment,
+            ErrorCode::DuplicateRequestHash,
+        ));
     }
 
     let result = issue(
-        &issuer,
+        issuer,
         evidence,
-        &request,
+        request,
         aat_commitment,
         &challenge,
         user_presence,
-        &global_config,
-        &aws_config,
+        config,
+        aws_config,
     )
     .await;
-
-    match result {
-        Ok(aat) => {
-            metrics::counter!("aat.success", "platform" => platform).increment(1);
-            Ok(Json(AatResponse { aat }))
-        }
-        Err(e) => {
-            metrics::counter!("aat.failure", "platform" => platform, "error_code" => e.code.to_string())
-                .increment(1);
-            // Keep the original error: a failed release is already logged by `handle_redis_error`,
-            // and the lock expires on its own after `AAT_COMMITMENT_LOCK_TTL`.
-            if release_commitment(&lock_key, &mut redis).await.is_err() {
-                metrics::counter!("aat.lock_release_failure").increment(1);
-            }
-            Err(e)
-        }
+    // Keep the original error: a failed release is already logged by `handle_redis_error`, and the
+    // lock expires on its own after `AAT_COMMITMENT_LOCK_TTL`.
+    if result.is_err() && release_commitment(&lock_key, redis).await.is_err() {
+        metrics::counter!("aat.lock_release_failure").increment(1);
     }
+    result
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -158,7 +238,7 @@ async fn issue(
     user_presence: UserPresence,
     config: &GlobalConfig,
     aws_config: &aws_config::SdkConfig,
-) -> Result<String, RequestError> {
+) -> Result<String, Failure> {
     let bundle = &request.bundle_identifier;
     let (output, platform, sec_level) = match evidence {
         Evidence::Android { integrity_token } => {
@@ -190,10 +270,10 @@ async fn issue(
     };
     let output = output.map_err(|e| map_verification_error(&e))?;
     if !output.success {
-        return Err(RequestError {
-            code: ErrorCode::IntegrityFailed,
-            details: None,
-        });
+        return Err(fail(
+            FailureReason::IntegrityFailed,
+            ErrorCode::IntegrityFailed,
+        ));
     }
 
     // WIP-106 §3.6.2/§3.6.4: the reported build is in the challenge; where the platform attests one
@@ -201,31 +281,38 @@ async fn issue(
     if let Some(version) = output.app_version
         && version.parse::<u32>().ok() != Some(request.build_version)
     {
-        return Err(RequestError {
-            code: ErrorCode::IntegrityFailed,
-            details: Some("`build_version` does not match the attested app version.".to_string()),
+        return Err(Failure {
+            reason: FailureReason::BuildVersionMismatch,
+            error: RequestError {
+                code: ErrorCode::IntegrityFailed,
+                details: Some(
+                    "`build_version` does not match the attested app version.".to_string(),
+                ),
+            },
         });
     }
-    let build_version = request.build_version;
     let sec_flags = SecFlags::new(
         platform.into(),
         sec_level.into(),
-        build_version,
+        request.build_version,
         0,
         user_presence,
     )
     .map_err(|e| {
         tracing::error!(error = ?e, "Invalid AAT security flags");
-        internal_error()
+        signing_error()
     })?;
 
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|_| internal_error())?
+        .map_err(|e| {
+            tracing::error!(error = ?e, "System clock is before the Unix epoch");
+            signing_error()
+        })?
         .as_secs();
     let cwt = issuer.issue(aat_commitment, sec_flags, now).map_err(|e| {
         tracing::error!(error = ?e, "Error issuing AAT");
-        internal_error()
+        signing_error()
     })?;
     Ok(URL_SAFE_NO_PAD.encode(cwt))
 }
@@ -247,16 +334,16 @@ fn challenge(
     hex::encode(openssl::sha::sha256(&preimage))
 }
 
-fn map_verification_error(e: &eyre::Report) -> RequestError {
+fn map_verification_error(e: &eyre::Report) -> Failure {
     if let Some(client_error) = e.downcast_ref::<ClientException>() {
         tracing::debug!(error = ?e, "Client exception verifying AAT evidence");
-        return RequestError {
-            code: client_error.code,
-            details: None,
-        };
+        return fail(FailureReason::EvidenceRejected, client_error.code);
     }
     tracing::error!(error = ?e, "Error verifying AAT evidence");
-    internal_error()
+    fail(
+        FailureReason::VerificationError,
+        ErrorCode::InternalServerError,
+    )
 }
 
 /// Serves `/.well-known/world-id-authenticator.json` (WIP-106 §3.8).
@@ -277,7 +364,7 @@ pub async fn metadata_handler(
 async fn lock_commitment(
     aat_commitment: &str,
     redis: &mut ConnectionManager,
-) -> Result<bool, RequestError> {
+) -> Result<bool, Failure> {
     let options = SetOptions::default()
         .conditional_set(ExistenceCheck::NX)
         .with_expiration(SetExpiry::EX(AAT_COMMITMENT_LOCK_TTL));
@@ -288,7 +375,10 @@ async fn lock_commitment(
             options,
         )
         .await
-        .map_err(handle_redis_error)
+        .map_err(|e| Failure {
+            reason: FailureReason::StorageError,
+            error: handle_redis_error(e),
+        })
 }
 
 async fn release_commitment(
@@ -302,11 +392,18 @@ async fn release_commitment(
     Ok(())
 }
 
-fn bad_request(details: &str) -> RequestError {
-    RequestError {
-        code: ErrorCode::BadRequest,
-        details: Some(details.to_string()),
+fn bad_request(details: &str) -> Failure {
+    Failure {
+        reason: FailureReason::InvalidRequest,
+        error: RequestError {
+            code: ErrorCode::BadRequest,
+            details: Some(details.to_string()),
+        },
     }
+}
+
+const fn signing_error() -> Failure {
+    fail(FailureReason::SigningError, ErrorCode::InternalServerError)
 }
 
 const fn internal_error() -> RequestError {
@@ -354,5 +451,24 @@ mod tests {
             ),
             "a45df5e6f762c267a8a8113537d125588592712dab90d33a58158e66d2404ca6"
         );
+    }
+
+    #[test]
+    fn failure_reason_tags_are_distinct() {
+        use FailureReason::*;
+        let reasons = [
+            Disabled,
+            BundleDisabled,
+            InvalidRequest,
+            DuplicateCommitment,
+            EvidenceRejected,
+            IntegrityFailed,
+            BuildVersionMismatch,
+            VerificationError,
+            SigningError,
+            StorageError,
+        ];
+        let tags: std::collections::HashSet<_> = reasons.iter().map(|r| r.tag()).collect();
+        assert_eq!(tags.len(), reasons.len());
     }
 }
