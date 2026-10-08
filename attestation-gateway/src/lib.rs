@@ -10,6 +10,7 @@ pub mod keys;
 pub mod kinesis;
 pub mod kms_jws;
 pub mod nonces;
+pub mod redis_lock;
 pub mod routes;
 pub mod server;
 pub mod utils;

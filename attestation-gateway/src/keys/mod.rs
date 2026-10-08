@@ -12,7 +12,7 @@ use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::Connectio
 use josekit::{Value, jwk::Jwk};
 use serde::{Deserialize, Serialize};
 
-use crate::{kms_jws::KMSKeyDefinition, utils::SIGNING_CONFIG};
+use crate::{kms_jws::KMSKeyDefinition, redis_lock::RedisNxLock, utils::SIGNING_CONFIG};
 
 const SIGNING_KEYS_REDIS_KEY: &str = "signing-keys";
 const CREATING_KEY_LOCK_KEY: &str = "lock-signing-key-creation";
@@ -130,24 +130,27 @@ async fn generate_new_key(
     tracing::info!("No suitable signing keys found. Generating a new key");
 
     if acquire_lock_with_backoff(redis).await? {
-        let (key_definition, public_key_der) = kms_generate_new_key(aws_config).await?;
+        // Always release on exit (success, error, or cancellation); TTL is the fallback.
+        let lock = RedisNxLock::from_held(redis.clone(), CREATING_KEY_LOCK_KEY.to_string());
+        let outcome = async {
+            let (key_definition, public_key_der) = kms_generate_new_key(aws_config).await?;
 
-        let public_key = PKey::public_key_from_der(&public_key_der)?;
+            let public_key = PKey::public_key_from_der(&public_key_der)?;
 
-        let jwk = public_key_to_jwk(&public_key, Some(key_definition.id.clone()))?;
+            let jwk = public_key_to_jwk(&public_key, Some(key_definition.id.clone()))?;
 
-        let signing_key = SigningKey {
-            key_definition,
-            jwk,
-            created_at: chrono::Utc::now().timestamp(),
-        };
+            let signing_key = SigningKey {
+                key_definition,
+                jwk,
+                created_at: chrono::Utc::now().timestamp(),
+            };
 
-        store_new_key_in_redis(redis, &signing_key).await?;
-
-        // Release the lock. Intentionally ignore result because failure is not critical (key expires automatically)
-        let _ = release_lock(redis).await;
-
-        return Ok(signing_key);
+            store_new_key_in_redis(redis, &signing_key).await?;
+            Ok(signing_key)
+        }
+        .await;
+        let _ = lock.release().await;
+        return outcome;
     }
 
     // If the lock was not acquired, likely the key was created by another instance, try to retrieve it
@@ -271,11 +274,6 @@ async fn acquire_lock_with_backoff(redis: &mut ConnectionManager) -> eyre::Resul
         start_time.elapsed().as_secs()
     );
     Ok(false) // Failed to acquire the lock within the maximum retry timeout
-}
-
-async fn release_lock(redis: &mut ConnectionManager) -> eyre::Result<()> {
-    redis.del::<&str, usize>(CREATING_KEY_LOCK_KEY).await?;
-    Ok(())
 }
 
 /// Converts a DER public key to a JWK.

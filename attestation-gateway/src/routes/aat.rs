@@ -3,7 +3,7 @@ use std::{str::FromStr, sync::Arc, time::SystemTime};
 use axum::Extension;
 use axum_jsonschema::Json;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::ConnectionManager};
+use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 use world_id_primitives::FieldElement;
 use world_id_primitives::authenticator_assertion::{Platform, SecFlags, SecLevel, UserPresence};
@@ -11,6 +11,7 @@ use world_id_primitives::authenticator_assertion::{Platform, SecFlags, SecLevel,
 use crate::{
     aat_issuer::{AatIssuer, AuthenticatorMetadata, IssueError},
     android, apple,
+    redis_lock::RedisNxLock,
     utils::{
         BundleIdentifier, ClientException, ErrorCode, GlobalConfig, RequestError,
         handle_redis_error,
@@ -203,8 +204,19 @@ async fn handle(
     let evidence = Evidence::from_request(request)?;
 
     // Canonical form, so a commitment is signed at most once whatever flags it is sent with.
-    let lock_key = aat_commitment.to_string();
-    if !lock_commitment(&lock_key, redis).await? {
+    // The guard releases on failure or cancellation; `keep` retains it until TTL on success.
+    let Some(lock) = RedisNxLock::acquire(
+        redis,
+        format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{aat_commitment}"),
+        AAT_COMMITMENT_LOCK_TTL,
+    )
+    .await
+    .map_err(|e| Failure {
+        reason: FailureReason::StorageError,
+        error: handle_redis_error(e),
+    })?
+    .map(|lock| lock.with_release_failure_metric("aat.lock_release_failure"))
+    else {
         return Err(Failure {
             reason: FailureReason::DuplicateCommitment,
             error: RequestError {
@@ -212,7 +224,7 @@ async fn handle(
                 details: Some("This `aat_commitment` has already been used.".to_string()),
             },
         });
-    }
+    };
 
     let result = issue(
         issuer,
@@ -224,10 +236,12 @@ async fn handle(
         aws_config,
     )
     .await;
-    // Keep the original error: a failed release is already logged by `handle_redis_error`, and the
-    // lock expires on its own after `AAT_COMMITMENT_LOCK_TTL`.
-    if result.is_err() && release_commitment(&lock_key, redis).await.is_err() {
-        metrics::counter!("aat.lock_release_failure").increment(1);
+    match &result {
+        Ok(_) => lock.keep(),
+        // Keep the original error: a failed release is logged/metric'd by the guard.
+        Err(_) => {
+            let _ = lock.release().await;
+        }
     }
     result
 }
@@ -372,37 +386,6 @@ pub async fn metadata_handler(
         internal_error()
     })?;
     Ok(axum::Json(metadata))
-}
-
-async fn lock_commitment(
-    aat_commitment: &str,
-    redis: &mut ConnectionManager,
-) -> Result<bool, Failure> {
-    let options = SetOptions::default()
-        .conditional_set(ExistenceCheck::NX)
-        .with_expiration(SetExpiry::EX(AAT_COMMITMENT_LOCK_TTL));
-    redis
-        .set_options::<String, bool, bool>(
-            format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{aat_commitment}"),
-            true,
-            options,
-        )
-        .await
-        .map_err(|e| Failure {
-            reason: FailureReason::StorageError,
-            error: handle_redis_error(e),
-        })
-}
-
-async fn release_commitment(
-    aat_commitment: &str,
-    redis: &mut ConnectionManager,
-) -> Result<(), RequestError> {
-    redis
-        .del::<String, usize>(format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{aat_commitment}"))
-        .await
-        .map_err(handle_redis_error)?;
-    Ok(())
 }
 
 fn bad_request(details: &str) -> Failure {

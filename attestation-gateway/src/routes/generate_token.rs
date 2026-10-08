@@ -4,7 +4,7 @@ use axum::{
     http::{HeaderMap, header},
 };
 use axum_jsonschema::Json;
-use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::ConnectionManager};
+use redis::aio::ConnectionManager;
 use std::time::SystemTime;
 
 use crate::{
@@ -12,6 +12,7 @@ use crate::{
     keys::fetch_active_key,
     kinesis::send_kinesis_stream_event,
     kms_jws,
+    redis_lock::RedisNxLock,
     utils::{
         BundleIdentifier, CheckType, ClientException, DataReport, ErrorCode, GlobalConfig,
         IntegrityVerificationInput, OutEnum, OutputTokenPayload, Platform, RequestError,
@@ -120,14 +121,21 @@ pub async fn handler(
 
     metrics::counter!("generate_token",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
 
-    // Lock the `request_hash` in Redis to prevent duplicate requests and race conditions
-    let lock_set = set_redis_lock(request_hash.clone(), &mut redis).await?;
-    if !lock_set {
+    // Lock the `request_hash` in Redis to prevent duplicate requests and race conditions.
+    // The guard releases on failure or cancellation; `keep` retains it until TTL on success.
+    let Some(lock) = RedisNxLock::acquire(
+        &mut redis,
+        format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"),
+        REQUEST_HASH_CACHE_TTL,
+    )
+    .await
+    .map_err(handle_redis_error)?
+    else {
         return Err(RequestError {
             code: ErrorCode::DuplicateRequestHash,
             details: None,
         });
-    }
+    };
 
     // Captured before the input is moved into `verify_android_or_apple_integrity`
     // so error logs below can be filtered by `check_type:Developer` etc.
@@ -171,7 +179,7 @@ pub async fn handler(
     // If the report is an error, release the request hash to allow re-use and return the error
     let report = match report {
         Err(e) => {
-            let _ = release_request_hash(request_hash, &mut redis).await;
+            let _ = lock.release().await;
             return Err(e);
         }
         Ok(value) => value,
@@ -191,34 +199,15 @@ pub async fn handler(
     {
         Ok(res) => res,
         Err(err) => {
-            let _ = release_request_hash(request_hash, &mut redis).await;
+            let _ = lock.release().await;
             return Err(err);
         }
     };
 
+    lock.keep();
     metrics::counter!("generate_token.success",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
 
     Ok(Json(response))
-}
-
-async fn set_redis_lock(
-    request_hash: String,
-    redis: &mut ConnectionManager,
-) -> Result<bool, RequestError> {
-    let request_hash_lock_options = SetOptions::default()
-        .conditional_set(ExistenceCheck::NX)
-        .with_expiration(SetExpiry::EX(REQUEST_HASH_CACHE_TTL));
-
-    let lock_set = redis
-        .set_options::<String, bool, bool>(
-            format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{:}", request_hash.clone()),
-            true,
-            request_hash_lock_options,
-        )
-        .await
-        .map_err(handle_redis_error)?;
-
-    Ok(lock_set)
 }
 
 async fn verify_android_or_apple_integrity(
@@ -413,17 +402,6 @@ async fn process_and_finalize_report(
     };
 
     Ok(response)
-}
-
-async fn release_request_hash(
-    request_hash: String,
-    redis: &mut ConnectionManager,
-) -> Result<(), RequestError> {
-    redis
-        .del::<String, usize>(format!("{REQUEST_HASH_REDIS_KEY_PREFIX}{request_hash}"))
-        .await
-        .map_err(handle_redis_error)?;
-    Ok(())
 }
 
 /// If the request comes with a `client_error` from the mobile apps, log it and return a
