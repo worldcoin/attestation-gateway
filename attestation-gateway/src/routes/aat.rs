@@ -327,8 +327,9 @@ async fn issue(
         .issue(aat_commitment, sec_flags, now)
         .map_err(|e| match e {
             // High-frequency once it happens; alert on the `key_not_valid` metric instead of logging.
+            // Non-retryable: the env key will not start signing again without an ops rotation.
             IssueError::KeyNotValid => {
-                fail(FailureReason::KeyNotValid, ErrorCode::InternalServerError)
+                fail(FailureReason::KeyNotValid, ErrorCode::SigningKeyNotValid)
             }
             IssueError::Token(e) => {
                 tracing::error!(error = ?e, "Error issuing AAT");

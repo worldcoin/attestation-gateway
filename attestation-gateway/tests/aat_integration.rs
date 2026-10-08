@@ -120,6 +120,18 @@ fn issuer() -> AatIssuer {
     )
 }
 
+/// An issuer whose key has already passed `signing_end` (still within `not_after`).
+fn retired_issuer() -> AatIssuer {
+    let now = now();
+    AatIssuer::new(
+        issuer_key(),
+        "test-provider".to_string(),
+        now - u64::from(AAT_LIFETIME_SECS) - 100,
+        now,
+        AAT_LIFETIME_SECS,
+    )
+}
+
 async fn post_aat(router: &aide::axum::ApiRouter, request: &Value) -> (StatusCode, Value) {
     let response = router
         .clone()
@@ -415,6 +427,16 @@ async fn test_aat_rejects_invalid_requests() {
     request["apple_assertion"] = json!("both platforms");
     let (status, _) = post_aat(&router, &request).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_aat_key_outside_signing_window_is_not_retryable() {
+    let router = router(Some(retired_issuer())).await;
+    let (status, body) = post_aat(&router, &android_request(9, ANDROID_VERSION_CODE)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"]["code"], "signing_key_not_valid");
+    assert_eq!(body["allowRetry"], false);
 }
 
 #[tokio::test]

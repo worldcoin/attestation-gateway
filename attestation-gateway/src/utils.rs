@@ -762,6 +762,8 @@ pub enum ErrorCode {
     NotFound,
     RateLimited,
     RequestHashMismatch,
+    /// The Authenticator Provider signing key is outside the window in which it may sign.
+    SigningKeyNotValid,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -784,6 +786,7 @@ impl std::fmt::Display for ErrorCode {
             Self::NotFound => write!(f, "not_found"),
             Self::RateLimited => write!(f, "rate_limited"),
             Self::RequestHashMismatch => write!(f, "request_hash_mismatch"),
+            Self::SigningKeyNotValid => write!(f, "signing_key_not_valid"),
         }
     }
 }
@@ -796,7 +799,7 @@ impl ErrorCode {
                 axum::http::StatusCode::CONFLICT
             }
             Self::RateLimited => axum::http::StatusCode::TOO_MANY_REQUESTS,
-            Self::Forbidden => axum::http::StatusCode::FORBIDDEN,
+            Self::Forbidden | Self::SigningKeyNotValid => axum::http::StatusCode::FORBIDDEN,
             Self::NotFound => axum::http::StatusCode::NOT_FOUND,
             Self::InvalidDeveloperToken => axum::http::StatusCode::UNAUTHORIZED,
             Self::AttestationRejected
@@ -843,6 +846,9 @@ impl ErrorCode {
             Self::RequestHashMismatch => {
                 "The token is bound to a different `request_hash` than this request. Mint a new one."
             }
+            Self::SigningKeyNotValid => {
+                "The Authenticator Provider signing key cannot issue tokens right now."
+            }
         }
     }
 
@@ -878,7 +884,8 @@ impl ErrorCode {
             | Self::InvalidPublicKey
             | Self::InvalidToken
             | Self::InvalidDeveloperToken
-            | Self::NotFound => false,
+            | Self::NotFound
+            | Self::SigningKeyNotValid => false,
         }
     }
 }
@@ -1160,6 +1167,7 @@ mod tests {
             ErrorCode::IntegrityFailed,
             ErrorCode::InvalidDeveloperToken,
             ErrorCode::InvalidInitialAttestation,
+            ErrorCode::SigningKeyNotValid,
         ] {
             assert!(!code.allow_retry(), "{code} should not be retryable");
         }
