@@ -9,7 +9,7 @@ use eddsa_babyjubjub::EdDSAPrivateKey;
 use schemars::JsonSchema;
 use serde::Serialize;
 use world_id_primitives::FieldElement;
-use world_id_proof::authenticator_assertion::{
+use world_id_primitives::authenticator_assertion::{
     AuthenticatorAssertionToken, MAX_AAT_LIFETIME_SECS, SecFlags,
 };
 
@@ -151,7 +151,7 @@ pub struct AuthenticatorProviderKey {
 
 #[cfg(test)]
 mod tests {
-    use world_id_proof::authenticator_assertion::{
+    use world_id_primitives::authenticator_assertion::{
         Platform, SecLevel, SignedAuthenticatorAssertionToken, UserPresence,
     };
 

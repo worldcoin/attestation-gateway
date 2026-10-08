@@ -6,7 +6,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::ConnectionManager};
 use schemars::JsonSchema;
 use world_id_primitives::FieldElement;
-use world_id_proof::authenticator_assertion::{Platform, SecFlags, SecLevel, UserPresence};
+use world_id_primitives::authenticator_assertion::{Platform, SecFlags, SecLevel, UserPresence};
 
 use crate::{
     aat_issuer::{AatIssuer, AuthenticatorMetadata},

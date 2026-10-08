@@ -28,7 +28,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 ciborium = "0.2.2"
 der-parser = "10.0.0"
 dotenvy = "0.15.7"
-# PROTOTYPE: pinned to the unmerged prover feature gate (worldcoin/world-id-protocol#1069).
+# PROTOTYPE: `world-id-primitives` is pinned to an unmerged world-id-protocol branch with the WIP-106 module.
 eddsa-babyjubjub = { package = "taceo-eddsa-babyjubjub", version = "0.6.0" }
 eyre = "0.6.12"
 hex.workspace = true
@@ -53,8 +53,7 @@ tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json"] }
 uuid = { version = "1.23.4", default-features = false, features = ["v4"] }
 x509-parser = "0.18.1"
-world-id-primitives = { git = "https://github.com/worldcoin/world-id-protocol", rev = "0f7951d704e4e236e9fdc408c7f215341ad2e413", default-features = false }
-world-id-proof = { git = "https://github.com/worldcoin/world-id-protocol", rev = "0f7951d704e4e236e9fdc408c7f215341ad2e413", default-features = false }
+world-id-primitives = { git = "https://github.com/worldcoin/world-id-protocol", rev = "bdf2548b97b2ff96ac3b50ca4fc9044f319ac97e", default-features = false }
 
 [build-dependencies]
 chrono = "0.4.45"
