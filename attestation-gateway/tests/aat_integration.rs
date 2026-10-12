@@ -92,19 +92,10 @@ async fn aws_config() -> aws_config::SdkConfig {
         .build()
 }
 
-async fn redis() -> redis::aio::ConnectionManager {
-    let client = redis::Client::open("redis://localhost").unwrap();
-    redis::cmd("FLUSHALL")
-        .exec(&mut client.get_connection().unwrap())
-        .unwrap();
-    redis::aio::ConnectionManager::new(client).await.unwrap()
-}
-
 async fn router(issuer: Option<AatIssuer>) -> aide::axum::ApiRouter {
     attestation_gateway::routes::handler()
         .layer(Extension(aws_config().await))
         .layer(Extension(global_config()))
-        .layer(Extension(redis().await))
         .layer(Extension(issuer.map(Arc::new)))
 }
 
@@ -356,19 +347,17 @@ async fn test_aat_rejects_build_version_not_matching_play_integrity() {
 
 #[tokio::test]
 #[serial]
-async fn test_aat_commitment_is_signed_once_and_released_on_failure() {
+async fn test_aat_retry_with_the_same_commitment_succeeds() {
     let router = router(Some(issuer())).await;
 
-    // A failed request does not consume the commitment...
+    // No single-use state: a failed or repeated request can be retried; the RP's nonce is the
+    // replay guard.
     let (status, _) = post_aat(&router, &android_request(5, ANDROID_VERSION_CODE + 1)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, body) = post_aat(&router, &android_request(5, ANDROID_VERSION_CODE)).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-
-    // ...but a signed one does.
-    let (status, body) = post_aat(&router, &android_request(5, ANDROID_VERSION_CODE)).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["error"]["code"], "duplicate_request_hash");
+    for _ in 0..2 {
+        let (status, body) = post_aat(&router, &android_request(5, ANDROID_VERSION_CODE)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
 }
 
 #[tokio::test]

@@ -3,7 +3,6 @@ use std::{str::FromStr, sync::Arc, time::SystemTime};
 use axum::Extension;
 use axum_jsonschema::Json;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, aio::ConnectionManager};
 use schemars::JsonSchema;
 use world_id_primitives::FieldElement;
 use world_id_primitives::authenticator_assertion::{Platform, SecFlags, SecLevel, UserPresence};
@@ -11,15 +10,8 @@ use world_id_primitives::authenticator_assertion::{Platform, SecFlags, SecLevel,
 use crate::{
     aat_issuer::{AatIssuer, AuthenticatorMetadata, IssueError},
     android, apple,
-    utils::{
-        BundleIdentifier, ClientException, ErrorCode, GlobalConfig, RequestError,
-        handle_redis_error,
-    },
+    utils::{BundleIdentifier, ClientException, ErrorCode, GlobalConfig, RequestError},
 };
-
-const AAT_COMMITMENT_REDIS_KEY_PREFIX: &str = "aat_commitment:";
-/// Outlives every AAT, so a commitment is never signed twice while a token could still be used.
-const AAT_COMMITMENT_LOCK_TTL: u64 = 60 * 60;
 
 /// Request for a WIP-106 Authenticator Assertion Token.
 ///
@@ -84,7 +76,6 @@ enum FailureReason {
     Disabled,
     BundleDisabled,
     InvalidRequest,
-    DuplicateCommitment,
     /// The platform rejected the evidence (bad token, unknown key, counter, ...); see `error_code`.
     EvidenceRejected,
     /// The evidence verified but its integrity verdict did not pass.
@@ -96,7 +87,6 @@ enum FailureReason {
     KeyNotValid,
     /// Unexpected error building or signing the token.
     SigningError,
-    StorageError,
 }
 
 impl FailureReason {
@@ -105,14 +95,12 @@ impl FailureReason {
             Self::Disabled => "disabled",
             Self::BundleDisabled => "bundle_disabled",
             Self::InvalidRequest => "invalid_request",
-            Self::DuplicateCommitment => "duplicate_commitment",
             Self::EvidenceRejected => "evidence_rejected",
             Self::IntegrityFailed => "integrity_failed",
             Self::BuildVersionMismatch => "build_version_mismatch",
             Self::VerificationError => "verification_error",
             Self::KeyNotValid => "key_not_valid",
             Self::SigningError => "signing_error",
-            Self::StorageError => "storage_error",
         }
     }
 }
@@ -147,7 +135,6 @@ const fn platform_tag(request: &AatRequest) -> &'static str {
 
 pub async fn handler(
     Extension(aws_config): Extension<aws_config::SdkConfig>,
-    Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Extension(issuer): Extension<Option<Arc<AatIssuer>>>,
     Json(request): Json<AatRequest>,
@@ -155,15 +142,7 @@ pub async fn handler(
     let platform = platform_tag(&request);
     metrics::counter!("aat.request", "platform" => platform).increment(1);
 
-    match handle(
-        issuer.as_deref(),
-        &request,
-        &global_config,
-        &aws_config,
-        &mut redis,
-    )
-    .await
-    {
+    match handle(issuer.as_deref(), &request, &global_config, &aws_config).await {
         Ok(aat) => {
             metrics::counter!("aat.success", "platform" => platform).increment(1);
             Ok(Json(AatResponse { aat }))
@@ -186,7 +165,6 @@ async fn handle(
     request: &AatRequest,
     config: &GlobalConfig,
     aws_config: &aws_config::SdkConfig,
-    redis: &mut ConnectionManager,
 ) -> Result<String, Failure> {
     let issuer = issuer.ok_or(fail(FailureReason::Disabled, ErrorCode::NotFound))?;
     config
@@ -202,19 +180,8 @@ async fn handle(
         .map_err(|_| bad_request("`user_presence` must be between 0 and 4."))?;
     let evidence = Evidence::from_request(request)?;
 
-    // Canonical form, so a commitment is signed at most once whatever flags it is sent with.
-    let lock_key = aat_commitment.to_string();
-    if !lock_commitment(&lock_key, redis).await? {
-        return Err(Failure {
-            reason: FailureReason::DuplicateCommitment,
-            error: RequestError {
-                code: ErrorCode::DuplicateRequestHash,
-                details: Some("This `aat_commitment` has already been used.".to_string()),
-            },
-        });
-    }
-
-    let result = issue(
+    // No single-use state: the RP rejects a reused nonce, and the commitment binds the AAT to it.
+    issue(
         issuer,
         evidence,
         request,
@@ -223,13 +190,7 @@ async fn handle(
         config,
         aws_config,
     )
-    .await;
-    // Keep the original error: a failed release is already logged by `handle_redis_error`, and the
-    // lock expires on its own after `AAT_COMMITMENT_LOCK_TTL`.
-    if result.is_err() && release_commitment(&lock_key, redis).await.is_err() {
-        metrics::counter!("aat.lock_release_failure").increment(1);
-    }
-    result
+    .await
 }
 
 async fn issue(
@@ -374,37 +335,6 @@ pub async fn metadata_handler(
     Ok(axum::Json(metadata))
 }
 
-async fn lock_commitment(
-    aat_commitment: &str,
-    redis: &mut ConnectionManager,
-) -> Result<bool, Failure> {
-    let options = SetOptions::default()
-        .conditional_set(ExistenceCheck::NX)
-        .with_expiration(SetExpiry::EX(AAT_COMMITMENT_LOCK_TTL));
-    redis
-        .set_options::<String, bool, bool>(
-            format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{aat_commitment}"),
-            true,
-            options,
-        )
-        .await
-        .map_err(|e| Failure {
-            reason: FailureReason::StorageError,
-            error: handle_redis_error(e),
-        })
-}
-
-async fn release_commitment(
-    aat_commitment: &str,
-    redis: &mut ConnectionManager,
-) -> Result<(), RequestError> {
-    redis
-        .del::<String, usize>(format!("{AAT_COMMITMENT_REDIS_KEY_PREFIX}{aat_commitment}"))
-        .await
-        .map_err(handle_redis_error)?;
-    Ok(())
-}
-
 fn bad_request(details: &str) -> Failure {
     Failure {
         reason: FailureReason::InvalidRequest,
@@ -473,14 +403,12 @@ mod tests {
             Disabled,
             BundleDisabled,
             InvalidRequest,
-            DuplicateCommitment,
             EvidenceRejected,
             IntegrityFailed,
             BuildVersionMismatch,
             VerificationError,
             KeyNotValid,
             SigningError,
-            StorageError,
         ];
         let tags: std::collections::HashSet<_> = reasons.iter().map(|r| r.tag()).collect();
         assert_eq!(tags.len(), reasons.len());
