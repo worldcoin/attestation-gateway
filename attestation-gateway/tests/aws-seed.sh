@@ -13,5 +13,13 @@ awslocal dynamodb create-table \
     --billing-mode PAY_PER_REQUEST \
     --region eu-central-1
 
+# WIP-106 AAT keys table
+awslocal dynamodb create-table \
+    --table-name attestation-gateway-aat-keys \
+    --key-schema AttributeName=slot,KeyType=HASH \
+    --attribute-definitions AttributeName=slot,AttributeType=S \
+    --billing-mode PAY_PER_REQUEST \
+    --region eu-central-1
+
 # Kinesis stream
 awslocal kinesis create-stream --region us-west-1 --stream-name attestation-gateway-data-reports --shard-count 1
