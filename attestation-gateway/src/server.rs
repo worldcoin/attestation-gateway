@@ -78,7 +78,8 @@ pub async fn start(
         .layer(
             TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::new().include_headers(true)),
         )
-        .layer(get_timeout_layer(None));
+        .layer(get_timeout_layer(None))
+        .layer(axum::middleware::from_fn(crate::latency::requests));
 
     let address = SocketAddr::from((
         [0, 0, 0, 0],

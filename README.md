@@ -2,6 +2,8 @@
 
 Protects app integrity through the Attestation Gateway.
 
+[Latency metrics and baseline collection](docs/latency-measurement.md)
+
 ## 🧪 Testing
 
 - The repo includes both unit and integration tests.

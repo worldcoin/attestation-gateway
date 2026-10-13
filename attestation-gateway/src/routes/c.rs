@@ -55,30 +55,34 @@ pub async fn handler(
     );
     let _enter = tracing_span.enter();
 
-    audience_authorizer
-        .ensure_authorized(&request.aud)
-        .await
-        .map_err(|error| {
-            if matches!(error, AudienceAuthorizationError::NotAuthorized) {
-                tracing::warn!(
-                    aud = %request.aud,
-                    endpoint = "/c",
-                    session_id = %session_id,
-                    message = "Audience is not authorized"
-                );
-            }
-            RequestError::from(error)
-        })?;
+    crate::latency::measure(
+        "audience_authorization",
+        audience_authorizer.ensure_authorized(&request.aud),
+    )
+    .await
+    .map_err(|error| {
+        if matches!(error, AudienceAuthorizationError::NotAuthorized) {
+            tracing::warn!(
+                aud = %request.aud,
+                endpoint = "/c",
+                session_id = %session_id,
+                message = "Audience is not authorized"
+            );
+        }
+        RequestError::from(error)
+    })?;
 
     let token_details = token_details_factory.from_aud(request.aud.clone());
-    let nonce = nonce_db.generate_nonce(&token_details).await.map_err(|e| {
-        tracing::error!(error = ?e, "Failed to generate nonce.");
+    let nonce = crate::latency::measure("nonce_create", nonce_db.generate_nonce(&token_details))
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "Failed to generate nonce.");
 
-        RequestError {
-            code: ErrorCode::InternalServerError,
-            details: Some("Failed to generate nonce.".to_string()),
-        }
-    })?;
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: Some("Failed to generate nonce.".to_string()),
+            }
+        })?;
 
     let device_key_expires_at =
         DateTime::<Utc>::from_timestamp(token_details.exp_max, 0).ok_or(RequestError {
