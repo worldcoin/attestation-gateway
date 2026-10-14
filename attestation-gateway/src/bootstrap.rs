@@ -72,11 +72,14 @@ pub async fn start_from_env_with_android_risk_evaluator(
 }
 
 fn set_up_metrics(environment: Environment) -> eyre::Result<()> {
-    let recorder = StatsdBuilder::from("localhost", 8125)
+    let mut builder = StatsdBuilder::from("localhost", 8125)
         .with_queue_size(5000)
         .with_buffer_size(1024)
-        .with_default_tag("env", environment.to_string())
-        .build(Some("attestation_gateway."))?;
+        .with_default_tag("env", environment.to_string());
+    if let Ok(region) = env::var("AWS_REGION").or_else(|_| env::var("AWS_DEFAULT_REGION")) {
+        builder = builder.with_default_tag("region", region);
+    }
+    let recorder = builder.build(Some("attestation_gateway."))?;
 
     metrics::set_global_recorder(recorder)?;
 

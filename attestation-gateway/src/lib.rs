@@ -8,6 +8,7 @@ pub mod developer;
 pub mod keys;
 pub mod kinesis;
 pub mod kms_jws;
+mod latency;
 pub mod nonces;
 pub mod routes;
 pub mod server;

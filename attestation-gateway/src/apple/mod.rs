@@ -40,26 +40,31 @@ pub async fn verify_initial_attestation(
     apple_keys_dynamo_table_name: &String,
     apple_root_ca_pem: &[u8],
 ) -> eyre::Result<VerificationOutput> {
-    let attestation_result = decode_and_validate_initial_attestation(
-        apple_initial_attestation,
-        &request_hash,
-        &bundle_identifier.apple_accepted_app_ids().ok_or_else(|| {
-            ClientException::report(
-                ErrorCode::InvalidAttestationForApp,
-                format!("no Apple app ids for bundle identifier: {bundle_identifier}"),
-            )
-        })?,
-        &AAGUID::allowed_for_bundle_identifier(&bundle_identifier)?,
-        apple_root_ca_pem,
-    )?;
+    let attestation_result = crate::latency::measure_sync("attestation_verify", || {
+        decode_and_validate_initial_attestation(
+            apple_initial_attestation,
+            &request_hash,
+            &bundle_identifier.apple_accepted_app_ids().ok_or_else(|| {
+                ClientException::report(
+                    ErrorCode::InvalidAttestationForApp,
+                    format!("no Apple app ids for bundle identifier: {bundle_identifier}"),
+                )
+            })?,
+            &AAGUID::allowed_for_bundle_identifier(&bundle_identifier)?,
+            apple_root_ca_pem,
+        )
+    })?;
 
-    dynamo::insert_apple_public_key(
-        aws_config,
-        apple_keys_dynamo_table_name,
-        bundle_identifier,
-        attestation_result.key_id,
-        attestation_result.public_key,
-        attestation_result.receipt,
+    crate::latency::measure(
+        "apple_key_register",
+        dynamo::insert_apple_public_key(
+            aws_config,
+            apple_keys_dynamo_table_name,
+            bundle_identifier,
+            attestation_result.key_id,
+            attestation_result.public_key,
+            attestation_result.receipt,
+        ),
     )
     .await?;
 
@@ -86,10 +91,13 @@ pub async fn verify(
     apple_keys_dynamo_table_name: &String,
 ) -> eyre::Result<VerificationOutput> {
     // Fetch public key and counter from DB
-    let key = fetch_apple_public_key(
-        aws_config,
-        apple_keys_dynamo_table_name,
-        apple_public_key.clone(),
+    let key = crate::latency::measure(
+        "apple_key_read",
+        fetch_apple_public_key(
+            aws_config,
+            apple_keys_dynamo_table_name,
+            apple_public_key.clone(),
+        ),
     )
     .await?;
 
@@ -100,25 +108,30 @@ pub async fn verify(
         ));
     }
 
-    let counter = decode_and_validate_assertion(
-        apple_assertion,
-        key.public_key,
-        &bundle_identifier.apple_accepted_app_ids().ok_or_else(|| {
-            ClientException::report(
-                ErrorCode::InvalidAttestationForApp,
-                format!("no Apple app ids for bundle identifier: {bundle_identifier}"),
-            )
-        })?,
-        request_hash,
-        key.counter,
-    )?;
+    let counter = crate::latency::measure_sync("attestation_verify", || {
+        decode_and_validate_assertion(
+            apple_assertion,
+            key.public_key,
+            &bundle_identifier.apple_accepted_app_ids().ok_or_else(|| {
+                ClientException::report(
+                    ErrorCode::InvalidAttestationForApp,
+                    format!("no Apple app ids for bundle identifier: {bundle_identifier}"),
+                )
+            })?,
+            request_hash,
+            key.counter,
+        )
+    })?;
 
     // Update the key counter on DB
-    update_apple_public_key_counter_plus(
-        aws_config,
-        apple_keys_dynamo_table_name,
-        apple_public_key,
-        counter,
+    crate::latency::measure(
+        "apple_counter_update",
+        update_apple_public_key_counter_plus(
+            aws_config,
+            apple_keys_dynamo_table_name,
+            apple_public_key,
+            counter,
+        ),
     )
     .await?;
 

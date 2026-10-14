@@ -104,6 +104,18 @@ pub async fn handler(
         Some(infer_platform(&request)?)
     };
 
+    crate::latency::set_platform(if request.client_error.is_some() {
+        "client_error"
+    } else if laissez_passer_token.is_some() {
+        "developer"
+    } else {
+        match platform {
+            Some(Platform::Android) => "android",
+            Some(Platform::AppleIOS) => "ios",
+            None => "unknown",
+        }
+    });
+
     let integrity_verification_input =
         IntegrityVerificationInput::from_request(&request, laissez_passer_token, platform)?;
 
@@ -121,7 +133,11 @@ pub async fn handler(
     metrics::counter!("generate_token",  "bundle_identifier" => request.bundle_identifier.to_string()).increment(1);
 
     // Lock the `request_hash` in Redis to prevent duplicate requests and race conditions
-    let lock_set = set_redis_lock(request_hash.clone(), &mut redis).await?;
+    let lock_set = crate::latency::measure(
+        "replay_acquire",
+        set_redis_lock(request_hash.clone(), &mut redis),
+    )
+    .await?;
     if !lock_set {
         return Err(RequestError {
             code: ErrorCode::DuplicateRequestHash,
@@ -171,7 +187,11 @@ pub async fn handler(
     // If the report is an error, release the request hash to allow re-use and return the error
     let report = match report {
         Err(e) => {
-            let _ = release_request_hash(request_hash, &mut redis).await;
+            let _ = crate::latency::measure(
+                "replay_release",
+                release_request_hash(request_hash, &mut redis),
+            )
+            .await;
             return Err(e);
         }
         Ok(value) => value,
@@ -191,7 +211,11 @@ pub async fn handler(
     {
         Ok(res) => res,
         Err(err) => {
-            let _ = release_request_hash(request_hash, &mut redis).await;
+            let _ = crate::latency::measure(
+                "replay_release",
+                release_request_hash(request_hash, &mut redis),
+            )
+            .await;
             return Err(err);
         }
     };
@@ -252,13 +276,15 @@ async fn verify_android_or_apple_integrity(
         IntegrityVerificationInput::Android { integrity_token } => {
             report.check_type = Some(CheckType::Android);
             let keys = config.android_response_keys(&bundle_identifier);
-            android::verify(
-                &integrity_token,
-                &bundle_identifier,
-                &request_hash,
-                keys.outer_jwe_private_key.clone(),
-                keys.inner_jws_public_key.clone(),
-            )?
+            crate::latency::measure_sync("attestation_verify", || {
+                android::verify(
+                    &integrity_token,
+                    &bundle_identifier,
+                    &request_hash,
+                    keys.outer_jwe_private_key.clone(),
+                    keys.inner_jws_public_key.clone(),
+                )
+            })?
         }
         IntegrityVerificationInput::AppleInitialAttestation {
             apple_initial_attestation,
@@ -293,10 +319,13 @@ async fn verify_android_or_apple_integrity(
 
         IntegrityVerificationInput::Developer { developer_token } => {
             report.check_type = Some(CheckType::Developer);
-            developer::verify(
-                &developer_token,
-                config.developer_inner_jwks_url.as_deref(),
-                &request_hash,
+            crate::latency::measure(
+                "developer_verify",
+                developer::verify(
+                    &developer_token,
+                    config.developer_inner_jwks_url.as_deref(),
+                    &request_hash,
+                ),
             )
             .await?
         }
@@ -340,7 +369,11 @@ async fn process_and_finalize_report(
 ) -> Result<TokenGenerationResponse, RequestError> {
     // Report result to Kinesis (best-effort analytics; never fail the request)
     if !kinesis_stream_arn.is_empty()
-        && let Err(e) = send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report).await
+        && let Err(e) = crate::latency::measure(
+            "kinesis_publish",
+            send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report),
+        )
+        .await
     {
         metrics::counter!("attestation_gateway.kinesis_put_failure").increment(1);
         tracing::warn!(error = ?e, "Failed to send Kinesis event");
@@ -389,24 +422,28 @@ async fn process_and_finalize_report(
         "Output token payload",
     );
 
-    let key = fetch_active_key(redis, &aws_config).await.map_err(|e| {
-        tracing::error!(error = ?e, "Error fetching active key");
+    let key = crate::latency::measure("signing_key_fetch", fetch_active_key(redis, &aws_config))
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "Error fetching active key");
+            RequestError {
+                code: ErrorCode::InternalServerError,
+                details: None,
+            }
+        })?;
+
+    let attestation_gateway_token = crate::latency::measure(
+        "token_sign",
+        kms_jws::generate_output_token(&aws_config, key.key_definition.arn, output_token_payload),
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = ?e, "Error generating output token");
         RequestError {
             code: ErrorCode::InternalServerError,
             details: None,
         }
     })?;
-
-    let attestation_gateway_token =
-        kms_jws::generate_output_token(&aws_config, key.key_definition.arn, output_token_payload)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = ?e, "Error generating output token");
-                RequestError {
-                    code: ErrorCode::InternalServerError,
-                    details: None,
-                }
-            })?;
 
     let response = TokenGenerationResponse {
         attestation_gateway_token,
@@ -444,7 +481,11 @@ async fn handle_client_error_if_applicable(
             Some("`client_error` provided in the request".to_string()),
         );
 
-        if let Err(e) = send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report).await
+        if let Err(e) = crate::latency::measure(
+            "kinesis_publish",
+            send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report),
+        )
+        .await
         {
             metrics::counter!("attestation_gateway.kinesis_put_failure").increment(1);
             tracing::warn!(error = ?e, "Failed to send `client_error` to Kinesis");

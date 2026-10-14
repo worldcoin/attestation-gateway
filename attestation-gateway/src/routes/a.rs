@@ -191,8 +191,9 @@ async fn validate_android_attestation_and_get_device_public_key(
         .ok_or_else(|| bad_request("Android attestation is required"))?;
     let request_headers = headers_to_map(headers);
 
-    let attestation_output = android_attestation
-        .verify(AndroidAttestationInput {
+    let attestation_output = crate::latency::measure(
+        "attestation_verify",
+        android_attestation.verify(AndroidAttestationInput {
             raw_cert_chain,
             nonce: &request.nonce,
             requested_exp: request.exp,
@@ -201,9 +202,10 @@ async fn validate_android_attestation_and_get_device_public_key(
             device_model: request.device_model.as_deref(),
             request_headers: &request_headers,
             token_details,
-        })
-        .await
-        .map_err(|e| map_android_attestation_error(&e, session_id))?;
+        }),
+    )
+    .await
+    .map_err(|e| map_android_attestation_error(&e, session_id))?;
 
     if let Some(os_patch_level_delta) = attestation_output.os_patch_level_delta {
         metrics::gauge!("attestation_gateway.android_os_patch_level_delta")
@@ -231,7 +233,12 @@ pub async fn handler(
 
     global_config.require_enabled_bundle(&request.bundle_identifier)?;
 
-    let token_details = nonce_db.consume_nonce(&request.nonce).await.map_err(|e| {
+    let token_details = crate::latency::measure(
+        "nonce_consume",
+        nonce_db.consume_nonce(&request.nonce),
+    )
+    .await
+    .map_err(|e| {
         if matches!(e, NonceDbError::NonceNotFound) {
             tracing::warn!(endpoint = "/a", session_id = %session_id, message = "Nonce not found");
             RequestError {
@@ -250,6 +257,10 @@ pub async fn handler(
 
     let challenge = format!("n={},av={}", request.nonce, request.app_version);
     let platform = infer_platform(&request)?;
+    crate::latency::set_platform(match platform {
+        Platform::Android => "android",
+        Platform::AppleIOS => "ios",
+    });
 
     let device_public_key = match platform {
         Platform::AppleIOS => {
@@ -322,13 +333,15 @@ fn validate_apple_attestation_and_get_device_public_key(
     // `/g` token flow (via `apple_accepted_app_ids`); this `/a` route is unchanged.
     // The precise failure stays server-side (mirrors the Android mapping above): the client
     // gets only a coarse code so rejection reasons don't aid attestation probing.
-    let initial_attestation = apple::decode_and_validate_initial_attestation(
-        apple_attestation,
-        challenge,
-        &[app_id],
-        allowed_aaguid_vec.as_slice(),
-        apple_root_ca_pem,
-    )
+    let initial_attestation = crate::latency::measure_sync("attestation_verify", || {
+        apple::decode_and_validate_initial_attestation(
+            apple_attestation,
+            challenge,
+            &[app_id],
+            allowed_aaguid_vec.as_slice(),
+            apple_root_ca_pem,
+        )
+    })
     .map_err(|e| {
         // Client-caused failures are marked `ClientException` inside the apple module; a bare
         // error is a server fault.
@@ -358,20 +371,26 @@ async fn generate_integrity_token(
 ) -> Result<String, RequestError> {
     let integrity_token_payload = integrity_token_payload.generate(issuer)?;
 
-    let kms_key = keys::fetch_active_key(redis, aws_config)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, "Error fetching active key");
-            RequestError {
-                code: ErrorCode::InternalServerError,
-                details: None,
-            }
-        })?;
+    let kms_key = crate::latency::measure(
+        "signing_key_fetch",
+        keys::fetch_active_key(redis, aws_config),
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = ?e, "Error fetching active key");
+        RequestError {
+            code: ErrorCode::InternalServerError,
+            details: None,
+        }
+    })?;
 
-    let integrity_token = kms_jws::generate_output_token(
-        aws_config,
-        kms_key.key_definition.arn,
-        integrity_token_payload,
+    let integrity_token = crate::latency::measure(
+        "token_sign",
+        kms_jws::generate_output_token(
+            aws_config,
+            kms_key.key_definition.arn,
+            integrity_token_payload,
+        ),
     )
     .await
     .map_err(|e| {
