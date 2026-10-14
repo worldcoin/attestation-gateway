@@ -2,7 +2,7 @@
 
 Protects app integrity through the Attestation Gateway.
 
-[Latency metrics and baseline collection](docs/latency-measurement.md)
+[Latency metric reference](docs/latency-measurement.md)
 
 ## 🧪 Testing
 

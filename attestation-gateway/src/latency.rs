@@ -53,13 +53,12 @@ impl Drop for Timer {
             ),
             metrics::Label::new("outcome", self.outcome),
         ];
-        let name = if let Some(operation) = self.operation {
-            labels.push(metrics::Label::new("operation", operation));
-            "operation.duration_seconds"
-        } else {
-            metrics::counter!("request.count", labels.clone()).increment(1);
-            "request.duration_seconds"
-        };
+        let name = self
+            .operation
+            .map_or("request.duration_seconds", |operation| {
+                labels.push(metrics::Label::new("operation", operation));
+                "operation.duration_seconds"
+            });
         // DogStatsD distributions aggregate across tasks; host-local percentiles cannot be averaged.
         labels.push(metrics::Label::new("histogram", "distribution"));
         metrics::histogram!(name, labels).record(self.started.elapsed().as_secs_f64());
@@ -201,7 +200,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), status);
-            let samples = receive(&socket, 3);
+            let samples = receive(&socket, 2);
             let total = sample(
                 &samples,
                 "request.duration_seconds",
@@ -266,7 +265,7 @@ mod tests {
             .layer(middleware::from_fn(requests));
         let response = app.oneshot(request("/g")).await.unwrap();
         assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
-        let samples = receive(&socket, 3);
+        let samples = receive(&socket, 2);
         sample(
             &samples,
             "request.duration_seconds",
@@ -298,7 +297,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        let samples = receive(&socket, 3);
+        let samples = receive(&socket, 2);
         sample(
             &samples,
             "request.duration_seconds",
@@ -349,7 +348,7 @@ mod tests {
         );
         assert_eq!(a.unwrap().status(), StatusCode::OK);
         assert_eq!(g.unwrap().status(), StatusCode::OK);
-        let samples = receive(&socket, 6);
+        let samples = receive(&socket, 4);
         for metric in ["request.duration_seconds", "operation.duration_seconds"] {
             sample(&samples, metric, &["route:/a", "platform:ios"]);
             sample(&samples, metric, &["route:/g", "platform:android"]);
@@ -387,16 +386,11 @@ mod tests {
             app.oneshot(request("/c")).await.unwrap().status(),
             StatusCode::UNSUPPORTED_MEDIA_TYPE
         );
-        let samples = receive(&socket, 2);
-        sample(
-            &samples,
-            "request.count",
-            &["route:/c", "outcome:client_error", "platform:unknown"],
-        );
+        let samples = receive(&socket, 1);
         sample(
             &samples,
             "request.duration_seconds",
-            &["route:/c", "outcome:client_error"],
+            &["route:/c", "outcome:client_error", "platform:unknown"],
         );
     }
 }
