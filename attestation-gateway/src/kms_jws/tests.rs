@@ -84,7 +84,7 @@ async fn test_sign_with_kms() {
 #[tokio::test]
 /// Integration test (requires docker-compose.test.yml to be running)
 async fn test_generate_output_token() {
-    let aws_config = get_aws_config().await;
+    let kms_client = get_kms_client().await;
 
     let output_token_payload = OutputTokenPayload {
         issuer: "attestation.worldcoin.org".to_string(),
@@ -102,13 +102,12 @@ async fn test_generate_output_token() {
     .unwrap();
 
     let jwt =
-        super::generate_output_token(&aws_config, TEST_KEY_ARN.to_string(), output_token_payload)
+        super::generate_output_token(&kms_client, TEST_KEY_ARN.to_string(), output_token_payload)
             .await
             .unwrap();
 
     // Verify and parse the JWT
 
-    let kms_client = aws_sdk_kms::Client::new(&aws_config);
     let public_key = kms_client
         .get_public_key()
         .key_id(TEST_KEY_ARN)
@@ -172,4 +171,78 @@ async fn test_generate_output_token() {
                 .collect::<josekit::Map<String, josekit::Value>>()
         ))
     );
+}
+
+async fn assert_shared_client_signing() {
+    let client = get_kms_client().await;
+    let public_key = client
+        .get_public_key()
+        .key_id(TEST_KEY_ARN)
+        .send()
+        .await
+        .unwrap();
+    let verifier = ES256
+        .verifier_from_der(public_key.public_key().unwrap())
+        .unwrap();
+
+    let missing_key =
+        "arn:aws:kms:eu-central-1:000000000000:key/00000000-0000-0000-0000-000000000000";
+    assert!(
+        generate_output_token(&client, missing_key.to_string(), JwtPayload::new())
+            .await
+            .is_err()
+    );
+
+    // Reuse the same client after an error and across concurrent batches so pooled
+    // connections must remain usable after each blocking signing task completes.
+    for batch in 0..2 {
+        let mut tasks = tokio::task::JoinSet::new();
+        for request in 0..8 {
+            let client = client.clone();
+            tasks.spawn(async move {
+                let subject = format!("{batch}-{request}");
+                let mut payload = JwtPayload::new();
+                payload.set_subject(&subject);
+                let token = generate_output_token(&client, TEST_KEY_ARN.to_string(), payload)
+                    .await
+                    .unwrap();
+                (subject, token)
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            let (subject, token) = result.unwrap();
+            let (payload, header) = jwt::decode_with_verifier(token, &verifier).unwrap();
+            assert_eq!(payload.subject(), Some(subject.as_str()));
+            assert_eq!(header.token_type(), Some("JWT"));
+            assert_eq!(header.algorithm(), Some("ES256"));
+            assert_eq!(
+                header.key_id(),
+                Some(
+                    KMSKeyDefinition::from_arn(TEST_KEY_ARN.to_string())
+                        .id
+                        .as_str()
+                )
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_shared_client_signing_current_thread() {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        assert_shared_client_signing(),
+    )
+    .await
+    .expect("shared-client signing must not deadlock a current-thread runtime");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_shared_client_signing_multi_thread() {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        assert_shared_client_signing(),
+    )
+    .await
+    .expect("shared-client signing must not deadlock a multi-thread runtime");
 }

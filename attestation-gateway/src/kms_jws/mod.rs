@@ -7,7 +7,7 @@ use josekit::{
     util::der::{DerReader, DerType},
 };
 use serde::{Deserialize, Serialize};
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 
 use crate::utils::SIGNING_CONFIG;
 
@@ -67,11 +67,13 @@ impl JwsSigner for EcdsaJwsSignerWithKms {
         (|| -> eyre::Result<Vec<u8>> {
             // NOTE: We skip hashing because KMS will hash the message
 
-            let rt = Runtime::new().unwrap();
-            let der_signature = rt.block_on(async {
-                // NOTE: KMS signing is async, so we need to block the current thread
-                sign_with_kms(&self.kms_client, &self.key.arn, message).await
-            })?;
+            // josekit's signer is synchronous. Call it from spawn_blocking so KMS I/O
+            // uses the server runtime without blocking an async worker.
+            let der_signature = Handle::current().block_on(sign_with_kms(
+                &self.kms_client,
+                &self.key.arn,
+                message,
+            ))?;
 
             // NOTE: Code below is kept as is from the original `josekit` implementation
 
@@ -135,18 +137,19 @@ async fn sign_with_kms(
 ///
 /// This function will return a `RequestError` if the JWS signature generation fails
 pub async fn generate_output_token(
-    aws_config: &aws_config::SdkConfig,
+    kms_client: &aws_sdk_kms::Client,
     key_arn: String,
     payload: JwtPayload,
 ) -> eyre::Result<String> {
     let mut header = JwsHeader::new();
     header.set_token_type("JWT");
 
-    let kms_client = aws_sdk_kms::Client::new(aws_config);
-
     let key = KMSKeyDefinition::from_arn(key_arn);
 
-    let signer = EcdsaJwsSignerWithKms { key, kms_client };
+    let signer = EcdsaJwsSignerWithKms {
+        key,
+        kms_client: kms_client.clone(),
+    };
 
     let jwt =
         tokio::task::spawn_blocking(move || jwt::encode_with_signer(&payload, &header, &signer))

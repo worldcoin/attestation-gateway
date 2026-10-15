@@ -13,16 +13,14 @@ use super::*;
 
 // NOTE: Generally all of these are integration tests (requires docker-compose.test.yml to be running)
 
-async fn get_aws_config() -> aws_config::SdkConfig {
-    // Required to load default AWS Config variables
+async fn get_kms_client() -> aws_sdk_kms::Client {
     dotenvy::from_filename(".env.example").unwrap();
-
-    let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-
-    aws_config
+    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest())
+        .await
         .into_builder()
         .endpoint_url("http://localhost:4566")
-        .build()
+        .build();
+    aws_sdk_kms::Client::new(&config)
 }
 
 async fn get_redis_client() -> redis::aio::ConnectionManager {
@@ -39,12 +37,10 @@ async fn get_redis_client() -> redis::aio::ConnectionManager {
 #[serial]
 async fn test_fetch_all_keys_valid_for_verifying() {
     let mut redis = get_redis_client().await;
-    let aws_config = get_aws_config().await;
+    let kms_client = get_kms_client().await;
 
     // create a valid key for signing
-    let signing_key = generate_new_key(&mut redis, &get_aws_config().await)
-        .await
-        .unwrap();
+    let signing_key = generate_new_key(&mut redis, &kms_client).await.unwrap();
 
     // create a key that is no longer valid for signing but is valid for verifying
     let verifying_key = SigningKey {
@@ -79,7 +75,7 @@ async fn test_fetch_all_keys_valid_for_verifying() {
         .await
         .unwrap();
 
-    let keys = fetch_all(&mut redis, &aws_config).await.unwrap();
+    let keys = fetch_all(&mut redis, &kms_client).await.unwrap();
     assert_eq!(keys.len(), 2); // both signing and verifying keys are returned
     assert_eq!(keys[0].key_definition.id, signing_key.key_definition.id);
     assert_eq!(keys[1].key_definition.id, verifying_key.key_definition.id);
@@ -89,7 +85,7 @@ async fn test_fetch_all_keys_valid_for_verifying() {
 #[serial]
 async fn test_fetch_already_existing_active_key() {
     let mut redis = get_redis_client().await;
-    let aws_config = get_aws_config().await;
+    let kms_client = get_kms_client().await;
 
     // Create a key in Redis
     let key = SigningKey {
@@ -109,12 +105,10 @@ async fn test_fetch_already_existing_active_key() {
         .await
         .unwrap();
 
-    let fetched_key = fetch_active_key(&mut redis, &get_aws_config().await)
-        .await
-        .unwrap();
+    let fetched_key = fetch_active_key(&mut redis, &kms_client).await.unwrap();
     assert_eq!(key.key_definition.id, fetched_key.key_definition.id);
 
-    let key_list = fetch_all(&mut redis, &aws_config).await.unwrap();
+    let key_list = fetch_all(&mut redis, &kms_client).await.unwrap();
     assert_eq!(key_list.len(), 1);
     assert_eq!(key_list[0].key_definition.id, key.key_definition.id);
 }
@@ -123,7 +117,7 @@ async fn test_fetch_already_existing_active_key() {
 #[serial]
 async fn test_fetch_active_key_creating_a_new_one() {
     let mut redis = get_redis_client().await;
-    let aws_config = get_aws_config().await;
+    let kms_client = get_kms_client().await;
 
     // Check there aren't any keys created
     let len = redis
@@ -132,7 +126,7 @@ async fn test_fetch_active_key_creating_a_new_one() {
         .unwrap();
     assert_eq!(len, 0);
 
-    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+    let key = fetch_active_key(&mut redis, &kms_client).await.unwrap();
 
     // Check the key was created in Redis
     let len = redis
@@ -146,7 +140,6 @@ async fn test_fetch_active_key_creating_a_new_one() {
     assert!(key.created_at - now < 3);
 
     // Check the key was created in AWS
-    let kms_client = aws_sdk_kms::Client::new(&aws_config);
     let key_metadata = kms_client
         .describe_key()
         .key_id(key.key_definition.arn.clone())
@@ -164,7 +157,7 @@ async fn test_fetch_active_key_creating_a_new_one() {
     assert_eq!(key_metadata.key_spec.unwrap(), SIGNING_CONFIG.key_spec);
 
     // ensure the same key is returned again
-    let key_second_time = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+    let key_second_time = fetch_active_key(&mut redis, &kms_client).await.unwrap();
     assert_eq!(key.key_definition.id, key_second_time.key_definition.id);
 }
 
@@ -172,7 +165,7 @@ async fn test_fetch_active_key_creating_a_new_one() {
 #[serial]
 async fn test_fetch_active_key_expired_key_creates_a_new_one() {
     let mut redis = get_redis_client().await;
-    let aws_config = get_aws_config().await;
+    let kms_client = get_kms_client().await;
 
     // Create an expired key
     let expired_key = SigningKey {
@@ -197,7 +190,7 @@ async fn test_fetch_active_key_expired_key_creates_a_new_one() {
         .await
         .unwrap();
 
-    let new_key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+    let new_key = fetch_active_key(&mut redis, &kms_client).await.unwrap();
 
     assert_ne!(new_key.key_definition.id, expired_key.key_definition.id);
 
@@ -213,7 +206,6 @@ async fn test_fetch_active_key_expired_key_creates_a_new_one() {
     assert!(new_key.created_at - now < 3);
 
     // Check the key was created in AWS
-    let kms_client = aws_sdk_kms::Client::new(&aws_config);
     let key_metadata = kms_client
         .describe_key()
         .key_id(new_key.key_definition.arn.clone())
@@ -240,18 +232,18 @@ async fn test_fetch_active_key_with_race_condition() {
     let output_mutex = Arc::new(Mutex::new(vec![]));
 
     let redis_client = get_redis_client().await;
-    let aws_config = get_aws_config().await;
+    let kms_client = get_kms_client().await;
 
     for i in 0..num_calls {
         let output_mutex = Arc::clone(&output_mutex);
 
         let mut redis = redis_client.clone();
-        let aws_config = aws_config.clone();
+        let kms_client = kms_client.clone();
         let span = tracing::span!(tracing::Level::INFO, "fetch_active_key", task_id = i);
 
         let handle = task::spawn(
             async move {
-                let output = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+                let output = fetch_active_key(&mut redis, &kms_client).await.unwrap();
                 let mut outputs = output_mutex.lock().unwrap();
                 outputs.push(output);
             }
@@ -320,12 +312,11 @@ hnX+pFZq78Se67+BOJDjy1rpIDxDAJgXMy7QbKbztaUGOIrSiRCeMc8lhg==
 #[serial]
 async fn test_generate_key_sign_and_verify_with_jwk() {
     let mut redis = get_redis_client().await;
-    let aws_config = get_aws_config().await;
+    let kms_client = get_kms_client().await;
 
-    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+    let key = fetch_active_key(&mut redis, &kms_client).await.unwrap();
 
     // Generate a JWS token
-    let kms_client = aws_sdk_kms::Client::new(&aws_config);
     let signer = EcdsaJwsSignerWithKms {
         key: key.key_definition,
         kms_client,

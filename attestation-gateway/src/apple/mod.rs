@@ -36,7 +36,7 @@ pub async fn verify_initial_attestation(
     apple_initial_attestation: String,
     bundle_identifier: BundleIdentifier,
     request_hash: String,
-    aws_config: &aws_config::SdkConfig,
+    dynamodb_client: &aws_sdk_dynamodb::Client,
     apple_keys_dynamo_table_name: &String,
     apple_root_ca_pem: &[u8],
 ) -> eyre::Result<VerificationOutput> {
@@ -58,7 +58,7 @@ pub async fn verify_initial_attestation(
     crate::latency::measure(
         "apple_key_register",
         dynamo::insert_apple_public_key(
-            aws_config,
+            dynamodb_client,
             apple_keys_dynamo_table_name,
             bundle_identifier,
             attestation_result.key_id,
@@ -87,14 +87,14 @@ pub async fn verify(
     apple_public_key: String,
     bundle_identifier: &BundleIdentifier,
     request_hash: &str,
-    aws_config: &aws_config::SdkConfig,
+    dynamodb_client: &aws_sdk_dynamodb::Client,
     apple_keys_dynamo_table_name: &String,
 ) -> eyre::Result<VerificationOutput> {
     // Fetch public key and counter from DB
     let key = crate::latency::measure(
         "apple_key_read",
         fetch_apple_public_key(
-            aws_config,
+            dynamodb_client,
             apple_keys_dynamo_table_name,
             apple_public_key.clone(),
         ),
@@ -127,7 +127,7 @@ pub async fn verify(
     crate::latency::measure(
         "apple_counter_update",
         update_apple_public_key_counter_plus(
-            aws_config,
+            dynamodb_client,
             apple_keys_dynamo_table_name,
             apple_public_key,
             counter,

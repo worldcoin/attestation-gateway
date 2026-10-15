@@ -6,6 +6,7 @@ use std::{
 
 use attestation_gateway::{
     apple,
+    aws_clients::AwsClients,
     keys::fetch_active_key,
     utils::{BundleIdentifier, DataReport, TokenGenerationRequest},
 };
@@ -43,7 +44,7 @@ static TEST_REQUEST_HASH: &str = "02072cdf5e347d876a89949e6c11febb55716e3e7026e7
 
 // SECTION --- setup & config ---
 
-async fn get_aws_config_extension() -> Extension<aws_config::SdkConfig> {
+async fn get_aws_clients_extension() -> Extension<AwsClients> {
     // Required to load default AWS Config variables
     dotenvy::from_filename(".env.example").unwrap();
 
@@ -54,14 +55,13 @@ async fn get_aws_config_extension() -> Extension<aws_config::SdkConfig> {
         .endpoint_url("http://localhost:4566")
         .build();
 
-    reset_apple_keys_table(&aws_config).await;
+    let clients = AwsClients::new(&aws_config);
+    reset_apple_keys_table(&clients.dynamodb).await;
 
-    Extension(aws_config)
+    Extension(clients)
 }
 
-async fn reset_apple_keys_table(aws_config: &aws_config::SdkConfig) {
-    let client = aws_sdk_dynamodb::Client::new(aws_config);
-
+async fn reset_apple_keys_table(client: &aws_sdk_dynamodb::Client) {
     // NOTE: We opt for manual deletion of specific records to avoid an additional table scan
     let result = client
         .delete_item()
@@ -184,7 +184,7 @@ async fn get_api_router() -> aide::axum::ApiRouter {
     let redis_ext = get_redis_extension().await;
     let global_config_ext = get_global_config_extension();
     attestation_gateway::routes::handler()
-        .layer(get_aws_config_extension().await)
+        .layer(get_aws_clients_extension().await)
         .layer(global_config_ext.clone())
         .layer(extension_android_attestation(&redis_ext.0).await)
         .layer(extension_audience_authorizer(
@@ -371,7 +371,7 @@ async fn test_challenge_unauthorized_audience_does_not_create_nonce() {
 async fn test_android_e2e_success() {
     let api_router = get_api_router().await;
     let mut redis = get_redis_extension().await.0;
-    let aws_config = get_aws_config_extension().await.0;
+    let aws_clients = get_aws_clients_extension().await.0;
 
     let token_generation_request = TokenGenerationRequest {
         integrity_token: Some(helper_generate_valid_token()),
@@ -418,7 +418,9 @@ async fn test_android_e2e_success() {
 
     let kid = headers.claim("kid").unwrap().as_str().unwrap();
 
-    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+    let key = fetch_active_key(&mut redis, &aws_clients.kms)
+        .await
+        .unwrap();
 
     // active key should match the key used to sign the token
     assert_eq!(key.key_definition.id, kid);
@@ -779,7 +781,7 @@ async fn test_server_error_is_properly_logged() {
         let redis_ext = get_redis_extension().await;
         let global_config_ext = get_local_config_extension();
         attestation_gateway::routes::handler()
-            .layer(get_aws_config_extension().await)
+            .layer(get_aws_clients_extension().await)
             .layer(global_config_ext.clone())
             .layer(extension_android_attestation(&redis_ext.0).await)
             .layer(extension_audience_authorizer(
@@ -854,7 +856,7 @@ async fn test_apple_initial_attestation_e2e_success() {
     let redis_ext = get_redis_extension().await;
     let global_config_ext = get_global_config_extension_with_pem(test_data.root_ca_pem);
     let api_router = attestation_gateway::routes::handler()
-        .layer(get_aws_config_extension().await)
+        .layer(get_aws_clients_extension().await)
         .layer(global_config_ext.clone())
         .layer(extension_android_attestation(&redis_ext.0).await)
         .layer(extension_audience_authorizer(
@@ -865,7 +867,7 @@ async fn test_apple_initial_attestation_e2e_success() {
         .layer(redis_ext)
         .layer(get_kinesis_extension().await);
 
-    let aws_config = get_aws_config_extension().await;
+    let aws_clients = get_aws_clients_extension().await;
     let mut redis = get_redis_extension().await.0;
 
     let token_generation_request = TokenGenerationRequest {
@@ -901,7 +903,7 @@ async fn test_apple_initial_attestation_e2e_success() {
     let token = response["attestation_gateway_token"].as_str().unwrap();
 
     // Verify the key was saved to Dynamo
-    let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
+    let client = aws_clients.dynamodb.clone();
     let get_item_result = client
         .get_item()
         .table_name(APPLE_KEYS_DYNAMO_TABLE_NAME.to_string())
@@ -938,7 +940,9 @@ async fn test_apple_initial_attestation_e2e_success() {
 
     let kid = headers.claim("kid").unwrap().as_str().unwrap();
 
-    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+    let key = fetch_active_key(&mut redis, &aws_clients.kms)
+        .await
+        .unwrap();
 
     // active key should match the key used to sign the token
     assert_eq!(key.key_definition.id, kid);
@@ -1038,12 +1042,12 @@ async fn test_apple_token_generation_with_invalid_attributes_for_initial_attesta
 async fn test_apple_assertion_e2e_success() {
     let api_router = get_api_router().await;
 
-    let aws_config = get_aws_config_extension().await;
+    let aws_clients = get_aws_clients_extension().await;
     let mut redis = get_redis_extension().await.0;
 
     // Insert key into Dynamo first
     apple::dynamo::insert_apple_public_key(
-        &aws_config.0,
+        &aws_clients.dynamodb,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
@@ -1100,7 +1104,9 @@ async fn test_apple_assertion_e2e_success() {
 
     let kid = headers.claim("kid").unwrap().as_str().unwrap();
 
-    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+    let key = fetch_active_key(&mut redis, &aws_clients.kms)
+        .await
+        .unwrap();
 
     // active key should match the key used to sign the token
     assert_eq!(key.key_definition.id, kid);
@@ -1117,7 +1123,7 @@ async fn test_apple_assertion_e2e_success() {
     // Verify the key counter was updated in Dynamo
 
     let key = apple::dynamo::fetch_apple_public_key(
-        &aws_config.0,
+        &aws_clients.dynamodb,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         TEST_ATTESTATION_KEY_ID.to_string(),
     )
@@ -1132,11 +1138,11 @@ async fn test_apple_assertion_e2e_success() {
 async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates_a_client_error() {
     let api_router = get_api_router().await;
 
-    let aws_config = get_aws_config_extension().await;
+    let aws_clients = get_aws_clients_extension().await;
 
     // Insert key into Dynamo first
     apple::dynamo::insert_apple_public_key(
-        &aws_config.0,
+        &aws_clients.dynamodb,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
@@ -1195,11 +1201,11 @@ async fn test_apple_token_generation_with_an_invalid_base_64_assertion_generates
 async fn test_apple_token_generation_with_an_invalid_assertion_generates_a_client_error() {
     let api_router = get_api_router().await;
 
-    let aws_config = get_aws_config_extension().await;
+    let aws_clients = get_aws_clients_extension().await;
 
     // Insert key into Dynamo first
     apple::dynamo::insert_apple_public_key(
-        &aws_config.0,
+        &aws_clients.dynamodb,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
@@ -1353,11 +1359,11 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
     let invalid_assertion = "omlzaWduYXR1cmVYRzBFAiAzg4lX/q4SMY/HZLegpV+1I5eUE1fRldlC4yloghLWsQIhAMSlrYPwou6WJ0JsiVCE00G2+ZCBphnyOO3imjI68yCccWF1dGhlbnRpY2F0b3JEYXRhWEt0aGlzX2lzX25vdF9hX3ZhbGlkX2F1dGhlbnRpY2F0b3JfZGF0YV9idXRfdmVyaWZpY2F0aW9uX3dpbGxfbm90X3JlYWNoX2hlcmU";
     let api_router = get_api_router().await;
 
-    let aws_config = get_aws_config_extension().await;
+    let aws_clients = get_aws_clients_extension().await;
 
     // Insert key into Dynamo first
     apple::dynamo::insert_apple_public_key(
-        &aws_config.0,
+        &aws_clients.dynamodb,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
@@ -1415,11 +1421,11 @@ async fn test_apple_token_generation_assertion_with_an_invalidly_signed_assertio
 async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identifier_pair() {
     let api_router = get_api_router().await;
 
-    let aws_config = get_aws_config_extension().await;
+    let aws_clients = get_aws_clients_extension().await;
 
     // Insert key into Dynamo first
     apple::dynamo::insert_apple_public_key(
-        &aws_config.0,
+        &aws_clients.dynamodb,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::OrgWorldcoinInsight, // <-- we also change this to test explicitly the `rp_id` check in the assertion
         TEST_ATTESTATION_KEY_ID.to_string(),
@@ -1478,12 +1484,12 @@ async fn test_apple_token_generation_assertion_with_an_invalid_key_bundle_identi
 async fn test_apple_token_generation_with_invalid_counter() {
     let api_router = get_api_router().await;
 
-    let aws_config = get_aws_config_extension().await;
-    let client = aws_sdk_dynamodb::Client::new(&aws_config.0);
+    let aws_clients = get_aws_clients_extension().await;
+    let client = aws_clients.dynamodb.clone();
 
     // Insert key into Dynamo first
     apple::dynamo::insert_apple_public_key(
-        &aws_config.0,
+        &aws_clients.dynamodb,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
@@ -1622,13 +1628,13 @@ async fn test_apple_counter_race_condition() {
 
     let api_router_base = get_api_router().await;
 
-    let aws_config = get_aws_config_extension().await;
+    let aws_clients = get_aws_clients_extension().await;
 
     let pk = base64::engine::general_purpose::STANDARD.encode(sk.public_key_to_der().unwrap());
 
     // Insert key into Dynamo first
     apple::dynamo::insert_apple_public_key(
-        &aws_config.0,
+        &aws_clients.dynamodb,
         &APPLE_KEYS_DYNAMO_TABLE_NAME.to_string(),
         BundleIdentifier::OrgWorldcoinInsightStaging,
         TEST_ATTESTATION_KEY_ID.to_string(),
@@ -1860,7 +1866,7 @@ async fn test_developer_token_generation_e2e_success() {
     } = initialize_developer_test_environment().await;
 
     let mut redis = get_redis_extension().await.0;
-    let aws_config = get_aws_config_extension().await.0;
+    let aws_clients = get_aws_clients_extension().await.0;
     let api_router = get_api_router().await;
 
     let request_hash = String::from("i_am_a_sample_request_hash");
@@ -1929,7 +1935,9 @@ async fn test_developer_token_generation_e2e_success() {
 
     let kid = headers.claim("kid").unwrap().as_str().unwrap();
 
-    let key = fetch_active_key(&mut redis, &aws_config).await.unwrap();
+    let key = fetch_active_key(&mut redis, &aws_clients.kms)
+        .await
+        .unwrap();
 
     // active key should match the key used to sign the token
     assert_eq!(key.key_definition.id, kid);

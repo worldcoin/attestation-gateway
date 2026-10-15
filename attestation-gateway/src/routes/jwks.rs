@@ -1,3 +1,4 @@
+use crate::aws_clients::AwsClients;
 use axum::{Extension, Json};
 use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
@@ -15,10 +16,10 @@ pub struct KeysOutput {
 }
 
 pub async fn handler(
-    Extension(aws_config): Extension<aws_config::SdkConfig>,
+    Extension(aws_clients): Extension<AwsClients>,
     Extension(mut redis): Extension<ConnectionManager>,
 ) -> Result<Json<KeysOutput>, RequestError> {
-    let signing_keys = fetch_all(&mut redis, &aws_config).await.map_err(|e| {
+    let signing_keys = fetch_all(&mut redis, &aws_clients.kms).await.map_err(|e| {
         tracing::error!(error = ?e, "error fetching signing keys.");
         RequestError {
             code: ErrorCode::InternalServerError,

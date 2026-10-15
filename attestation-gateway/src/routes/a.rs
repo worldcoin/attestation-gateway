@@ -1,4 +1,4 @@
-use aws_config::SdkConfig;
+use crate::aws_clients::AwsClients;
 
 use axum::{Extension, Json, http::HeaderMap};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
@@ -222,7 +222,7 @@ pub async fn handler(
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(mut nonce_db): Extension<NonceDb>,
     Extension(mut android_attestation): Extension<AndroidAttestationService>,
-    Extension(aws_config): Extension<SdkConfig>,
+    Extension(aws_clients): Extension<AwsClients>,
     headers: HeaderMap,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
@@ -299,7 +299,7 @@ pub async fn handler(
     };
     let integrity_token = generate_integrity_token(
         &mut redis,
-        &aws_config,
+        &aws_clients.kms,
         &global_config.jwt_issuer,
         IntegrityTokenPayload {
             v: "1".to_string(),
@@ -365,7 +365,7 @@ fn validate_apple_attestation_and_get_device_public_key(
 
 async fn generate_integrity_token(
     redis: &mut ConnectionManager,
-    aws_config: &SdkConfig,
+    kms_client: &aws_sdk_kms::Client,
     issuer: &str,
     integrity_token_payload: IntegrityTokenPayload,
 ) -> Result<String, RequestError> {
@@ -373,7 +373,7 @@ async fn generate_integrity_token(
 
     let kms_key = crate::latency::measure(
         "signing_key_fetch",
-        keys::fetch_active_key(redis, aws_config),
+        keys::fetch_active_key(redis, kms_client),
     )
     .await
     .map_err(|e| {
@@ -387,7 +387,7 @@ async fn generate_integrity_token(
     let integrity_token = crate::latency::measure(
         "token_sign",
         kms_jws::generate_output_token(
-            aws_config,
+            kms_client,
             kms_key.key_definition.arn,
             integrity_token_payload,
         ),

@@ -8,15 +8,14 @@ use crate::utils::{BundleIdentifier, ClientException, ErrorCode};
 /// Will return a `ClientException` if the `key_id` is already registered in the DB.
 /// Returns an `aws_sdk_dynamodb::Error` if the request fails.
 pub async fn insert_apple_public_key(
-    aws_config: &aws_config::SdkConfig,
+    dynamodb_client: &aws_sdk_dynamodb::Client,
     apple_keys_dynamo_table_name: &String,
     bundle_identifier: BundleIdentifier,
     key_id: String,
     public_key: String,
     receipt: String,
 ) -> eyre::Result<()> {
-    let client = aws_sdk_dynamodb::Client::new(aws_config);
-    let response = client
+    let response = dynamodb_client
         .put_item()
         .table_name(apple_keys_dynamo_table_name)
         .item("key_id", AttributeValue::S(format!("key#{key_id}")))
@@ -116,12 +115,11 @@ impl ApplePublicKeyRecordOutput {
 /// Will return a `ClientException` if the `key_id` is not found in the DB.
 /// Returns an `aws_sdk_dynamodb::Error` if the request fails.
 pub async fn fetch_apple_public_key(
-    aws_config: &aws_config::SdkConfig,
+    dynamodb_client: &aws_sdk_dynamodb::Client,
     apple_keys_dynamo_table_name: &String,
     key_id: String,
 ) -> eyre::Result<ApplePublicKeyRecordOutput> {
-    let client = aws_sdk_dynamodb::Client::new(aws_config);
-    let response = client
+    let response = dynamodb_client
         .get_item()
         .table_name(apple_keys_dynamo_table_name)
         .key("key_id", AttributeValue::S(format!("key#{key_id}")))
@@ -137,14 +135,12 @@ pub async fn fetch_apple_public_key(
 /// # Errors
 /// Will return an `aws_sdk_dynamodb::Error` if the request fails.
 pub async fn update_apple_public_key_counter_plus(
-    aws_config: &aws_config::SdkConfig,
+    dynamodb_client: &aws_sdk_dynamodb::Client,
     apple_keys_dynamo_table_name: &String,
     key_id: String,
     new_counter: u32,
 ) -> eyre::Result<()> {
-    let client = aws_sdk_dynamodb::Client::new(aws_config);
-
-    let request = client
+    let request = dynamodb_client
         .update_item()
         .table_name(apple_keys_dynamo_table_name)
         .key("key_id", AttributeValue::S(format!("key#{key_id}")))
