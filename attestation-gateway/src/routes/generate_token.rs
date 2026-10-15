@@ -1,3 +1,4 @@
+use crate::aws_clients::AwsClients;
 use aws_sdk_kinesis::Client as KinesisClient;
 use axum::{
     Extension,
@@ -74,7 +75,7 @@ fn infer_platform(request: &TokenGenerationRequest) -> Result<Platform, RequestE
 // NOTE: Integration tests for route handlers are in the `/tests` module
 
 pub async fn handler(
-    Extension(aws_config): Extension<aws_config::SdkConfig>,
+    Extension(aws_clients): Extension<AwsClients>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
     Extension(kinesis_client): Extension<KinesisClient>,
@@ -157,7 +158,7 @@ pub async fn handler(
         &request.aud,
         request.client_error,
         global_config.clone(),
-        &aws_config,
+        &aws_clients.dynamodb,
     )
     .await
     .map_err(|e| {
@@ -203,7 +204,7 @@ pub async fn handler(
         request_hash.clone(),
         aud,
         &mut redis,
-        aws_config,
+        &aws_clients.kms,
         &kinesis_client,
         global_config.kinesis_stream_arn.as_deref().unwrap_or(""),
     )
@@ -252,7 +253,7 @@ async fn verify_android_or_apple_integrity(
     aud: &str,
     client_error: Option<String>,
     config: GlobalConfig,
-    aws_config: &aws_config::SdkConfig,
+    dynamodb_client: &aws_sdk_dynamodb::Client,
 ) -> eyre::Result<DataReport> {
     // Prepare output report for logging (analytics & debugging)
     // Only integrity failures and successes are logged to Kinesis. Client and server errors are logged regularly to Datadog.
@@ -294,7 +295,7 @@ async fn verify_android_or_apple_integrity(
                 apple_initial_attestation,
                 bundle_identifier,
                 request_hash,
-                aws_config,
+                dynamodb_client,
                 &config.apple_keys_dynamo_table_name,
                 &config.apple_root_ca_pem,
             )
@@ -311,7 +312,7 @@ async fn verify_android_or_apple_integrity(
                 apple_public_key,
                 &bundle_identifier,
                 &request_hash,
-                aws_config,
+                dynamodb_client,
                 &config.apple_keys_dynamo_table_name,
             )
             .await?
@@ -363,7 +364,7 @@ async fn process_and_finalize_report(
     request_hash: String,
     aud: String,
     redis: &mut ConnectionManager,
-    aws_config: aws_config::SdkConfig,
+    kms_client: &aws_sdk_kms::Client,
     kinesis_client: &KinesisClient,
     kinesis_stream_arn: &str,
 ) -> Result<TokenGenerationResponse, RequestError> {
@@ -422,7 +423,7 @@ async fn process_and_finalize_report(
         "Output token payload",
     );
 
-    let key = crate::latency::measure("signing_key_fetch", fetch_active_key(redis, &aws_config))
+    let key = crate::latency::measure("signing_key_fetch", fetch_active_key(redis, kms_client))
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, "Error fetching active key");
@@ -434,7 +435,7 @@ async fn process_and_finalize_report(
 
     let attestation_gateway_token = crate::latency::measure(
         "token_sign",
-        kms_jws::generate_output_token(&aws_config, key.key_definition.arn, output_token_payload),
+        kms_jws::generate_output_token(kms_client, key.key_definition.arn, output_token_payload),
     )
     .await
     .map_err(|e| {
