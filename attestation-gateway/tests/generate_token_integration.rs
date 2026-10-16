@@ -7,6 +7,7 @@ use std::{
 use attestation_gateway::{
     apple,
     keys::fetch_active_key,
+    kinesis::KinesisPublisher,
     utils::{BundleIdentifier, DataReport, TokenGenerationRequest},
 };
 use aws_sdk_dynamodb::types::AttributeValue;
@@ -170,14 +171,20 @@ async fn get_redis_extension() -> Extension<redis::aio::ConnectionManager> {
     Extension(redis::aio::ConnectionManager::new(client).await.unwrap())
 }
 
-async fn get_kinesis_extension() -> Extension<aws_sdk_kinesis::Client> {
+async fn get_kinesis_client() -> aws_sdk_kinesis::Client {
     let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let aws_config = aws_config
         .into_builder()
         .endpoint_url("http://localhost:4566")
         .build();
-    let kinesis_client = aws_sdk_kinesis::Client::new(&aws_config);
-    Extension(kinesis_client)
+    aws_sdk_kinesis::Client::new(&aws_config)
+}
+
+async fn get_kinesis_extension(stream_arn: Option<String>) -> Extension<KinesisPublisher> {
+    Extension(KinesisPublisher::start(
+        get_kinesis_client().await,
+        stream_arn,
+    ))
 }
 
 async fn get_api_router() -> aide::axum::ApiRouter {
@@ -193,7 +200,7 @@ async fn get_api_router() -> aide::axum::ApiRouter {
         ))
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
-        .layer(get_kinesis_extension().await)
+        .layer(get_kinesis_extension(global_config_ext.kinesis_stream_arn.clone()).await)
 }
 
 async fn get_challenge_router() -> (aide::axum::ApiRouter, redis::aio::ConnectionManager) {
@@ -788,7 +795,7 @@ async fn test_server_error_is_properly_logged() {
             ))
             .layer(extension_nonce_db(&redis_ext.0))
             .layer(redis_ext)
-            .layer(get_kinesis_extension().await)
+            .layer(get_kinesis_extension(global_config_ext.kinesis_stream_arn.clone()).await)
     }
 
     let api_router = get_local_api_router().await;
@@ -863,7 +870,7 @@ async fn test_apple_initial_attestation_e2e_success() {
         ))
         .layer(extension_nonce_db(&redis_ext.0))
         .layer(redis_ext)
-        .layer(get_kinesis_extension().await);
+        .layer(get_kinesis_extension(global_config_ext.kinesis_stream_arn.clone()).await);
 
     let aws_config = get_aws_config_extension().await;
     let mut redis = get_redis_extension().await.0;
@@ -2087,7 +2094,7 @@ async fn test_developer_token_generation_e2e_missing_token() {
 async fn test_client_error_gets_logged_to_kinesis() {
     let api_router = get_api_router().await;
 
-    let kinesis_client = get_kinesis_extension().await;
+    let kinesis_client = get_kinesis_client().await;
     let kinesis_stream_arn =
         "arn:aws:kinesis:us-west-1:000000000000:stream/attestation-gateway-data-reports";
 
@@ -2156,15 +2163,30 @@ async fn test_client_error_gets_logged_to_kinesis() {
         })
     );
 
-    let response = kinesis_client
-        .get_records()
-        .shard_iterator(shard_iterator)
-        .stream_arn(kinesis_stream_arn)
-        .send()
-        .await
-        .unwrap();
+    let record = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut iterator = shard_iterator;
+        loop {
+            let response = kinesis_client
+                .get_records()
+                .shard_iterator(iterator)
+                .stream_arn(kinesis_stream_arn)
+                .send()
+                .await
+                .unwrap();
+            if let Some(record) = response.records.into_iter().find(|record| {
+                serde_json::from_slice::<DataReport>(record.data.as_ref()).is_ok_and(|report| {
+                    report.client_error.as_deref() == Some("play_integrity_api_is_down")
+                })
+            }) {
+                break record;
+            }
+            iterator = response.next_shard_iterator.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("client-error analytics should be delivered in the background");
 
-    let record = response.records[0].clone();
     let partition_key_re = Regex::new(r"^[0-9a-f]{32}$").unwrap();
     assert!(
         partition_key_re.is_match(&record.partition_key),
