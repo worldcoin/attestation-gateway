@@ -24,7 +24,7 @@ use crate::{
     },
 };
 
-fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
+pub(super) fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::<String, String>::new();
     for (name, value) in headers.iter() {
         if let Ok(v) = value.to_str() {
@@ -137,7 +137,11 @@ impl IntegrityTokenPayload {
     }
 }
 
-fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) -> RequestError {
+pub(super) fn map_android_attestation_error(
+    e: &AndroidAttestationError,
+    endpoint: &'static str,
+    session_id: &str,
+) -> RequestError {
     metrics::counter!("attestation_gateway.android_error", "reason" => e.reason_tag()).increment(1);
 
     let code = e.to_error_code();
@@ -146,7 +150,7 @@ fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) 
     } else {
         // The precise verify failure stays server-side so rejection reasons don't aid
         // attestation probing.
-        tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
+        tracing::warn!(endpoint, session_id = %session_id, message = %e);
     }
 
     RequestError {
@@ -205,7 +209,7 @@ async fn validate_android_attestation_and_get_device_public_key(
         }),
     )
     .await
-    .map_err(|e| map_android_attestation_error(&e, session_id))?;
+    .map_err(|e| map_android_attestation_error(&e, "/a", session_id))?;
 
     if let Some(os_patch_level_delta) = attestation_output.os_patch_level_delta {
         metrics::gauge!("attestation_gateway.android_os_patch_level_delta")
@@ -269,6 +273,7 @@ pub async fn handler(
                 .ok_or_else(|| bad_request("Apple attestation is required"))?;
 
             validate_apple_attestation_and_get_device_public_key(
+                "/a",
                 &global_config.apple_root_ca_pem,
                 &challenge,
                 &request.bundle_identifier,
@@ -316,7 +321,8 @@ pub async fn handler(
     Ok(Json(Response { integrity_token }))
 }
 
-fn validate_apple_attestation_and_get_device_public_key(
+pub(super) fn validate_apple_attestation_and_get_device_public_key(
+    endpoint: &'static str,
     apple_root_ca_pem: &[u8],
     challenge: &str,
     bundle_identifier: &BundleIdentifier,
@@ -346,7 +352,7 @@ fn validate_apple_attestation_and_get_device_public_key(
         // Client-caused failures are marked `ClientException` inside the apple module; a bare
         // error is a server fault.
         let code = if let Some(client_error) = e.downcast_ref::<ClientException>() {
-            tracing::warn!(endpoint = "/a", error_code = %client_error.code, message = "Apple attestation rejected");
+            tracing::warn!(endpoint, error_code = %client_error.code, message = "Apple attestation rejected");
             client_error.code
         } else {
             tracing::error!(error = ?e, "Error validating Apple attestation");

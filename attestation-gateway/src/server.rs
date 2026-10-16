@@ -4,6 +4,7 @@ use crate::{
     android::{AndroidAttestationService, AndroidRiskEvaluator},
     audience_authorizer::AudienceAuthorizer,
     nonces::{NonceDb, TokenDetailsFactory},
+    takt_issuer::TaktIssuer,
 };
 use aide::openapi::{Info, OpenApi};
 use aws_sdk_kinesis::Client as KinesisClient;
@@ -72,6 +73,7 @@ pub async fn start(
         .layer(Extension(openapi))
         .layer(Extension(aws_config))
         .layer(Extension(global_config))
+        .layer(Extension(TaktIssuer::from_env().map(Arc::new)))
         .layer(CompressionLayer::new())
         .layer(Extension(kinesis_client))
         .layer(Extension(android_attestation_service))
