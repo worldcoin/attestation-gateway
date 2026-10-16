@@ -1,6 +1,5 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
-pub mod aat_issuer;
 pub mod android;
 pub mod apple;
 pub mod audience_authorizer;
@@ -13,6 +12,7 @@ mod latency;
 pub mod nonces;
 pub mod routes;
 pub mod server;
+pub mod takt_issuer;
 pub mod utils;
 
 pub use bootstrap::{start_from_env, start_from_env_with_android_risk_evaluator};

@@ -95,6 +95,8 @@ pub enum AndroidAttestationError {
 pub struct AndroidAttestationOutput {
     pub device_public_key: Vec<u8>,
     pub os_patch_level_delta: Option<u32>,
+    /// The app's `versionCode`, attested by the Keystore in `attestationApplicationId`.
+    pub version_code: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -334,9 +336,22 @@ impl AndroidAttestationService {
                     now - os_patch_level
                 });
 
+        let package_name = bundle_identifier.to_string();
+        let version_code = cert_chain
+            .session_cert()
+            .key_description()
+            .attestation_application_id()
+            .and_then(|id| {
+                id.package_infos
+                    .iter()
+                    .find(|package| package.package_name == package_name)
+                    .map(|package| package.version)
+            });
+
         Ok(AndroidAttestationOutput {
             device_public_key: cert_chain.session_cert().public_key(),
             os_patch_level_delta,
+            version_code,
         })
     }
 }
