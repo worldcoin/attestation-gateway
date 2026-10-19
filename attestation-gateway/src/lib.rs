@@ -3,6 +3,7 @@
 pub mod android;
 pub mod apple;
 pub mod audience_authorizer;
+pub mod aws_clients;
 mod bootstrap;
 pub mod developer;
 pub mod keys;

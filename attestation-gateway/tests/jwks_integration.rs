@@ -1,4 +1,6 @@
-use attestation_gateway::{keys::SigningKey, kms_jws::KMSKeyDefinition, utils::SIGNING_CONFIG};
+use attestation_gateway::{
+    aws_clients::AwsClients, keys::SigningKey, kms_jws::KMSKeyDefinition, utils::SIGNING_CONFIG,
+};
 use axum::{
     Extension,
     body::Body,
@@ -12,7 +14,7 @@ use serde_json::{Map, Value};
 use serial_test::serial;
 use tower::ServiceExt; // for `response.collect`
 
-async fn get_aws_config_extension() -> Extension<aws_config::SdkConfig> {
+async fn get_aws_clients_extension() -> Extension<AwsClients> {
     // Required to load default AWS Config variables
     dotenvy::from_filename(".env.example").unwrap();
 
@@ -23,7 +25,7 @@ async fn get_aws_config_extension() -> Extension<aws_config::SdkConfig> {
         .endpoint_url("http://localhost:4566")
         .build();
 
-    Extension(aws_config)
+    Extension(AwsClients::new(&aws_config))
 }
 
 async fn get_redis_extension() -> Extension<redis::aio::ConnectionManager> {
@@ -38,7 +40,7 @@ async fn get_redis_extension() -> Extension<redis::aio::ConnectionManager> {
 
 async fn get_api_router() -> aide::axum::ApiRouter {
     attestation_gateway::routes::handler()
-        .layer(get_aws_config_extension().await)
+        .layer(get_aws_clients_extension().await)
         .layer(get_redis_extension().await)
 }
 
