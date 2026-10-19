@@ -6,7 +6,7 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::android::cert_chain::{CertSerial, CertSerialError};
 use crate::android::key_description::{
-    KeyDescription, KeyDescriptionError, SecurityLevel, VerifiedBootState,
+    AttestationApplicationId, KeyDescription, KeyDescriptionError, SecurityLevel, VerifiedBootState,
 };
 
 #[derive(Debug, Error)]
@@ -119,6 +119,11 @@ impl SessionCert {
 
     pub const fn key_origin(&self) -> Option<u64> {
         self.key_description.hardware_enforced.origin
+    }
+
+    #[must_use]
+    pub fn attestation_application_id(&self) -> Option<&AttestationApplicationId> {
+        self.key_description.attestation_application_id()
     }
 
     pub fn contains_attestation_signature_digests(&self, digest: &[u8]) -> bool {

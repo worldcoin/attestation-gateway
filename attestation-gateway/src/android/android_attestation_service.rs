@@ -9,7 +9,7 @@ use crate::{
         cert_chain_builder::{
             CertChainBuilder, CertChainBuilderBuildChainError, CertChainBuilderNewError,
         },
-        key_description::{SecurityLevel, VerifiedBootState},
+        key_description::{AttestationApplicationId, SecurityLevel, VerifiedBootState},
         rate_limit_service::{RateLimitService, RateLimitServiceTryIncrError},
         revocation_list::{RevocationList, RevocationListError},
         risk_evaluator::{
@@ -72,6 +72,9 @@ pub enum AndroidAttestationError {
 
     #[error("missing key origin")]
     MissingKeyOrigin,
+
+    #[error("unknown attestation package")]
+    UnknownAttestationPackage,
 
     #[error("invalid attestation signature digest")]
     InvalidAttestationSignatureDigest,
@@ -297,6 +300,14 @@ impl AndroidAttestationService {
             return Err(AndroidAttestationError::KeyNotGeneratedInSecureHardware);
         }
 
+        if cert_chain
+            .session_cert()
+            .attestation_application_id()
+            .is_some_and(AttestationApplicationId::is_unknown_package)
+        {
+            return Err(AndroidAttestationError::UnknownAttestationPackage);
+        }
+
         let expected_attestation_signature_digests = bundle_identifier
             .android_certificate_sha256_digest_base64()
             .ok_or(AndroidAttestationError::MissingCertificateDigest)?;
@@ -374,6 +385,7 @@ impl AndroidAttestationError {
             }
             Self::MissingRootOfTrust => "missing_root_of_trust".to_string(),
             Self::MissingKeyOrigin => "missing_key_origin".to_string(),
+            Self::UnknownAttestationPackage => "unknown_attestation_package".to_string(),
             Self::InvalidAttestationSignatureDigest => {
                 "invalid_attestation_signature_digest".to_string()
             }
@@ -414,6 +426,10 @@ impl AndroidAttestationError {
 
             // Transient client state: the per-day quota resets, so a later retry can succeed.
             Self::RateLimitExceeded => ErrorCode::RateLimited,
+
+            // A device fault, not a verdict: the keystore attests every key this way until the
+            // device restarts, so the client can only recover by asking the user to reboot.
+            Self::UnknownAttestationPackage => ErrorCode::RebootRequired,
 
             // Permanent client mistake: an Android attestation for an Apple-only bundle id. Not
             // a verdict on the device, and no retry can succeed.
@@ -474,6 +490,10 @@ mod tests {
         assert_eq!(
             AndroidAttestationError::MissingCertificateDigest.to_error_code(),
             ErrorCode::BadRequest
+        );
+        assert_eq!(
+            AndroidAttestationError::UnknownAttestationPackage.to_error_code(),
+            ErrorCode::RebootRequired
         );
         // Every device rejection collapses to one code so the reason can't be probed.
         assert_eq!(
