@@ -43,7 +43,6 @@ not automatically inherited by spawned background tasks.
 | `developer_verify` | Developer-token verification, including JWKS refresh when required |
 | `signing_key_fetch` | Redis-backed signing-key selection, including KMS key creation if rotation is needed |
 | `token_sign` | JWT generation and KMS signing, including blocking-task scheduling |
-| `kinesis_publish` | Awaited `/g` analytics delivery, including SDK/application retries and backoff |
 
 Android `/a` background analytics is excluded because it is not awaited by the
 request. The timers observe cancellation without changing it. A cancelled
@@ -52,3 +51,33 @@ blocking work or a remote write may still finish. These samples are not the full
 remote-operation latency. Keep cancellations separate from successful samples.
 
 Server timings exclude client/network latency and device evidence generation.
+
+## Background Kinesis delivery
+
+`/g` enqueues analytics without waiting for Kinesis. Per process: 256 queued
+records, 16 MiB of retained payloads (including in-flight records), eight concurrent
+publishes, and a five-second deadline from enqueue through retries. Admission is
+nonblocking; a full queue or byte budget drops the event. Missing/empty stream
+configuration disables publishing. Android `/a` analytics uses its existing path.
+
+On SIGTERM/Ctrl-C, HTTP requests get up to ten seconds to finish, followed by up to
+ten seconds to drain analytics. This is best-effort delivery: a process crash can
+lose queued events. A timed-out write may have reached Kinesis, and retries may
+produce duplicates; these properties also apply to ordinary Kinesis retries.
+
+All names below have the `attestation_gateway.` exporter prefix. Tags are bounded;
+client identifiers and report contents are never metric labels.
+
+| Metric | Type / unit | Meaning |
+| --- | --- | --- |
+| `kinesis.enqueued`, `kinesis.delivered` | Counter / events | Accepted by the queue; acknowledged by Kinesis |
+| `kinesis.failed` | Counter / events | `reason:publish` or `deadline`; delivery was not confirmed |
+| `kinesis.dropped` | Counter / events | `reason:queue_full`, `byte_limit`, `closed`, `serialization`, `expired` (before publishing), or `cancelled` (including forced shutdown) |
+| `kinesis.retries` | Counter / retries | Application retries; excludes retries inside the AWS SDK |
+| `kinesis.queue_depth`, `kinesis.in_flight` | Gauge / events | Waiting records; active delivery tasks |
+| `kinesis.delivery.duration_seconds` | Distribution / seconds | Queue wait plus delivery/retries, tagged `outcome:delivered`, `publish`, or `deadline` |
+
+The former request-scoped `operation:kinesis_publish` stops emitting. The existing
+`attestation_gateway.kinesis_put_failure` counter is retained for failures and
+drops (with its existing exporter-prefix behavior). During shutdown, cancelled
+work is counted when its task is dropped; an abrupt process kill cannot report it.
