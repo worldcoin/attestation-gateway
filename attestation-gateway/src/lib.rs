@@ -11,6 +11,7 @@ pub mod kinesis;
 pub mod kms_jws;
 mod latency;
 pub mod nonces;
+mod origin_verify;
 pub mod routes;
 pub mod server;
 pub mod utils;
