@@ -84,7 +84,11 @@ pub async fn start(
             TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::new().include_headers(true)),
         )
         .layer(get_timeout_layer(None))
-        .layer(axum::middleware::from_fn(crate::latency::requests));
+        .layer(axum::middleware::from_fn(crate::latency::requests))
+        // Outermost, so tracing, analytics and handlers never see the origin secret.
+        .layer(axum::middleware::from_fn(
+            crate::origin_verify::strip_header,
+        ));
 
     let address = SocketAddr::from((
         [0, 0, 0, 0],
