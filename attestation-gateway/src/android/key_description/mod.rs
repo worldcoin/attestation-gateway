@@ -304,7 +304,16 @@ impl AttestationApplicationId {
             .map(|pkg| pkg.package_name.clone())
             .collect()
     }
+
+    /// Android Keystore's fallback when it cannot look up the calling app: a single package named
+    /// `UnknownPackage` and no signing digests. It persists until the device restarts.
+    #[must_use]
+    pub fn is_unknown_package(&self) -> bool {
+        self.signature_digests.is_empty() && self.package_names() == [UNKNOWN_PACKAGE_NAME]
+    }
 }
+
+const UNKNOWN_PACKAGE_NAME: &str = "UnknownPackage";
 
 impl AttestationPackageInfo {
     pub fn from_asn1(v: &AttestationPackageInfoAsn1) -> Result<Self, KeyDescriptionError> {
@@ -332,4 +341,30 @@ fn parse_utf8(value: &[u8]) -> Result<String, KeyDescriptionError> {
 
 fn extract_u64_set(value: &asn1::SetOf<u64>) -> Vec<u64> {
     value.clone().into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app_id(package_names: &[&str], signature_digests: Vec<Vec<u8>>) -> AttestationApplicationId {
+        AttestationApplicationId {
+            package_infos: package_names
+                .iter()
+                .map(|name| AttestationPackageInfo {
+                    package_name: (*name).to_string(),
+                    version: 1,
+                })
+                .collect(),
+            signature_digests,
+        }
+    }
+
+    #[test]
+    fn unknown_package_is_the_keystore_fallback_only() {
+        assert!(app_id(&["UnknownPackage"], vec![]).is_unknown_package());
+        assert!(!app_id(&["UnknownPackage"], vec![vec![0xAB; 32]]).is_unknown_package());
+        assert!(!app_id(&["com.worldcoin"], vec![]).is_unknown_package());
+        assert!(!app_id(&["UnknownPackage", "com.worldcoin"], vec![]).is_unknown_package());
+    }
 }

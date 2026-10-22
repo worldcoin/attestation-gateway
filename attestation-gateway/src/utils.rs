@@ -761,6 +761,7 @@ pub enum ErrorCode {
     /// The route is disabled on this deployment.
     NotFound,
     RateLimited,
+    RebootRequired,
     RequestHashMismatch,
 }
 
@@ -783,6 +784,7 @@ impl std::fmt::Display for ErrorCode {
             Self::NonceNotFound => write!(f, "nonce_not_found"),
             Self::NotFound => write!(f, "not_found"),
             Self::RateLimited => write!(f, "rate_limited"),
+            Self::RebootRequired => write!(f, "reboot_required"),
             Self::RequestHashMismatch => write!(f, "request_hash_mismatch"),
         }
     }
@@ -808,6 +810,7 @@ impl ErrorCode {
             | Self::InvalidPublicKey
             | Self::InvalidToken
             | Self::NonceNotFound
+            | Self::RebootRequired
             | Self::RequestHashMismatch => axum::http::StatusCode::BAD_REQUEST,
         }
     }
@@ -840,6 +843,9 @@ impl ErrorCode {
             Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
             Self::InvalidDeveloperToken => "The provided developer token is invalid or malformed.",
             Self::RateLimited => "Too many attestation attempts. Please try again later.",
+            Self::RebootRequired => {
+                "The device could not identify this app during attestation. Restart the device and try again."
+            }
             Self::RequestHashMismatch => {
                 "The token is bound to a different `request_hash` than this request. Mint a new one."
             }
@@ -865,6 +871,8 @@ impl ErrorCode {
             // Minting a fresh token against the hash we actually received succeeds, so this must
             // not read as a verdict on the credential or the device.
             | Self::RequestHashMismatch
+            // The device keystore is stuck in a state that a restart clears.
+            | Self::RebootRequired
             // The client's own attestation failed before we checked anything, and those failures
             // are usually transient (a bad minute from Apple or Play). We hold no verdict on this
             // device, so we must not answer as if we rejected it.
@@ -1163,6 +1171,16 @@ mod tests {
         ] {
             assert!(!code.allow_retry(), "{code} should not be retryable");
         }
+    }
+
+    #[test]
+    fn reboot_required_is_a_retryable_400_on_the_wire() {
+        assert_eq!(ErrorCode::RebootRequired.to_string(), "reboot_required");
+        assert_eq!(
+            ErrorCode::RebootRequired.into_http_status_code(),
+            axum::http::StatusCode::BAD_REQUEST
+        );
+        assert!(ErrorCode::RebootRequired.allow_retry());
     }
 
     #[test]

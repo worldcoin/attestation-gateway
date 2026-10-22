@@ -1,8 +1,10 @@
-use std::{env, net::SocketAddr, sync::Arc, time::Duration};
+use std::{env, future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
 use crate::{
     android::{AndroidAttestationService, AndroidRiskEvaluator},
     audience_authorizer::AudienceAuthorizer,
+    aws_clients::AwsClients,
+    kinesis::KinesisPublisher,
     nonces::{NonceDb, TokenDetailsFactory},
     takt_issuer::TaktIssuer,
 };
@@ -40,6 +42,9 @@ pub async fn start(
         ..Default::default()
     };
 
+    let aws_clients = AwsClients::new(&aws_config);
+    let kinesis_publisher =
+        KinesisPublisher::start(kinesis_client, global_config.kinesis_stream_arn.clone());
     let nonce_db = NonceDb::new(redis.clone());
     let audience_authorizer = AudienceAuthorizer::from_config(redis.clone(), &global_config);
     let token_details_factory = TokenDetailsFactory::from_config(&global_config);
@@ -71,17 +76,21 @@ pub async fn start(
         .layer(Extension(audience_authorizer))
         .layer(Extension(redis))
         .layer(Extension(openapi))
-        .layer(Extension(aws_config))
+        .layer(Extension(aws_clients))
         .layer(Extension(global_config))
         .layer(Extension(TaktIssuer::from_env().map(Arc::new)))
         .layer(CompressionLayer::new())
-        .layer(Extension(kinesis_client))
+        .layer(Extension(kinesis_publisher.clone()))
         .layer(Extension(android_attestation_service))
         .layer(
             TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::new().include_headers(true)),
         )
         .layer(get_timeout_layer(None))
-        .layer(axum::middleware::from_fn(crate::latency::requests));
+        .layer(axum::middleware::from_fn(crate::latency::requests))
+        // Outermost, so tracing, analytics and handlers never see the origin secret.
+        .layer(axum::middleware::from_fn(
+            crate::origin_verify::strip_header,
+        ));
 
     let address = SocketAddr::from((
         [0, 0, 0, 0],
@@ -92,7 +101,51 @@ pub async fn start(
         .expect("Failed to bind address");
 
     println!("😈 Attestation gateway started on http://{address}");
-    axum::serve(listener, app.into_make_service())
-        .await
-        .expect("Failed to start server");
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(async {
+            let _ = stopped.await;
+        })
+        .into_future();
+    tokio::pin!(server);
+    let result = tokio::select! {
+        result = &mut server => Some(result),
+        () = shutdown_signal() => {
+            let _ = stop.send(());
+            // Leave time for analytics to drain before ECS's default 30-second stop deadline.
+            tokio::time::timeout(Duration::from_secs(10), &mut server).await.map_or_else(
+                |_| {
+                    tracing::warn!("HTTP shutdown deadline exceeded");
+                    None
+                },
+                Some,
+            )
+        }
+    };
+    kinesis_publisher.shutdown().await;
+    drop(kinesis_publisher);
+    if let Some(result) = result {
+        result.expect("Failed to serve requests");
+    }
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to listen for Ctrl-C");
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to listen for SIGTERM")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = ctrl_c => {},
+        () = terminate => {},
+    }
 }

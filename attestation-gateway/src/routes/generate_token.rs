@@ -1,4 +1,4 @@
-use aws_sdk_kinesis::Client as KinesisClient;
+use crate::aws_clients::AwsClients;
 use axum::{
     Extension,
     http::{HeaderMap, header},
@@ -10,7 +10,7 @@ use std::time::SystemTime;
 use crate::{
     android, apple, developer,
     keys::fetch_active_key,
-    kinesis::send_kinesis_stream_event,
+    kinesis::KinesisPublisher,
     kms_jws,
     utils::{
         BundleIdentifier, CheckType, ClientException, DataReport, ErrorCode, GlobalConfig,
@@ -74,10 +74,10 @@ fn infer_platform(request: &TokenGenerationRequest) -> Result<Platform, RequestE
 // NOTE: Integration tests for route handlers are in the `/tests` module
 
 pub async fn handler(
-    Extension(aws_config): Extension<aws_config::SdkConfig>,
+    Extension(aws_clients): Extension<AwsClients>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(global_config): Extension<GlobalConfig>,
-    Extension(kinesis_client): Extension<KinesisClient>,
+    Extension(kinesis_publisher): Extension<KinesisPublisher>,
     headers: HeaderMap,
     Json(request): Json<TokenGenerationRequest>,
 ) -> Result<Json<TokenGenerationResponse>, RequestError> {
@@ -122,11 +122,9 @@ pub async fn handler(
     handle_client_error_if_applicable(
         &integrity_verification_input,
         &request,
-        &kinesis_client,
-        global_config.kinesis_stream_arn.as_deref().unwrap_or(""),
+        &kinesis_publisher,
         global_config.log_client_errors,
-    )
-    .await?;
+    )?;
 
     global_config.require_enabled_bundle(&request.bundle_identifier)?;
 
@@ -157,7 +155,7 @@ pub async fn handler(
         &request.aud,
         request.client_error,
         global_config.clone(),
-        &aws_config,
+        &aws_clients.dynamodb,
     )
     .await
     .map_err(|e| {
@@ -203,9 +201,8 @@ pub async fn handler(
         request_hash.clone(),
         aud,
         &mut redis,
-        aws_config,
-        &kinesis_client,
-        global_config.kinesis_stream_arn.as_deref().unwrap_or(""),
+        &aws_clients.kms,
+        &kinesis_publisher,
     )
     .await
     {
@@ -252,7 +249,7 @@ async fn verify_android_or_apple_integrity(
     aud: &str,
     client_error: Option<String>,
     config: GlobalConfig,
-    aws_config: &aws_config::SdkConfig,
+    dynamodb_client: &aws_sdk_dynamodb::Client,
 ) -> eyre::Result<DataReport> {
     // Prepare output report for logging (analytics & debugging)
     // Only integrity failures and successes are logged to Kinesis. Client and server errors are logged regularly to Datadog.
@@ -294,7 +291,7 @@ async fn verify_android_or_apple_integrity(
                 apple_initial_attestation,
                 bundle_identifier,
                 request_hash,
-                aws_config,
+                dynamodb_client,
                 &config.apple_keys_dynamo_table_name,
                 &config.apple_root_ca_pem,
             )
@@ -311,7 +308,7 @@ async fn verify_android_or_apple_integrity(
                 apple_public_key,
                 &bundle_identifier,
                 &request_hash,
-                aws_config,
+                dynamodb_client,
                 &config.apple_keys_dynamo_table_name,
             )
             .await?
@@ -363,21 +360,10 @@ async fn process_and_finalize_report(
     request_hash: String,
     aud: String,
     redis: &mut ConnectionManager,
-    aws_config: aws_config::SdkConfig,
-    kinesis_client: &KinesisClient,
-    kinesis_stream_arn: &str,
+    kms_client: &aws_sdk_kms::Client,
+    kinesis_publisher: &KinesisPublisher,
 ) -> Result<TokenGenerationResponse, RequestError> {
-    // Report result to Kinesis (best-effort analytics; never fail the request)
-    if !kinesis_stream_arn.is_empty()
-        && let Err(e) = crate::latency::measure(
-            "kinesis_publish",
-            send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report),
-        )
-        .await
-    {
-        metrics::counter!("attestation_gateway.kinesis_put_failure").increment(1);
-        tracing::warn!(error = ?e, "Failed to send Kinesis event");
-    }
+    let _ = kinesis_publisher.enqueue(&report);
 
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
@@ -422,7 +408,7 @@ async fn process_and_finalize_report(
         "Output token payload",
     );
 
-    let key = crate::latency::measure("signing_key_fetch", fetch_active_key(redis, &aws_config))
+    let key = crate::latency::measure("signing_key_fetch", fetch_active_key(redis, kms_client))
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, "Error fetching active key");
@@ -434,7 +420,7 @@ async fn process_and_finalize_report(
 
     let attestation_gateway_token = crate::latency::measure(
         "token_sign",
-        kms_jws::generate_output_token(&aws_config, key.key_definition.arn, output_token_payload),
+        kms_jws::generate_output_token(kms_client, key.key_definition.arn, output_token_payload),
     )
     .await
     .map_err(|e| {
@@ -465,11 +451,10 @@ async fn release_request_hash(
 
 /// If the request comes with a `client_error` from the mobile apps, log it and return a
 /// `client_failure` response. Note the request hash is not locked.
-async fn handle_client_error_if_applicable(
+fn handle_client_error_if_applicable(
     integrity_verification_input: &IntegrityVerificationInput,
     request: &TokenGenerationRequest,
-    kinesis_client: &KinesisClient,
-    kinesis_stream_arn: &str,
+    kinesis_publisher: &KinesisPublisher,
     log_client_errors: bool,
 ) -> Result<(), RequestError> {
     if let IntegrityVerificationInput::ClientError { client_error } = integrity_verification_input {
@@ -481,15 +466,7 @@ async fn handle_client_error_if_applicable(
             Some("`client_error` provided in the request".to_string()),
         );
 
-        if let Err(e) = crate::latency::measure(
-            "kinesis_publish",
-            send_kinesis_stream_event(kinesis_client, kinesis_stream_arn, &report),
-        )
-        .await
-        {
-            metrics::counter!("attestation_gateway.kinesis_put_failure").increment(1);
-            tracing::warn!(error = ?e, "Failed to send `client_error` to Kinesis");
-        }
+        let _ = kinesis_publisher.enqueue(&report);
 
         if log_client_errors {
             tracing::info!(

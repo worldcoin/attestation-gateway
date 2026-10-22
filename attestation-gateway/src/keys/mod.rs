@@ -48,19 +48,19 @@ impl SigningKey {
 /// Will return an error if the key generation process fails or if there is a problem fetching/updating data from Redis.
 pub async fn fetch_all(
     redis: &mut ConnectionManager,
-    aws_config: &aws_config::SdkConfig,
+    kms_client: &aws_sdk_kms::Client,
 ) -> eyre::Result<Vec<SigningKey>> {
     let mut keys = fetch_keys_from_redis(redis).await?;
 
     metrics::counter!("attestation_gateway.keys.count").absolute(keys.len() as u64);
 
     if keys.is_empty() {
-        return Ok(vec![generate_new_key(redis, aws_config).await?]);
+        return Ok(vec![generate_new_key(redis, kms_client).await?]);
     }
 
     // check the latest key is valid for signing, otherwise generate a new one
     if !keys[0].can_sign() {
-        keys.insert(0, generate_new_key(redis, aws_config).await?);
+        keys.insert(0, generate_new_key(redis, kms_client).await?);
         return Ok(keys);
     }
 
@@ -73,16 +73,16 @@ pub async fn fetch_all(
 /// Will return an error if the key generation process fails or if there is a problem fetching/updating data from Redis.
 pub async fn fetch_active_key(
     redis: &mut ConnectionManager,
-    aws_config: &aws_config::SdkConfig,
+    kms_client: &aws_sdk_kms::Client,
 ) -> eyre::Result<SigningKey> {
-    let key = fetch_all(redis, aws_config)
+    let key = fetch_all(redis, kms_client)
         .await?
         .first()
         .ok_or_eyre("Unexpected state with no valid keys")?
         .clone();
 
     if !key.can_sign() {
-        return generate_new_key(redis, aws_config).await;
+        return generate_new_key(redis, kms_client).await;
     }
 
     Ok(key)
@@ -125,12 +125,12 @@ fn key_tags() -> eyre::Result<Option<Vec<Tag>>> {
 
 async fn generate_new_key(
     redis: &mut ConnectionManager,
-    aws_config: &aws_config::SdkConfig,
+    kms_client: &aws_sdk_kms::Client,
 ) -> eyre::Result<SigningKey> {
     tracing::info!("No suitable signing keys found. Generating a new key");
 
     if acquire_lock_with_backoff(redis).await? {
-        let (key_definition, public_key_der) = kms_generate_new_key(aws_config).await?;
+        let (key_definition, public_key_der) = kms_generate_new_key(kms_client).await?;
 
         let public_key = PKey::public_key_from_der(&public_key_der)?;
 
@@ -159,11 +159,10 @@ async fn generate_new_key(
 }
 
 async fn kms_generate_new_key(
-    aws_config: &aws_config::SdkConfig,
+    kms_client: &aws_sdk_kms::Client,
 ) -> eyre::Result<(KMSKeyDefinition, Vec<u8>)> {
     tracing::info!("Generating new key in KMS.");
 
-    let kms_client = aws_sdk_kms::Client::new(aws_config);
     let key = kms_client
         .create_key()
         .key_spec(SIGNING_CONFIG.key_spec)
