@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use world_id_primitives::FieldElement;
 use world_id_primitives::authenticator_assertion::{
-    MAX_TAKT_LIFETIME_SECS, SecFlags, TrustAnchorKeyToken,
+    MAX_TAKT_LIFETIME_SECS, SecFlags, TaktClaims, TrustAnchorKeyToken,
 };
 
 /// Longest validity window of one key (WIP-106 §3.3).
@@ -141,7 +141,7 @@ impl TaktIssuer {
             u32::try_from(value).map_err(|_| eyre::eyre!("TAKT time {value} does not fit in a u32"))
         };
         let exp = (now + u64::from(self.lifetime_secs)).min(max_exp);
-        let token = TrustAnchorKeyToken::new(
+        let claims = TaktClaims::new(
             to_u32(now)?,
             to_u32(exp)?,
             to_u32(self.not_after)?,
@@ -149,7 +149,8 @@ impl TaktIssuer {
             sec_flags,
         )
         .map_err(eyre::Report::from)?;
-        Ok(token.sign(&self.key).map_err(eyre::Report::from)?)
+        let takt = TrustAnchorKeyToken::sign(claims, &self.key).map_err(eyre::Report::from)?;
+        Ok(takt.to_cwt())
     }
 
     /// The Authenticator Metadata document (WIP-106 §3.9). The key is `retired` once it stops
@@ -238,7 +239,8 @@ mod tests {
         let cwt = issuer
             .issue(assertion_key(), flags(), NOW, u64::MAX)
             .unwrap();
-        let takt = TrustAnchorKeyToken::verify(&cwt, &issuer.key.public()).unwrap();
+        let takt = TrustAnchorKeyToken::from_cwt(&cwt).unwrap();
+        let takt = takt.verify(&issuer.key.public()).unwrap();
         assert_eq!(takt.assertion_key(), &assertion_key());
         assert_eq!(takt.sec_flags(), flags());
         assert_eq!(
@@ -253,7 +255,8 @@ mod tests {
         let cwt = issuer
             .issue(assertion_key(), flags(), NOW, NOW + 60)
             .unwrap();
-        let takt = TrustAnchorKeyToken::verify(&cwt, &issuer.key.public()).unwrap();
+        let takt = TrustAnchorKeyToken::from_cwt(&cwt).unwrap();
+        let takt = takt.verify(&issuer.key.public()).unwrap();
         assert_eq!(u64::from(takt.exp()), NOW + 60);
     }
 

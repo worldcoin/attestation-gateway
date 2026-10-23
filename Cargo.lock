@@ -1684,6 +1684,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "coset"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1eb98d5e9155e2cf7cd942c8b3033097d4563b6fb0a00b9caecb74669555c058"
+dependencies = [
+ "ciborium",
+ "ciborium-io",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5430,12 +5440,13 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 [[package]]
 name = "world-id-primitives"
 version = "0.15.0"
-source = "git+https://github.com/worldcoin/world-id-protocol?rev=cd397049b7646d05b764436c82ed26a49a36dc9f#cd397049b7646d05b764436c82ed26a49a36dc9f"
+source = "git+https://github.com/worldcoin/world-id-protocol?rev=d3cf68e7ea52d882686053ec3ea402f24eeda3e2#d3cf68e7ea52d882686053ec3ea402f24eeda3e2"
 dependencies = [
  "alloy-primitives",
  "ark-ff 0.6.0",
  "arrayvec",
  "ciborium",
+ "coset",
  "embed-doc-image",
  "eyre",
  "getrandom 0.4.3",

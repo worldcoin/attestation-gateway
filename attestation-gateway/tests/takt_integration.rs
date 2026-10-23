@@ -1,4 +1,4 @@
-//! Integration tests for the WIP-106 `/takt` route and the Authenticator Metadata endpoint.
+//! Integration tests for `/a` with format `takt` (WIP-106) and the Authenticator Metadata endpoint.
 //! Requires the services in `tests/docker-compose.test.yml`.
 //!
 //! Android attestations come from real devices with fixed challenges, so only iOS is exercised
@@ -15,6 +15,7 @@ use attestation_gateway::{
         analytics_service::AnalyticsService, rate_limit_service::RateLimitService,
     },
     apple,
+    aws_clients::AwsClients,
     nonces::{NonceDb, TokenDetailsFactory},
     takt_issuer::TaktIssuer,
     utils::{AndroidResponseKeys, BundleIdentifier, GlobalConfig},
@@ -35,7 +36,7 @@ use p256::ecdsa::{SigningKey, VerifyingKey};
 use serde_json::{Value, json};
 use serial_test::serial;
 use tower::ServiceExt;
-use world_id_primitives::authenticator_assertion::TrustAnchorKeyToken;
+use world_id_primitives::authenticator_assertion::{TaktClaims, TrustAnchorKeyToken};
 
 const TAKT_LIFETIME_SECS: u32 = 7 * 24 * 60 * 60;
 const BUNDLE: BundleIdentifier = BundleIdentifier::OrgWorldcoinInsightStaging;
@@ -154,6 +155,7 @@ impl Setup {
             .layer(Extension(NonceDb::new(self.redis.clone())))
             .layer(Extension(self.redis.clone()))
             .layer(Extension(issuer.map(Arc::new)))
+            .layer(Extension(aws_clients().await))
     }
 
     /// A router and a valid iOS `/takt` request for `key` and `build_version`.
@@ -172,6 +174,16 @@ impl Setup {
     }
 }
 
+/// AWS clients, required by `/a` but not used for format `takt`.
+async fn aws_clients() -> AwsClients {
+    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest())
+        .await
+        .into_builder()
+        .endpoint_url("http://localhost:4566")
+        .build();
+    AwsClients::new(&config)
+}
+
 async fn call(router: &aide::axum::ApiRouter, request: Request<Body>) -> (StatusCode, Value) {
     let response = router.clone().oneshot(request).await.unwrap();
     let status = response.status();
@@ -183,7 +195,7 @@ async fn post_takt(router: &aide::axum::ApiRouter, request: &Value) -> (StatusCo
     call(
         router,
         Request::builder()
-            .uri("/takt")
+            .uri("/a")
             .method(http::Method::POST)
             .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
             .body(Body::from(request.to_string()))
@@ -240,15 +252,19 @@ fn ios_request(nonce: &str, build_version: u32, key: &VerifyingKey, attestation:
         "build_version": build_version,
         "assertion_key": STANDARD.encode(key.to_encoded_point(false).as_bytes()),
         "apple_attestation": attestation,
+        "format": "takt",
     })
 }
 
 /// Decodes the TAKT in a response and verifies it under the issuer key.
-fn decode_takt(body: &Value) -> TrustAnchorKeyToken {
+fn decode_takt(body: &Value) -> TaktClaims {
     let cwt = URL_SAFE_NO_PAD
-        .decode(body["takt"].as_str().unwrap())
+        .decode(body["integrity_token"].as_str().unwrap())
         .unwrap();
-    TrustAnchorKeyToken::verify(&cwt, &issuer_key().public()).unwrap()
+    *TrustAnchorKeyToken::from_cwt(&cwt)
+        .unwrap()
+        .verify(&issuer_key().public())
+        .unwrap()
 }
 
 // SECTION --- tests ---
@@ -359,13 +375,26 @@ async fn test_takt_rejects_invalid_requests() {
 
 #[tokio::test]
 #[serial]
-async fn test_takt_routes_are_disabled_without_a_signing_key() {
+async fn test_takt_is_disabled_without_a_signing_key() {
     let mut setup = Setup::new().await;
     let nonce = setup.nonce().await;
     let router = setup.router(None, vec![]).await;
     let request = ios_request(&nonce, 41, &assertion_key(9), "attestation");
-    assert_eq!(post_takt(&router, &request).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        post_takt(&router, &request).await.0,
+        StatusCode::BAD_REQUEST
+    );
     assert_eq!(get_metadata(&router).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_takt_fields_require_format_takt() {
+    let mut setup = Setup::new().await;
+    let (router, mut request) = setup.ios(&assertion_key(9), 41).await;
+    request["format"] = json!("jwt");
+    let (status, body) = post_takt(&router, &request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
 
 #[tokio::test]

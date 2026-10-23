@@ -1,5 +1,7 @@
 use crate::aws_clients::AwsClients;
 
+use std::sync::Arc;
+
 use axum::{Extension, Json, http::HeaderMap};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::Utc;
@@ -14,17 +16,22 @@ use openssl::{
 use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
+use super::takt::{self, Attested, IosInputs, TokenFormat};
 use crate::{
-    android::{AndroidAttestationError, AndroidAttestationInput, AndroidAttestationService},
+    android::{
+        AndroidAttestationError, AndroidAttestationInput, AndroidAttestationOutput,
+        AndroidAttestationService,
+    },
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError, TokenDetails},
+    takt_issuer::TaktIssuer,
     utils::{
         BundleIdentifier, ClientException, ErrorCode, GlobalConfig, Platform, RequestError,
         client_session_id,
     },
 };
 
-pub(super) fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
+fn headers_to_map(headers: &HeaderMap) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::<String, String>::new();
     for (name, value) in headers.iter() {
         if let Ok(v) = value.to_str() {
@@ -57,10 +64,19 @@ pub struct Request {
     pub apple_attestation: Option<String>,
     pub android_attestation: Option<Vec<String>>,
     pub device_model: Option<String>,
+    /// Output format; `jwt` unless set.
+    #[serde(default)]
+    pub format: TokenFormat,
+    /// Format `takt` on iOS only: the Secure Enclave `assertion_key`, base64 of its uncompressed
+    /// SEC1 encoding.
+    pub assertion_key: Option<String>,
+    /// Format `takt` on iOS only: the Authenticator's build. Android attests its `versionCode`.
+    pub build_version: Option<u32>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
 pub struct Response {
+    /// The token in the requested format.
     pub integrity_token: String,
 }
 
@@ -137,11 +153,7 @@ impl IntegrityTokenPayload {
     }
 }
 
-pub(super) fn map_android_attestation_error(
-    e: &AndroidAttestationError,
-    endpoint: &'static str,
-    session_id: &str,
-) -> RequestError {
+fn map_android_attestation_error(e: &AndroidAttestationError, session_id: &str) -> RequestError {
     metrics::counter!("attestation_gateway.android_error", "reason" => e.reason_tag()).increment(1);
 
     let code = e.to_error_code();
@@ -150,7 +162,7 @@ pub(super) fn map_android_attestation_error(
     } else {
         // The precise verify failure stays server-side so rejection reasons don't aid
         // attestation probing.
-        tracing::warn!(endpoint, session_id = %session_id, message = %e);
+        tracing::warn!(endpoint = "/a", session_id = %session_id, message = %e);
     }
 
     RequestError {
@@ -188,7 +200,7 @@ async fn validate_android_attestation_and_get_device_public_key(
     request: &Request,
     token_details: &TokenDetails,
     session_id: &str,
-) -> Result<Vec<u8>, RequestError> {
+) -> Result<AndroidAttestationOutput, RequestError> {
     let raw_cert_chain = request
         .android_attestation
         .as_ref()
@@ -209,7 +221,7 @@ async fn validate_android_attestation_and_get_device_public_key(
         }),
     )
     .await
-    .map_err(|e| map_android_attestation_error(&e, "/a", session_id))?;
+    .map_err(|e| map_android_attestation_error(&e, session_id))?;
 
     if let Some(os_patch_level_delta) = attestation_output.os_patch_level_delta {
         metrics::gauge!("attestation_gateway.android_os_patch_level_delta")
@@ -218,15 +230,21 @@ async fn validate_android_attestation_and_get_device_public_key(
         metrics::counter!("attestation_gateway.android_missing_os_patch_level").increment(1);
     }
 
-    Ok(attestation_output.device_public_key)
+    Ok(attestation_output)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "axum extractors; one flow per token format"
+)]
 pub async fn handler(
     Extension(global_config): Extension<GlobalConfig>,
     Extension(mut redis): Extension<ConnectionManager>,
     Extension(mut nonce_db): Extension<NonceDb>,
     Extension(mut android_attestation): Extension<AndroidAttestationService>,
     Extension(aws_clients): Extension<AwsClients>,
+    Extension(issuer): Extension<Option<Arc<TaktIssuer>>>,
     headers: HeaderMap,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, RequestError> {
@@ -236,6 +254,15 @@ pub async fn handler(
     let _enter = tracing_span.enter();
 
     global_config.require_enabled_bundle(&request.bundle_identifier)?;
+    let issuer = match request.format {
+        TokenFormat::Jwt if request.assertion_key.is_some() || request.build_version.is_some() => {
+            return Err(bad_request(
+                "`assertion_key` and `build_version` require format `takt`.",
+            ));
+        }
+        TokenFormat::Jwt => None,
+        TokenFormat::Takt => Some(takt::enabled(issuer.as_deref())?),
+    };
 
     let token_details = crate::latency::measure(
         "nonce_consume",
@@ -259,36 +286,54 @@ pub async fn handler(
         }
     })?;
 
-    let challenge = format!("n={},av={}", request.nonce, request.app_version);
     let platform = infer_platform(&request)?;
     crate::latency::set_platform(match platform {
         Platform::Android => "android",
         Platform::AppleIOS => "ios",
     });
+    let ios_takt = match (issuer, platform) {
+        (Some(_), Platform::AppleIOS) => Some(IosInputs::parse(
+            request.assertion_key.as_deref(),
+            request.build_version,
+        )?),
+        (Some(_), Platform::Android)
+            if request.assertion_key.is_some() || request.build_version.is_some() =>
+        {
+            return Err(bad_request(
+                "`assertion_key` and `build_version` are iOS only.",
+            ));
+        }
+        _ => None,
+    };
+    let challenge = match &ios_takt {
+        Some(inputs) => inputs.apple_challenge(&request.nonce, &request.app_version),
+        None => format!("n={},av={}", request.nonce, request.app_version),
+    };
 
-    let device_public_key = match platform {
+    let (device_public_key, version_code) = match platform {
         Platform::AppleIOS => {
             let apple_attestation = request
                 .apple_attestation
                 .ok_or_else(|| bad_request("Apple attestation is required"))?;
 
-            validate_apple_attestation_and_get_device_public_key(
-                "/a",
+            let key = validate_apple_attestation_and_get_device_public_key(
                 &global_config.apple_root_ca_pem,
                 &challenge,
                 &request.bundle_identifier,
                 apple_attestation,
-            )?
+            )?;
+            (key, None)
         }
         Platform::Android => {
-            validate_android_attestation_and_get_device_public_key(
+            let output = validate_android_attestation_and_get_device_public_key(
                 &mut android_attestation,
                 &headers,
                 &request,
                 &token_details,
                 session_id,
             )
-            .await?
+            .await?;
+            (output.device_public_key, output.version_code)
         }
     };
 
@@ -302,27 +347,36 @@ pub async fn handler(
         Some(exp) => exp,
         None => token_details.exp_max,
     };
-    let integrity_token = generate_integrity_token(
-        &mut redis,
-        &aws_clients.kms,
-        &global_config.jwt_issuer,
-        IntegrityTokenPayload {
-            v: "1".to_string(),
-            platform,
-            app_version: request.app_version,
-            aud: token_details.aud,
-            cnf: device_public_key,
-            pass: true,
-            exp,
+    let Some(issuer) = issuer else {
+        let integrity_token = generate_integrity_token(
+            &mut redis,
+            &aws_clients.kms,
+            &global_config.jwt_issuer,
+            IntegrityTokenPayload {
+                v: "1".to_string(),
+                platform,
+                app_version: request.app_version,
+                aud: token_details.aud,
+                cnf: device_public_key,
+                pass: true,
+                exp,
+            },
+        )
+        .await?;
+        return Ok(Json(Response { integrity_token }));
+    };
+    let attested = ios_takt.map_or(
+        Attested::Android {
+            key: device_public_key,
+            version_code,
         },
-    )
-    .await?;
-
+        Attested::Ios,
+    );
+    let integrity_token = takt::issue(issuer, &mut redis, attested, exp).await?;
     Ok(Json(Response { integrity_token }))
 }
 
-pub(super) fn validate_apple_attestation_and_get_device_public_key(
-    endpoint: &'static str,
+fn validate_apple_attestation_and_get_device_public_key(
     apple_root_ca_pem: &[u8],
     challenge: &str,
     bundle_identifier: &BundleIdentifier,
@@ -352,7 +406,7 @@ pub(super) fn validate_apple_attestation_and_get_device_public_key(
         // Client-caused failures are marked `ClientException` inside the apple module; a bare
         // error is a server fault.
         let code = if let Some(client_error) = e.downcast_ref::<ClientException>() {
-            tracing::warn!(endpoint, error_code = %client_error.code, message = "Apple attestation rejected");
+            tracing::warn!(endpoint = "/a", error_code = %client_error.code, message = "Apple attestation rejected");
             client_error.code
         } else {
             tracing::error!(error = ?e, "Error validating Apple attestation");
@@ -423,6 +477,9 @@ mod tests {
             apple_attestation: None,
             android_attestation: None,
             device_model: None,
+            format: TokenFormat::Jwt,
+            assertion_key: None,
+            build_version: None,
         }
     }
 

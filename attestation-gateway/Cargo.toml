@@ -53,7 +53,7 @@ tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json"] }
 uuid = { version = "1.23.4", default-features = false, features = ["v4"] }
 # TODO: pin a release; this unmerged branch implements the WIP-106 TAKT and AAT (worldcoin/world-id-protocol#1112).
-world-id-primitives = { git = "https://github.com/worldcoin/world-id-protocol", rev = "cd397049b7646d05b764436c82ed26a49a36dc9f", default-features = false }
+world-id-primitives = { git = "https://github.com/worldcoin/world-id-protocol", rev = "d3cf68e7ea52d882686053ec3ea402f24eeda3e2", default-features = false }
 x509-parser = "0.18.1"
 
 [build-dependencies]

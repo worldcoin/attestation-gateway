@@ -1,13 +1,12 @@
-//! `POST /takt`: issues WIP-106 Trust Anchor Key Tokens for a device-bound `assertion_key`.
+//! The `takt` format of `/a`: WIP-106 Trust Anchor Key Tokens, and the Authenticator Metadata.
 //!
-//! Uses the same `/c` nonce and key attestations as `/a`: on Android the attested Keystore key is
-//! the `assertion_key`; on iOS the App Attest challenge commits to a separate Secure Enclave key,
-//! as the App Attest key itself can not sign arbitrary data.
+//! On Android the attested Keystore key is the `assertion_key`. On iOS the App Attest challenge
+//! commits to a separate Secure Enclave key, as the App Attest key itself can not sign arbitrary
+//! data.
 
 use std::{sync::Arc, time::SystemTime};
 
-use axum::{Extension, http::HeaderMap};
-use axum_jsonschema::Json;
+use axum::Extension;
 use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -15,306 +14,148 @@ use base64::{
 use p256::ecdsa::VerifyingKey;
 use redis::{AsyncCommands, aio::ConnectionManager};
 use schemars::JsonSchema;
-use world_id_primitives::authenticator_assertion::{Platform, SecFlags, SecLevel};
+use world_id_primitives::authenticator_assertion::{self, SecFlags, SecLevel};
 
-use super::a::{
-    headers_to_map, map_android_attestation_error,
-    validate_apple_attestation_and_get_device_public_key,
-};
 use crate::{
-    android::{AndroidAttestationInput, AndroidAttestationService},
-    nonces::{NonceDb, NonceDbError, TokenDetails},
     takt_issuer::{AuthenticatorMetadata, IssueError, TaktIssuer},
-    utils::{BundleIdentifier, ErrorCode, GlobalConfig, RequestError, client_session_id},
+    utils::{ErrorCode, Platform, RequestError},
 };
 
-/// Request for a WIP-106 Trust Anchor Key Token.
-#[derive(serde::Deserialize, JsonSchema)]
-pub struct TaktRequest {
-    /// Single-use nonce from `/c`.
-    pub nonce: String,
-    pub app_version: String,
-    pub bundle_identifier: BundleIdentifier,
-    /// iOS only: the App Attest attestation, with the challenge from [`apple_challenge`].
-    pub apple_attestation: Option<String>,
-    /// iOS only: the Secure Enclave `assertion_key`, base64 of its uncompressed SEC1 encoding.
-    pub assertion_key: Option<String>,
-    /// iOS only: the Authenticator's build. Android attests its `versionCode` instead.
-    pub build_version: Option<u32>,
-    /// Android only: the Key Attestation certificate chain of the `assertion_key`, as for `/a`.
-    pub android_attestation: Option<Vec<String>>,
-    pub device_model: Option<String>,
+/// Output format of `/a`.
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum TokenFormat {
+    /// A JWT integrity token signed with KMS.
+    #[default]
+    Jwt,
+    /// A WIP-106 Trust Anchor Key Token, as base64url of its CWT encoding without padding.
+    Takt,
 }
 
-#[derive(Debug, serde::Serialize, JsonSchema)]
-pub struct TaktResponse {
-    /// The TAKT's CWT encoding, base64url without padding.
-    pub takt: String,
+/// The iOS inputs of a TAKT: the Secure Enclave `assertion_key` and the reported build.
+pub(super) struct IosInputs {
+    assertion_key: VerifyingKey,
+    build_version: u32,
 }
 
-/// Why a TAKT request failed, as the bounded `reason` tag of the `takt.failure` metric.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FailureReason {
-    /// `TAKT_SIGNING_KEY` is unset.
-    Disabled,
-    BundleDisabled,
-    InvalidRequest,
-    NonceNotFound,
-    /// The platform rejected the attestation; see `error_code`.
-    AttestationRejected,
-    /// Android attested no `versionCode` for the app.
-    MissingBuildVersion,
-    /// The `assertion_key` was attested before with other security flags (WIP-106 §3.4).
-    SecFlagsConflict,
-    /// The signing key is outside the window in which it may sign; needs a key rotation.
-    KeyNotValid,
-    /// Unexpected error in a dependency (Redis, nonce store) or building the token.
-    InternalError,
-}
+impl IosInputs {
+    /// Parses the request's `assertion_key` (base64 SEC1 P-256) and `build_version`.
+    pub(super) fn parse(
+        assertion_key: Option<&str>,
+        build_version: Option<u32>,
+    ) -> Result<Self, RequestError> {
+        let assertion_key = assertion_key
+            .and_then(|key| STANDARD.decode(key).ok())
+            .and_then(|key| VerifyingKey::from_sec1_bytes(&key).ok())
+            .ok_or_else(|| {
+                bad_request("`assertion_key` must be a base64 SEC1 P-256 public key.")
+            })?;
+        let build_version =
+            build_version.ok_or_else(|| bad_request("`build_version` is required on iOS."))?;
+        Ok(Self {
+            assertion_key,
+            build_version,
+        })
+    }
 
-impl FailureReason {
-    const fn tag(self) -> &'static str {
-        match self {
-            Self::Disabled => "disabled",
-            Self::BundleDisabled => "bundle_disabled",
-            Self::InvalidRequest => "invalid_request",
-            Self::NonceNotFound => "nonce_not_found",
-            Self::AttestationRejected => "attestation_rejected",
-            Self::MissingBuildVersion => "missing_build_version",
-            Self::SecFlagsConflict => "sec_flags_conflict",
-            Self::KeyNotValid => "key_not_valid",
-            Self::InternalError => "internal_error",
-        }
+    /// The App Attest challenge for a TAKT: `/a`'s `n=<nonce>,av=<app_version>`, extended with
+    /// the reported `build_version` and `k=`, the lowercase hex SHA-256 of the `assertion_key`'s
+    /// EC2 `COSE_Key` (WIP-106 §3.7).
+    pub(super) fn apple_challenge(&self, nonce: &str, app_version: &str) -> String {
+        let key = hex::encode(openssl::sha::sha256(&cose_key(&self.assertion_key)));
+        format!(
+            "n={nonce},av={app_version},bv={},k={key}",
+            self.build_version
+        )
     }
 }
 
-struct Failure {
-    reason: FailureReason,
-    error: RequestError,
+/// The attested `assertion_key` and `build_version` a TAKT is issued for.
+pub(super) enum Attested {
+    /// The App Attest challenge committed to these inputs.
+    Ios(IosInputs),
+    /// The attested Keystore key (uncompressed SEC1) and the app's attested `versionCode`.
+    Android {
+        key: Vec<u8>,
+        version_code: Option<u64>,
+    },
 }
 
-const fn fail(reason: FailureReason, code: ErrorCode) -> Failure {
-    Failure {
-        reason,
-        error: RequestError {
-            code,
-            details: None,
-        },
-    }
+/// The issuer, or a 400 if this deployment does not issue TAKTs.
+pub(super) fn enabled(issuer: Option<&TaktIssuer>) -> Result<&TaktIssuer, RequestError> {
+    issuer.ok_or_else(|| {
+        rejected("disabled");
+        bad_request("Format `takt` is not enabled.")
+    })
 }
 
-fn bad_request(details: &str) -> Failure {
-    Failure {
-        reason: FailureReason::InvalidRequest,
-        error: RequestError {
-            code: ErrorCode::BadRequest,
-            details: Some(details.to_string()),
-        },
-    }
-}
-
-const fn internal_error() -> Failure {
-    fail(FailureReason::InternalError, ErrorCode::InternalServerError)
-}
-
-/// Platform tag from the attestation fields, before they are validated.
-const fn platform_tag(request: &TaktRequest) -> &'static str {
-    match (&request.apple_attestation, &request.android_attestation) {
-        (Some(_), None) => "ios",
-        (None, Some(_)) => "android",
-        _ => "unknown",
-    }
-}
-
-// NOTE: Integration tests for route handlers are in the `/tests` module
-
-pub async fn handler(
-    Extension(global_config): Extension<GlobalConfig>,
-    Extension(mut redis): Extension<ConnectionManager>,
-    Extension(mut nonce_db): Extension<NonceDb>,
-    Extension(mut android_attestation): Extension<AndroidAttestationService>,
-    Extension(issuer): Extension<Option<Arc<TaktIssuer>>>,
-    headers: HeaderMap,
-    Json(request): Json<TaktRequest>,
-) -> Result<Json<TaktResponse>, RequestError> {
-    let platform = platform_tag(&request);
-    metrics::counter!("takt.request", "platform" => platform).increment(1);
-
-    let result = handle(
-        issuer.as_deref(),
-        &request,
-        &global_config,
-        &mut redis,
-        &mut nonce_db,
-        &mut android_attestation,
-        &headers,
-    )
-    .await;
-    match result {
-        Ok(takt) => {
-            metrics::counter!("takt.success", "platform" => platform).increment(1);
-            Ok(Json(TaktResponse { takt }))
-        }
-        Err(Failure { reason, error }) => {
-            metrics::counter!(
-                "takt.failure",
-                "platform" => platform,
-                "reason" => reason.tag(),
-                "error_code" => error.code.to_string(),
-            )
-            .increment(1);
-            Err(error)
-        }
-    }
-}
-
-async fn handle(
-    issuer: Option<&TaktIssuer>,
-    request: &TaktRequest,
-    config: &GlobalConfig,
+/// Issues a TAKT for an attested key, expiring at `max_exp` at the latest. Both attestations
+/// prove a hardware-bound key: App Attest, or Android Key Attestation in a TEE or `StrongBox`
+/// (enforced by the Android verifier).
+pub(super) async fn issue(
+    issuer: &TaktIssuer,
     redis: &mut ConnectionManager,
-    nonce_db: &mut NonceDb,
-    android_attestation: &mut AndroidAttestationService,
-    headers: &HeaderMap,
-) -> Result<String, Failure> {
-    let issuer = issuer.ok_or(fail(FailureReason::Disabled, ErrorCode::NotFound))?;
-    config
-        .require_enabled_bundle(&request.bundle_identifier)
-        .map_err(|error| Failure {
-            reason: FailureReason::BundleDisabled,
-            error,
-        })?;
-    let session_id = client_session_id(headers);
-
-    let token_details = nonce_db
-        .consume_nonce(&request.nonce)
-        .await
-        .map_err(|e| match e {
-            NonceDbError::NonceNotFound => {
-                fail(FailureReason::NonceNotFound, ErrorCode::NonceNotFound)
-            }
-            e => {
-                tracing::error!(error = ?e, "Error consuming TAKT nonce");
-                internal_error()
-            }
-        })?;
-
-    let (assertion_key, platform, build_version) = attest(
-        request,
-        config,
-        android_attestation,
-        headers,
-        &token_details,
-        session_id,
-    )
-    .await?;
-
-    // Both attestations prove a hardware-bound key: App Attest, or Android Key Attestation in a
-    // TEE or StrongBox (enforced by the Android verifier).
+    attested: Attested,
+    max_exp: i64,
+) -> Result<String, RequestError> {
+    let (platform, assertion_key, build_version) = match attested {
+        Attested::Ios(inputs) => (
+            Platform::AppleIOS,
+            inputs.assertion_key,
+            inputs.build_version,
+        ),
+        Attested::Android { key, version_code } => {
+            let key = VerifyingKey::from_sec1_bytes(&key)
+                .map_err(|_| bad_request("The attested key is not a P-256 key."))?;
+            let build_version = version_code
+                .and_then(|version| u32::try_from(version).ok())
+                .ok_or_else(|| {
+                    rejected("missing_build_version");
+                    RequestError {
+                        code: ErrorCode::AttestationRejected,
+                        details: None,
+                    }
+                })?;
+            (Platform::Android, key, build_version)
+        }
+    };
+    let takt_platform = match platform {
+        Platform::AppleIOS => authenticator_assertion::Platform::Ios,
+        Platform::Android => authenticator_assertion::Platform::Android,
+    };
     let sec_flags = SecFlags::new(
-        platform.into(),
+        takt_platform.into(),
         SecLevel::HardwareKey.into(),
         build_version,
         0,
     )
-    .map_err(|e| {
-        tracing::error!(error = ?e, "Invalid TAKT security flags");
-        internal_error()
-    })?;
+    .map_err(|e| internal_error("Invalid TAKT security flags", &e))?;
 
-    let now = unix_now().ok_or_else(internal_error)?;
-    let max_exp = u64::try_from(token_details.exp_max).unwrap_or(0);
+    let now = unix_now()?;
     claim_sec_flags(redis, &assertion_key, sec_flags, issuer.lifetime_secs()).await?;
-
     let cwt = issuer
-        .issue(assertion_key, sec_flags, now, max_exp)
+        .issue(
+            assertion_key,
+            sec_flags,
+            now,
+            u64::try_from(max_exp).unwrap_or(0),
+        )
         .map_err(|e| match e {
-            // High-frequency once it happens; alert on the `key_not_valid` metric instead of logging.
+            // High-frequency once it happens; alert on the metric instead of logging.
             IssueError::KeyNotValid => {
-                fail(FailureReason::KeyNotValid, ErrorCode::InternalServerError)
+                rejected("key_not_valid");
+                RequestError {
+                    code: ErrorCode::InternalServerError,
+                    details: None,
+                }
             }
-            IssueError::Token(e) => {
-                tracing::error!(error = ?e, "Error issuing TAKT");
-                internal_error()
-            }
+            IssueError::Token(e) => internal_error("Error issuing TAKT", &e),
         })?;
+    metrics::counter!("attestation_gateway.takt_issued", "platform" => platform.to_string())
+        .increment(1);
     Ok(URL_SAFE_NO_PAD.encode(cwt))
-}
-
-/// Verifies the platform attestation and returns the `assertion_key`, its platform and the
-/// `build_version` to attest.
-async fn attest(
-    request: &TaktRequest,
-    config: &GlobalConfig,
-    android_attestation: &mut AndroidAttestationService,
-    headers: &HeaderMap,
-    token_details: &TokenDetails,
-    session_id: &str,
-) -> Result<(VerifyingKey, Platform, u32), Failure> {
-    match (&request.apple_attestation, &request.android_attestation) {
-        (Some(apple_attestation), None) => {
-            let assertion_key = request
-                .assertion_key
-                .as_deref()
-                .and_then(|key| STANDARD.decode(key).ok())
-                .and_then(|key| VerifyingKey::from_sec1_bytes(&key).ok())
-                .ok_or_else(|| {
-                    bad_request("`assertion_key` must be a base64 SEC1 P-256 public key.")
-                })?;
-            let build_version = request
-                .build_version
-                .ok_or_else(|| bad_request("`build_version` is required on iOS."))?;
-            let challenge = apple_challenge(
-                &request.nonce,
-                &request.app_version,
-                build_version,
-                &assertion_key,
-            );
-            validate_apple_attestation_and_get_device_public_key(
-                "/takt",
-                &config.apple_root_ca_pem,
-                &challenge,
-                &request.bundle_identifier,
-                apple_attestation.clone(),
-            )
-            .map_err(|error| Failure {
-                reason: FailureReason::AttestationRejected,
-                error,
-            })?;
-            Ok((assertion_key, Platform::Ios, build_version))
-        }
-        (None, Some(raw_cert_chain)) => {
-            let output = android_attestation
-                .verify(AndroidAttestationInput {
-                    raw_cert_chain,
-                    nonce: &request.nonce,
-                    requested_exp: None,
-                    app_version: &request.app_version,
-                    bundle_identifier: &request.bundle_identifier,
-                    device_model: request.device_model.as_deref(),
-                    request_headers: &headers_to_map(headers),
-                    token_details,
-                })
-                .await
-                .map_err(|e| Failure {
-                    reason: FailureReason::AttestationRejected,
-                    error: map_android_attestation_error(&e, "/takt", session_id),
-                })?;
-            let assertion_key = VerifyingKey::from_sec1_bytes(&output.device_public_key)
-                .map_err(|_| bad_request("The attested key is not a P-256 key."))?;
-            let build_version = output
-                .version_code
-                .and_then(|version| u32::try_from(version).ok())
-                .ok_or(fail(
-                    FailureReason::MissingBuildVersion,
-                    ErrorCode::AttestationRejected,
-                ))?;
-            Ok((assertion_key, Platform::Android, build_version))
-        }
-        _ => Err(bad_request(
-            "Provide either `apple_attestation` or `android_attestation`.",
-        )),
-    }
 }
 
 /// Records the `sec_flags` an `assertion_key` is attested with for one TAKT lifetime, and rejects
@@ -325,7 +166,7 @@ async fn claim_sec_flags(
     assertion_key: &VerifyingKey,
     sec_flags: SecFlags,
     lifetime_secs: u32,
-) -> Result<(), Failure> {
+) -> Result<(), RequestError> {
     let redis_key = format!(
         "takt:sec_flags:{}",
         hex::encode(openssl::sha::sha256(
@@ -333,10 +174,8 @@ async fn claim_sec_flags(
         ))
     );
     let packed = sec_flags.pack();
-    let redis_error = |e: redis::RedisError| {
-        tracing::error!(error = ?e, "Error recording TAKT security flags");
-        internal_error()
-    };
+    let redis_error =
+        |e: redis::RedisError| internal_error("Error recording TAKT security flags", &e);
     let options = redis::SetOptions::default()
         .conditional_set(redis::ExistenceCheck::NX)
         .with_expiration(redis::SetExpiry::EX(u64::from(lifetime_secs)));
@@ -350,39 +189,31 @@ async fn claim_sec_flags(
         redis.get(&redis_key).await.map_err(redis_error)?
     };
     match stored {
-        None => Ok(()),
-        Some(stored) if stored == packed => Ok(()),
-        Some(_) => Err(Failure {
-            reason: FailureReason::SecFlagsConflict,
-            error: RequestError {
+        Some(stored) if stored != packed => {
+            rejected("sec_flags_conflict");
+            Err(RequestError {
                 code: ErrorCode::AttestationRejected,
                 details: Some(
                     "`assertion_key` is already attested with other security flags.".to_string(),
                 ),
-            },
-        }),
+            })
+        }
+        _ => Ok(()),
     }
 }
 
-fn unix_now() -> Option<u64> {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .map_err(|e| tracing::error!(error = ?e, "System clock is before the Unix epoch"))
-        .ok()
-}
-
-/// The App Attest challenge for a TAKT: `/a`'s `n=<nonce>,av=<app_version>`, extended with the
-/// reported `build_version` and `k=`, the lowercase hex SHA-256 of the `assertion_key`'s EC2
-/// `COSE_Key` (WIP-106 §3.7).
-fn apple_challenge(
-    nonce: &str,
-    app_version: &str,
-    build_version: u32,
-    assertion_key: &VerifyingKey,
-) -> String {
-    let key = hex::encode(openssl::sha::sha256(&cose_key(assertion_key)));
-    format!("n={nonce},av={app_version},bv={build_version},k={key}")
+/// Serves `/.well-known/world-id-authenticator.json` (WIP-106 §3.9).
+pub async fn metadata_handler(
+    Extension(issuer): Extension<Option<Arc<TaktIssuer>>>,
+) -> Result<axum::Json<AuthenticatorMetadata>, RequestError> {
+    let issuer = issuer.ok_or(RequestError {
+        code: ErrorCode::NotFound,
+        details: None,
+    })?;
+    let metadata = issuer
+        .metadata(unix_now()?)
+        .map_err(|e| internal_error("Error building authenticator metadata", &e))?;
+    Ok(axum::Json(metadata))
 }
 
 /// The EC2 P-256 `COSE_Key` `{1: 2, -1: 1, -2: x, -3: y}` in deterministic CBOR, as carried in the
@@ -399,25 +230,31 @@ fn cose_key(key: &VerifyingKey) -> Vec<u8> {
     out
 }
 
-/// Serves `/.well-known/world-id-authenticator.json` (WIP-106 §3.9).
-pub async fn metadata_handler(
-    Extension(issuer): Extension<Option<Arc<TaktIssuer>>>,
-) -> Result<axum::Json<AuthenticatorMetadata>, RequestError> {
-    let not_found = RequestError {
-        code: ErrorCode::NotFound,
-        details: None,
-    };
-    let issuer = issuer.ok_or(not_found)?;
-    let internal = || RequestError {
+fn unix_now() -> Result<u64, RequestError> {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|e| internal_error("System clock is before the Unix epoch", &e))
+}
+
+fn rejected(reason: &'static str) {
+    metrics::counter!("attestation_gateway.takt_rejected", "reason" => reason).increment(1);
+}
+
+fn bad_request(details: &str) -> RequestError {
+    tracing::warn!(endpoint = "/a", format = "takt", message = %details);
+    RequestError {
+        code: ErrorCode::BadRequest,
+        details: Some(details.to_string()),
+    }
+}
+
+fn internal_error(message: &'static str, error: &dyn std::fmt::Debug) -> RequestError {
+    tracing::error!(?error, message);
+    RequestError {
         code: ErrorCode::InternalServerError,
         details: None,
-    };
-    let now = unix_now().ok_or_else(internal)?;
-    let metadata = issuer.metadata(now).map_err(|e| {
-        tracing::error!(error = ?e, "Error building authenticator metadata");
-        internal()
-    })?;
-    Ok(axum::Json(metadata))
+    }
 }
 
 #[cfg(test)]
@@ -432,6 +269,14 @@ mod tests {
             .verifying_key()
     }
 
+    fn challenge(nonce: &str, app_version: &str, build_version: u32, key: VerifyingKey) -> String {
+        IosInputs {
+            assertion_key: key,
+            build_version,
+        }
+        .apple_challenge(nonce, app_version)
+    }
+
     #[test]
     fn cose_key_matches_the_takt_cnf_claim() {
         // WIP-106 Appendix A1: the `assertion_key` secret is 32 bytes of `0x09`, and its
@@ -444,29 +289,20 @@ mod tests {
 
     #[test]
     fn apple_challenge_binds_every_value() {
-        let reference = apple_challenge("n1", "1.0", 2006, &key(9));
+        let reference = challenge("n1", "1.0", 2006, key(9));
         assert!(reference.starts_with("n=n1,av=1.0,bv=2006,k="));
-        assert_ne!(apple_challenge("n2", "1.0", 2006, &key(9)), reference);
-        assert_ne!(apple_challenge("n1", "1.1", 2006, &key(9)), reference);
-        assert_ne!(apple_challenge("n1", "1.0", 2007, &key(9)), reference);
-        assert_ne!(apple_challenge("n1", "1.0", 2006, &key(8)), reference);
+        assert_ne!(challenge("n2", "1.0", 2006, key(9)), reference);
+        assert_ne!(challenge("n1", "1.1", 2006, key(9)), reference);
+        assert_ne!(challenge("n1", "1.0", 2007, key(9)), reference);
+        assert_ne!(challenge("n1", "1.0", 2006, key(8)), reference);
     }
 
     #[test]
-    fn failure_reason_tags_are_distinct() {
-        use FailureReason::*;
-        let reasons = [
-            Disabled,
-            BundleDisabled,
-            InvalidRequest,
-            NonceNotFound,
-            AttestationRejected,
-            MissingBuildVersion,
-            SecFlagsConflict,
-            KeyNotValid,
-            InternalError,
-        ];
-        let tags: std::collections::HashSet<_> = reasons.iter().map(|r| r.tag()).collect();
-        assert_eq!(tags.len(), reasons.len());
+    fn format_defaults_to_jwt() {
+        assert_eq!(TokenFormat::default(), TokenFormat::Jwt);
+        assert_eq!(
+            serde_json::from_str::<TokenFormat>("\"takt\"").unwrap(),
+            TokenFormat::Takt
+        );
     }
 }

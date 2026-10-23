@@ -26,7 +26,6 @@ pub fn handler() -> ApiRouter {
         .api_route("/a", post(a::handler))
         .api_route("/c", post(c::handler))
         .api_route("/g", post(generate_token::handler))
-        .api_route("/takt", post(takt::handler))
         .api_route(
             "/.well-known/world-id-authenticator.json",
             get(takt::metadata_handler),
