@@ -6,6 +6,7 @@ use crate::{
     aws_clients::AwsClients,
     kinesis::KinesisPublisher,
     nonces::{NonceDb, TokenDetailsFactory},
+    takt_issuer::TaktIssuer,
 };
 use aide::openapi::{Info, OpenApi};
 use aws_sdk_kinesis::Client as KinesisClient;
@@ -77,6 +78,7 @@ pub async fn start(
         .layer(Extension(openapi))
         .layer(Extension(aws_clients))
         .layer(Extension(global_config))
+        .layer(Extension(TaktIssuer::from_env().map(Arc::new)))
         .layer(CompressionLayer::new())
         .layer(Extension(kinesis_publisher.clone()))
         .layer(Extension(android_attestation_service))

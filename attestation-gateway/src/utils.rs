@@ -758,6 +758,8 @@ pub enum ErrorCode {
     InvalidToken,
     InvalidDeveloperToken,
     NonceNotFound,
+    /// The route is disabled on this deployment.
+    NotFound,
     RateLimited,
     RebootRequired,
     RequestHashMismatch,
@@ -780,6 +782,7 @@ impl std::fmt::Display for ErrorCode {
             Self::InvalidToken => write!(f, "invalid_token"),
             Self::InvalidDeveloperToken => write!(f, "invalid_developer_token"),
             Self::NonceNotFound => write!(f, "nonce_not_found"),
+            Self::NotFound => write!(f, "not_found"),
             Self::RateLimited => write!(f, "rate_limited"),
             Self::RebootRequired => write!(f, "reboot_required"),
             Self::RequestHashMismatch => write!(f, "request_hash_mismatch"),
@@ -796,6 +799,7 @@ impl ErrorCode {
             }
             Self::RateLimited => axum::http::StatusCode::TOO_MANY_REQUESTS,
             Self::Forbidden => axum::http::StatusCode::FORBIDDEN,
+            Self::NotFound => axum::http::StatusCode::NOT_FOUND,
             Self::InvalidDeveloperToken => axum::http::StatusCode::UNAUTHORIZED,
             Self::AttestationRejected
             | Self::BadRequest
@@ -835,6 +839,7 @@ impl ErrorCode {
                 "This public key has already gone through initial attestation. Use assertion instead."
             }
             Self::InvalidPublicKey => "Public key has not been attested.",
+            Self::NotFound => "This endpoint is not enabled on this deployment.",
             Self::InvalidToken => "The provided token or attestation is invalid or malformed.",
             Self::InvalidDeveloperToken => "The provided developer token is invalid or malformed.",
             Self::RateLimited => "Too many attestation attempts. Please try again later.",
@@ -880,7 +885,8 @@ impl ErrorCode {
             | Self::InvalidInitialAttestation
             | Self::InvalidPublicKey
             | Self::InvalidToken
-            | Self::InvalidDeveloperToken => false,
+            | Self::InvalidDeveloperToken
+            | Self::NotFound => false,
         }
     }
 }

@@ -14,6 +14,7 @@ pub mod nonces;
 mod origin_verify;
 pub mod routes;
 pub mod server;
+pub mod takt_issuer;
 pub mod utils;
 
 pub use bootstrap::{start_from_env, start_from_env_with_android_risk_evaluator};
