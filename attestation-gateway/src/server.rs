@@ -45,7 +45,7 @@ pub async fn start(
     let kinesis_publisher =
         KinesisPublisher::start(kinesis_client, global_config.kinesis_stream_arn.clone());
     let nonce_db = NonceDb::new(redis.clone());
-    let audience_authorizer = AudienceAuthorizer::from_config(redis.clone(), &global_config);
+    let audience_authorizer = AudienceAuthorizer::from_config(&global_config);
     let token_details_factory = TokenDetailsFactory::from_config(&global_config);
 
     let android_rate_limit_per_day = env::var("ANDROID_RATE_LIMIT_PER_DAY").ok().map(|v| {

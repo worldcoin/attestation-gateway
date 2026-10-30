@@ -59,8 +59,6 @@ pub struct GlobalConfig {
     pub apple_root_ca_pem: Vec<u8>,
     pub aud_whitelist: Vec<String>,
     pub jwt_issuer: String,
-    pub developer_portal_base_url: Option<String>,
-    pub aud_authorization_cache_ttl_secs: u64,
     /// `/a` token lifetime per `aud`; unlisted audiences get the 5 min default.
     pub token_exp_max_by_aud: HashMap<String, TokenExpiration>,
 }
@@ -121,14 +119,6 @@ impl GlobalConfig {
         let jwt_issuer =
             env::var("JWT_ISSUER").unwrap_or_else(|_| "attestation.worldcoin.org".to_string());
 
-        let developer_portal_base_url = env::var("DEVELOPER_PORTAL_BASE_URL")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-
-        let aud_authorization_cache_ttl_secs = env::var("AUD_AUTHORIZATION_CACHE_TTL_SECS")
-            .map_or(Ok(60 * 60), |value| value.parse::<u64>())
-            .expect("AUD_AUTHORIZATION_CACHE_TTL_SECS must be a valid u64");
-
         let token_exp_max_by_aud = env::var("TOKEN_EXP_MAX_SECS_BY_AUD")
             .map_or_else(|_| Ok(HashMap::new()), |val| serde_json::from_str(&val))
             .unwrap_or_else(|e| panic!("invalid `TOKEN_EXP_MAX_SECS_BY_AUD`: {e}"));
@@ -151,8 +141,6 @@ impl GlobalConfig {
             apple_root_ca_pem: include_bytes!("apple/apple_app_attestation_root_ca.pem").to_vec(),
             aud_whitelist,
             jwt_issuer,
-            developer_portal_base_url,
-            aud_authorization_cache_ttl_secs,
             token_exp_max_by_aud,
         }
     }
@@ -1495,8 +1483,6 @@ mod tests {
             apple_root_ca_pem: Vec::new(),
             aud_whitelist: Vec::new(),
             jwt_issuer: String::new(),
-            developer_portal_base_url: None,
-            aud_authorization_cache_ttl_secs: 0,
             token_exp_max_by_aud: HashMap::new(),
         }
     }
