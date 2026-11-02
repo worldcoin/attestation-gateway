@@ -55,20 +55,16 @@ pub async fn handler(
     );
     let _enter = tracing_span.enter();
 
-    crate::latency::measure(
-        "audience_authorization",
-        audience_authorizer.ensure_authorized(&request.aud),
-    )
-    .await
+    crate::latency::measure_sync("audience_authorization", || {
+        audience_authorizer.ensure_authorized(&request.aud)
+    })
     .map_err(|error| {
-        if matches!(error, AudienceAuthorizationError::NotAuthorized) {
-            tracing::warn!(
-                aud = %request.aud,
-                endpoint = "/c",
-                session_id = %session_id,
-                message = "Audience is not authorized"
-            );
-        }
+        tracing::warn!(
+            aud = %request.aud,
+            endpoint = "/c",
+            session_id = %session_id,
+            message = "Audience is not authorized"
+        );
         RequestError::from(error)
     })?;
 
@@ -107,14 +103,6 @@ impl From<AudienceAuthorizationError> for RequestError {
                 code: ErrorCode::BadRequest,
                 details: Some("This audience is currently unavailable.".to_owned()),
             },
-            error => {
-                tracing::error!(error = ?error, "Failed to authorize audience");
-
-                Self {
-                    code: ErrorCode::InternalServerError,
-                    details: Some("Failed to authorize audience.".to_owned()),
-                }
-            }
         }
     }
 }

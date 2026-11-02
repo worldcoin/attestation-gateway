@@ -35,7 +35,7 @@ not automatically inherited by spawned background tasks.
 
 | Operation | Meaning |
 | --- | --- |
-| `audience_authorization` | `/c` audience policy check, including Redis cache and Developer Portal lookup when required |
+| `audience_authorization` | `/c` audience policy check, using the static allowlist and app/RP ID format validation |
 | `nonce_create`, `nonce_consume` | Redis nonce creation/consumption and associated serialization |
 | `replay_acquire`, `replay_release` | `/g` Redis replay reservation/cleanup |
 | `apple_key_register`, `apple_key_read`, `apple_counter_update` | Apple DynamoDB calls and response handling |
