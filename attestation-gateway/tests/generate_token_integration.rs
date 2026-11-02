@@ -1617,6 +1617,48 @@ fn helper_generate_valid_assertion(
 
 #[tokio::test]
 #[serial]
+async fn test_apple_counter_update_rejects_reused_counter() {
+    let aws_clients = get_aws_clients_extension().await;
+    let table_name = APPLE_KEYS_DYNAMO_TABLE_NAME.to_string();
+    apple::dynamo::insert_apple_public_key(
+        &aws_clients.dynamodb,
+        &table_name,
+        BundleIdentifier::OrgWorldcoinInsightStaging,
+        TEST_ATTESTATION_KEY_ID.to_string(),
+        TEST_ATTESTATION_RAW_PUBLIC_KEY.to_string(),
+        "receipt".to_string(),
+    )
+    .await
+    .unwrap();
+
+    apple::dynamo::update_apple_public_key_counter_plus(
+        &aws_clients.dynamodb,
+        &table_name,
+        TEST_ATTESTATION_KEY_ID.to_string(),
+        1,
+    )
+    .await
+    .unwrap();
+    let error = apple::dynamo::update_apple_public_key_counter_plus(
+        &aws_clients.dynamodb,
+        &table_name,
+        TEST_ATTESTATION_KEY_ID.to_string(),
+        1,
+    )
+    .await
+    .unwrap_err();
+
+    let error = error
+        .downcast_ref::<attestation_gateway::utils::ClientException>()
+        .unwrap();
+    assert_eq!(
+        error.code,
+        attestation_gateway::utils::ErrorCode::IntegrityFailed
+    );
+}
+
+#[tokio::test]
+#[serial]
 /// Asserts that there is no race condition when the same counter in an Apple assertion is used multiple times at the same time
 async fn test_apple_counter_race_condition() {
     // Generate a temp key
@@ -1692,6 +1734,7 @@ async fn test_apple_counter_race_condition() {
                     StatusCode::BAD_REQUEST => {
                         let response = response.into_body().collect().await.unwrap().to_bytes();
                         let response: Value = serde_json::from_slice(&response).unwrap();
+                        assert_eq!(response["allowRetry"], false);
                         response["error"]["code"].as_str().unwrap().to_string()
                     }
                     _ => panic!("Unexpected status code: {:?}", code),
@@ -1720,12 +1763,11 @@ async fn test_apple_counter_race_condition() {
     let count_ok = response_codes.iter().filter(|&code| code == "ok").count();
     assert_eq!(count_ok, 1);
 
-    // rest is expired_tokens
-    let count_expired = response_codes
+    let count_rejected = response_codes
         .iter()
-        .filter(|&code| code == "expired_token")
+        .filter(|&code| code == "integrity_failed")
         .count();
-    assert_eq!(count_expired, num_calls - 1);
+    assert_eq!(count_rejected, num_calls - 1, "{response_codes:?}");
 }
 
 // !SECTION ------------------ apple assertions tests ------------------

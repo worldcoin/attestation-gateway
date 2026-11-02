@@ -169,7 +169,7 @@ pub async fn update_apple_public_key_counter_plus(
             let service_error = e.into_service_error();
             if service_error.is_conditional_check_failed_exception() {
                 eyre::bail!(ClientException {
-                    code: ErrorCode::ExpiredToken,
+                    code: ErrorCode::IntegrityFailed,
                     internal_debug_info:
                         "Counter has already been used in Dynamo, race condition prevented."
                             .to_string(),
