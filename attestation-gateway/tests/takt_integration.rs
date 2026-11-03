@@ -17,7 +17,7 @@ use attestation_gateway::{
     apple,
     aws_clients::AwsClients,
     nonces::{NonceDb, TokenDetailsFactory},
-    takt_issuer::TaktIssuer,
+    takt::TaktIssuer,
     utils::{AndroidResponseKeys, BundleIdentifier, GlobalConfig},
 };
 use axum::{

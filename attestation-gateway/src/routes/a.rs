@@ -3,7 +3,10 @@ use crate::aws_clients::AwsClients;
 use std::sync::Arc;
 
 use axum::{Extension, Json, http::HeaderMap};
-use base64::{Engine, engine::general_purpose::STANDARD as Base64};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD as Base64, URL_SAFE_NO_PAD},
+};
 use chrono::Utc;
 use josekit::jwt::JwtPayload;
 use openssl::{
@@ -16,7 +19,6 @@ use openssl::{
 use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
 
-use super::takt::{self, Attested, IosInputs, TokenFormat};
 use crate::{
     android::{
         AndroidAttestationError, AndroidAttestationInput, AndroidAttestationOutput,
@@ -24,7 +26,7 @@ use crate::{
     },
     apple, keys, kms_jws,
     nonces::{NonceDb, NonceDbError, TokenDetails},
-    takt_issuer::TaktIssuer,
+    takt::{self, Attested, IosInputs, TaktError, TaktIssuer},
     utils::{
         BundleIdentifier, ClientException, ErrorCode, GlobalConfig, Platform, RequestError,
         client_session_id,
@@ -53,6 +55,19 @@ fn bad_request(details: impl Into<String>) -> RequestError {
         code: ErrorCode::BadRequest,
         details: Some(details),
     }
+}
+
+/// Output format of `/a`.
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum TokenFormat {
+    /// A JWT integrity token signed with KMS.
+    #[default]
+    Jwt,
+    /// A WIP-106 Trust Anchor Key Token, as base64url of its CWT encoding without padding.
+    Takt,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, JsonSchema)]
@@ -261,7 +276,10 @@ pub async fn handler(
             ));
         }
         TokenFormat::Jwt => None,
-        TokenFormat::Takt => Some(takt::enabled(issuer.as_deref())?),
+        TokenFormat::Takt => Some(issuer.as_deref().ok_or_else(|| {
+            takt::rejected("disabled");
+            bad_request("Format `takt` is not enabled.")
+        })?),
     };
 
     let token_details = crate::latency::measure(
@@ -292,10 +310,10 @@ pub async fn handler(
         Platform::AppleIOS => "ios",
     });
     let ios_takt = match (issuer, platform) {
-        (Some(_), Platform::AppleIOS) => Some(IosInputs::parse(
-            request.assertion_key.as_deref(),
-            request.build_version,
-        )?),
+        (Some(_), Platform::AppleIOS) => Some(
+            IosInputs::parse(request.assertion_key.as_deref(), request.build_version)
+                .map_err(takt_error)?,
+        ),
         (Some(_), Platform::Android)
             if request.assertion_key.is_some() || request.build_version.is_some() =>
         {
@@ -372,7 +390,8 @@ pub async fn handler(
         },
         Attested::Ios,
     );
-    let integrity_token = takt::issue(issuer, attested, exp)?;
+    let integrity_token =
+        URL_SAFE_NO_PAD.encode(takt::issue(issuer, attested, exp).map_err(takt_error)?);
     Ok(Json(Response { integrity_token }))
 }
 
@@ -464,6 +483,27 @@ async fn generate_integrity_token(
     Ok(integrity_token)
 }
 
+fn takt_error(e: TaktError) -> RequestError {
+    let internal = RequestError {
+        code: ErrorCode::InternalServerError,
+        details: None,
+    };
+    match e {
+        TaktError::InvalidInput(details) => bad_request(details),
+        TaktError::InvalidKey => bad_request("The attested key is not a P-256 key."),
+        TaktError::MissingBuildVersion => RequestError {
+            code: ErrorCode::AttestationRejected,
+            details: None,
+        },
+        // High-frequency once it happens; alert on the metric instead of logging.
+        TaktError::KeyNotValid => internal,
+        TaktError::Internal(e) => {
+            tracing::error!(error = ?e, "Error issuing TAKT");
+            internal
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,6 +521,15 @@ mod tests {
             assertion_key: None,
             build_version: None,
         }
+    }
+
+    #[test]
+    fn format_defaults_to_jwt() {
+        assert_eq!(TokenFormat::default(), TokenFormat::Jwt);
+        assert_eq!(
+            serde_json::from_str::<TokenFormat>("\"takt\"").unwrap(),
+            TokenFormat::Takt
+        );
     }
 
     #[test]

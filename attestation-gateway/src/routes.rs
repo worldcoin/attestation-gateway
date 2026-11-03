@@ -11,7 +11,6 @@ mod c;
 mod generate_token;
 mod health;
 mod jwks;
-mod takt;
 
 #[must_use]
 pub fn get_timeout_layer() -> TimeoutLayer {

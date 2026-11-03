@@ -1,5 +1,3 @@
-//! WIP-106 Trust Anchor Key Token (TAKT) issuance.
-//!
 //! The `trust_anchor_key` is a `BabyJubJub` key that KMS cannot hold, so it is loaded from the
 //! environment. It should move to a TEE or HSM before production (WIP-106 §3.3).
 
@@ -11,22 +9,14 @@ use world_id_primitives::authenticator_assertion::{
     MAX_TAKT_LIFETIME_SECS, SecFlags, TaktClaims, TrustAnchorKeyToken,
 };
 
+use super::TaktError;
+
 /// Longest validity window of one key (WIP-106 §3.3).
 const MAX_KEY_VALIDITY_SECS: u64 = 15_552_000;
 
 /// Default TAKT lifetime (7 days), below `MAX_TAKT_LIFETIME_SECS` to limit how long a TAKT
 /// outlives a device compromised after issuance.
 const DEFAULT_TAKT_LIFETIME_SECS: u32 = 604_800;
-
-/// Why a TAKT could not be issued.
-#[derive(Debug, thiserror::Error)]
-pub enum IssueError {
-    /// `now` is outside the window in which the key may sign (see [`TaktIssuer::issue`]).
-    #[error("trust anchor key may not sign at this time")]
-    KeyNotValid,
-    #[error(transparent)]
-    Token(#[from] eyre::Report),
-}
 
 /// Issues TAKTs with the Authenticator Provider's `trust_anchor_key`.
 pub struct TaktIssuer {
@@ -38,7 +28,7 @@ pub struct TaktIssuer {
 
 impl TaktIssuer {
     /// Loads the issuer from the environment. Returns `None` if `TAKT_SIGNING_KEY` is unset, which
-    /// disables the `/takt` route.
+    /// disables the `takt` format of `/a`.
     ///
     /// # Panics
     /// If any `TAKT_*` variable is malformed, so a misconfigured issuer fails at startup.
@@ -112,17 +102,17 @@ impl TaktIssuer {
     /// `lifetime_secs` after `now`, or at `max_exp` if that is earlier.
     ///
     /// # Errors
-    /// [`IssueError::KeyNotValid`] if `now` is outside `[not_before, not_after - lifetime)`;
-    /// [`IssueError::Token`] if the token can not be built or encoded.
+    /// [`TaktError::KeyNotValid`] if `now` is outside `[not_before, not_after - lifetime)`;
+    /// [`TaktError::Internal`] if the token can not be built or encoded.
     pub fn issue(
         &self,
         assertion_key: VerifyingKey,
         sec_flags: SecFlags,
         now: u64,
         max_exp: u64,
-    ) -> Result<Vec<u8>, IssueError> {
+    ) -> Result<Vec<u8>, TaktError> {
         if !(self.not_before..self.signing_end()).contains(&now) {
-            return Err(IssueError::KeyNotValid);
+            return Err(TaktError::KeyNotValid);
         }
         let to_u32 = |value: u64| {
             u32::try_from(value).map_err(|_| eyre::eyre!("TAKT time {value} does not fit in a u32"))
@@ -203,8 +193,8 @@ mod tests {
         let issue = |now| issuer.issue(assertion_key(), flags(), now, u64::MAX);
         assert!(issue(NOW - 100).is_ok());
         assert!(issue(NOW + 99).is_ok());
-        assert!(matches!(issue(NOW - 101), Err(IssueError::KeyNotValid)));
-        assert!(matches!(issue(NOW + 100), Err(IssueError::KeyNotValid)));
+        assert!(matches!(issue(NOW - 101), Err(TaktError::KeyNotValid)));
+        assert!(matches!(issue(NOW + 100), Err(TaktError::KeyNotValid)));
     }
 
     #[test]

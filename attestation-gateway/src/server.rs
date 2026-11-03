@@ -6,7 +6,7 @@ use crate::{
     aws_clients::AwsClients,
     kinesis::KinesisPublisher,
     nonces::{NonceDb, TokenDetailsFactory},
-    takt_issuer::TaktIssuer,
+    takt::TaktIssuer,
 };
 use aide::openapi::{Info, OpenApi};
 use aws_sdk_kinesis::Client as KinesisClient;
