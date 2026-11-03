@@ -32,3 +32,9 @@ allow = [
   "Zlib",
 ]
 
+[advisories]
+ignore = [
+  "RUSTSEC-2024-0388", # Unmaintained `derivative`; transitive via `world-id-primitives` (ark-ff), ignored upstream too
+  "RUSTSEC-2024-0436", # Unmaintained `paste`; transitive via `world-id-primitives` (alloy-primitives), ignored upstream too
+  "RUSTSEC-2026-0387", # `crypto-bigint` 0.5 timing; via `p256` 0.13, used only on public keys here. Fixed in 0.7, which `world-id-primitives` does not support yet
+]
