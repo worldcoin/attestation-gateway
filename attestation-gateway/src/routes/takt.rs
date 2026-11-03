@@ -1,12 +1,11 @@
-//! The `takt` format of `/a`: WIP-106 Trust Anchor Key Tokens, and the Authenticator Metadata.
+//! The `takt` format of `/a`: WIP-106 Trust Anchor Key Tokens.
 //!
 //! On Android the attested Keystore key is the `assertion_key`. On iOS the App Attest challenge
 //! commits to a separate Secure Enclave key, as the App Attest key itself can not sign arbitrary
 //! data.
 
-use std::{sync::Arc, time::SystemTime};
+use std::time::SystemTime;
 
-use axum::Extension;
 use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -17,7 +16,7 @@ use schemars::JsonSchema;
 use world_id_primitives::authenticator_assertion::{self, SecFlags, SecLevel};
 
 use crate::{
-    takt_issuer::{AuthenticatorMetadata, IssueError, TaktIssuer},
+    takt_issuer::{IssueError, TaktIssuer},
     utils::{ErrorCode, Platform, RequestError},
 };
 
@@ -200,20 +199,6 @@ async fn claim_sec_flags(
         }
         _ => Ok(()),
     }
-}
-
-/// Serves `/.well-known/world-id-authenticator.json` (WIP-106 §3.9).
-pub async fn metadata_handler(
-    Extension(issuer): Extension<Option<Arc<TaktIssuer>>>,
-) -> Result<axum::Json<AuthenticatorMetadata>, RequestError> {
-    let issuer = issuer.ok_or(RequestError {
-        code: ErrorCode::NotFound,
-        details: None,
-    })?;
-    let metadata = issuer
-        .metadata(unix_now()?)
-        .map_err(|e| internal_error("Error building authenticator metadata", &e))?;
-    Ok(axum::Json(metadata))
 }
 
 /// The EC2 P-256 `COSE_Key` `{1: 2, -1: 1, -2: x, -3: y}` in deterministic CBOR, as carried in the

@@ -26,10 +26,6 @@ pub fn handler() -> ApiRouter {
         .api_route("/a", post(a::handler))
         .api_route("/c", post(c::handler))
         .api_route("/g", post(generate_token::handler))
-        .api_route(
-            "/.well-known/world-id-authenticator.json",
-            get(takt::metadata_handler),
-        )
         .api_route("/.well-known/jwks.json", get(jwks::handler))
         .api_route("/health", get(health::handler))
         .layer(TraceLayer::new_for_http()) // adds HTTP tracing & context to all routes

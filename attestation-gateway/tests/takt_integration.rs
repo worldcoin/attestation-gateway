@@ -1,4 +1,4 @@
-//! Integration tests for `/a` with format `takt` (WIP-106) and the Authenticator Metadata endpoint.
+//! Integration tests for `/a` with format `takt` (WIP-106).
 //! Requires the services in `tests/docker-compose.test.yml`.
 //!
 //! Android attestations come from real devices with fixed challenges, so only iOS is exercised
@@ -59,7 +59,6 @@ fn issuer() -> TaktIssuer {
     let now = now();
     TaktIssuer::new(
         issuer_key(),
-        "test-provider".to_string(),
         now - 60,
         now + 30 * 24 * 60 * 60,
         TAKT_LIFETIME_SECS,
@@ -197,17 +196,6 @@ async fn post_takt(router: &aide::axum::ApiRouter, request: &Value) -> (StatusCo
             .method(http::Method::POST)
             .header(http::header::CONTENT_TYPE, mime::APPLICATION_JSON.as_ref())
             .body(Body::from(request.to_string()))
-            .unwrap(),
-    )
-    .await
-}
-
-async fn get_metadata(router: &aide::axum::ApiRouter) -> (StatusCode, Value) {
-    call(
-        router,
-        Request::builder()
-            .uri("/.well-known/world-id-authenticator.json")
-            .body(Body::empty())
             .unwrap(),
     )
     .await
@@ -382,7 +370,6 @@ async fn test_takt_is_disabled_without_a_signing_key() {
         post_takt(&router, &request).await.0,
         StatusCode::BAD_REQUEST
     );
-    assert_eq!(get_metadata(&router).await.0, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -393,23 +380,4 @@ async fn test_takt_fields_require_format_takt() {
     request["format"] = json!("jwt");
     let (status, body) = post_takt(&router, &request).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-}
-
-#[tokio::test]
-#[serial]
-async fn test_authenticator_metadata() {
-    let setup = Setup::new().await;
-    let router = setup.router(Some(issuer()), vec![]).await;
-    let (status, metadata) = get_metadata(&router).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(metadata["version"], 1);
-    assert_eq!(metadata["provider_id"], "test-provider");
-    let key = &metadata["trust_anchor_keys"][0];
-    assert_eq!(
-        key["kid"],
-        hex::encode(issuer_key().public().to_compressed_bytes().unwrap())
-    );
-    assert_eq!(key["status"], "active");
-    assert!(metadata["sec_meta"].is_object());
-    assert!(metadata["authenticator_meta"].is_object());
 }

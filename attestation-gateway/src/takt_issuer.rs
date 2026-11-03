@@ -7,9 +7,6 @@ use std::env;
 
 use eddsa_babyjubjub::EdDSAPrivateKey;
 use p256::ecdsa::VerifyingKey;
-use schemars::JsonSchema;
-use serde::Serialize;
-use world_id_primitives::FieldElement;
 use world_id_primitives::authenticator_assertion::{
     MAX_TAKT_LIFETIME_SECS, SecFlags, TaktClaims, TrustAnchorKeyToken,
 };
@@ -34,7 +31,6 @@ pub enum IssueError {
 /// Issues TAKTs with the Authenticator Provider's `trust_anchor_key`.
 pub struct TaktIssuer {
     key: EdDSAPrivateKey,
-    provider_id: String,
     not_before: u64,
     not_after: u64,
     lifetime_secs: u32,
@@ -65,8 +61,6 @@ impl TaktIssuer {
             });
         Some(Self::new(
             EdDSAPrivateKey::from_bytes(key),
-            env::var("TAKT_PROVIDER_ID")
-                .expect("`TAKT_PROVIDER_ID` is required with `TAKT_SIGNING_KEY`"),
             parse("TAKT_KEY_NOT_BEFORE"),
             parse("TAKT_KEY_NOT_AFTER"),
             lifetime_secs,
@@ -77,13 +71,7 @@ impl TaktIssuer {
     /// If the validity window or lifetime break WIP-106 §3.3 or §3.7, or the window is not
     /// longer than one TAKT lifetime.
     #[must_use]
-    pub fn new(
-        key: EdDSAPrivateKey,
-        provider_id: String,
-        not_before: u64,
-        not_after: u64,
-        lifetime_secs: u32,
-    ) -> Self {
+    pub fn new(key: EdDSAPrivateKey, not_before: u64, not_after: u64, lifetime_secs: u32) -> Self {
         assert!(
             not_before < not_after && not_after - not_before <= MAX_KEY_VALIDITY_SECS,
             "trust anchor key validity window must be non-empty and at most 180 days"
@@ -102,7 +90,6 @@ impl TaktIssuer {
         );
         Self {
             key,
-            provider_id,
             not_before,
             not_after,
             lifetime_secs,
@@ -152,55 +139,6 @@ impl TaktIssuer {
         let takt = TrustAnchorKeyToken::sign(claims, &self.key).map_err(eyre::Report::from)?;
         Ok(takt.to_cwt().map_err(eyre::Report::from)?)
     }
-
-    /// The Authenticator Metadata document (WIP-106 §3.9). The key is `retired` once it stops
-    /// signing.
-    ///
-    /// # Errors
-    /// If the public key can not be encoded.
-    pub fn metadata(&self, now: u64) -> eyre::Result<AuthenticatorMetadata> {
-        let public = self.key.public();
-        Ok(AuthenticatorMetadata {
-            version: 1,
-            provider_id: self.provider_id.clone(),
-            trust_anchor_keys: vec![TrustAnchorKey {
-                kid: hex::encode(public.to_compressed_bytes()?),
-                x: hex::encode(FieldElement::from(public.pk.x).to_be_bytes()),
-                y: hex::encode(FieldElement::from(public.pk.y).to_be_bytes()),
-                status: if now < self.signing_end() {
-                    "active"
-                } else {
-                    "retired"
-                },
-                not_before: self.not_before,
-                not_after: self.not_after,
-            }],
-            sec_meta: serde_json::Map::new(),
-            authenticator_meta: serde_json::Map::new(),
-        })
-    }
-}
-
-/// `/.well-known/world-id-authenticator.json` (WIP-106 Appendix A2).
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct AuthenticatorMetadata {
-    pub version: u32,
-    pub provider_id: String,
-    pub trust_anchor_keys: Vec<TrustAnchorKey>,
-    /// No `sec_meta` bits are defined, so none are ever set.
-    pub sec_meta: serde_json::Map<String, serde_json::Value>,
-    /// No `authenticator_meta` provider-bit values are defined; Authenticators set none.
-    pub authenticator_meta: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct TrustAnchorKey {
-    pub kid: String,
-    pub x: String,
-    pub y: String,
-    pub status: &'static str,
-    pub not_before: u64,
-    pub not_after: u64,
 }
 
 #[cfg(test)]
@@ -216,7 +154,6 @@ mod tests {
     fn issuer() -> TaktIssuer {
         TaktIssuer::new(
             EdDSAPrivateKey::from_bytes([7u8; 32]),
-            "test".into(),
             NOW - 100,
             NOW + 100 + u64::from(DEFAULT_TAKT_LIFETIME_SECS),
             DEFAULT_TAKT_LIFETIME_SECS,
@@ -271,28 +208,10 @@ mod tests {
     }
 
     #[test]
-    fn metadata_matches_spec_test_vector_key() {
-        // WIP-106 Appendix A1 uses the same key.
-        let key = &issuer().metadata(NOW).unwrap().trust_anchor_keys[0];
-        assert_eq!(
-            key.kid,
-            "2d4bdf6ee60feda0975c770bb7a23dc6e4e0ed1e35ff3c2426cded4ec030d987"
-        );
-        assert_eq!(key.status, "active");
-    }
-
-    #[test]
-    fn metadata_retires_key_once_it_stops_signing() {
-        let metadata = issuer().metadata(NOW + 100).unwrap();
-        assert_eq!(metadata.trust_anchor_keys[0].status, "retired");
-    }
-
-    #[test]
     #[should_panic(expected = "at most 180 days")]
     fn rejects_overlong_key_validity() {
         let _ = TaktIssuer::new(
             EdDSAPrivateKey::from_bytes([7u8; 32]),
-            "test".into(),
             0,
             MAX_KEY_VALIDITY_SECS + 1,
             DEFAULT_TAKT_LIFETIME_SECS,
