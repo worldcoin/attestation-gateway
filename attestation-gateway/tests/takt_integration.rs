@@ -83,8 +83,6 @@ fn global_config(apple_root_ca_pem: Vec<u8>) -> GlobalConfig {
         apple_root_ca_pem,
         aud_whitelist: vec![],
         jwt_issuer: "attestation.worldcoin.org".to_string(),
-        developer_portal_base_url: None,
-        aud_authorization_cache_ttl_secs: 60 * 60,
         token_exp_max_by_aud: std::collections::HashMap::new(),
     }
 }

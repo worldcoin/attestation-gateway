@@ -150,7 +150,7 @@ impl TaktIssuer {
         )
         .map_err(eyre::Report::from)?;
         let takt = TrustAnchorKeyToken::sign(claims, &self.key).map_err(eyre::Report::from)?;
-        Ok(takt.to_cwt())
+        Ok(takt.to_cwt().map_err(eyre::Report::from)?)
     }
 
     /// The Authenticator Metadata document (WIP-106 §3.9). The key is `retired` once it stops

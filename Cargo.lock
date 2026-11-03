@@ -5439,8 +5439,9 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "world-id-primitives"
-version = "0.15.0"
-source = "git+https://github.com/worldcoin/world-id-protocol?rev=d3cf68e7ea52d882686053ec3ea402f24eeda3e2#d3cf68e7ea52d882686053ec3ea402f24eeda3e2"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edbad3dc3bf1609122ac8995adeb06b455978bdcf99fc8860225a55baac0f6c8"
 dependencies = [
  "alloy-primitives",
  "ark-ff 0.6.0",
