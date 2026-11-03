@@ -372,7 +372,7 @@ pub async fn handler(
         },
         Attested::Ios,
     );
-    let integrity_token = takt::issue(issuer, &mut redis, attested, exp).await?;
+    let integrity_token = takt::issue(issuer, attested, exp)?;
     Ok(Json(Response { integrity_token }))
 }
 

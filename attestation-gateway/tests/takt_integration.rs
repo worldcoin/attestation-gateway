@@ -308,27 +308,18 @@ async fn test_takt_nonce_is_single_use() {
 
 #[tokio::test]
 #[serial]
-async fn test_takt_rejects_other_sec_flags_for_the_same_key() {
+async fn test_takt_renews_the_same_key_with_a_new_build_version() {
     let mut setup = Setup::new().await;
     let key = assertion_key(9);
-
-    // Re-attesting with the same flags succeeds, e.g. to renew a TAKT.
-    for _ in 0..2 {
-        let (router, request) = setup.ios(&key, 41).await;
+    for build_version in [41, 42] {
+        let (router, request) = setup.ios(&key, build_version).await;
         let (status, body) = post_takt(&router, &request).await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            decode_takt(&body).sec_flags().build_version(),
+            build_version
+        );
     }
-
-    // WIP-106 §3.4: no TAKT with differing `sec_flags` for the same `assertion_key`.
-    let (router, request) = setup.ios(&key, 42).await;
-    let (status, body) = post_takt(&router, &request).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"]["code"], "attestation_rejected");
-
-    // Another key is unaffected.
-    let (router, request) = setup.ios(&assertion_key(8), 42).await;
-    let (status, body) = post_takt(&router, &request).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
 }
 
 #[tokio::test]

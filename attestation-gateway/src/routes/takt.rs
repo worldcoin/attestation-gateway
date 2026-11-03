@@ -11,7 +11,6 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use p256::ecdsa::VerifyingKey;
-use redis::{AsyncCommands, aio::ConnectionManager};
 use schemars::JsonSchema;
 use world_id_primitives::authenticator_assertion::{self, SecFlags, SecLevel};
 
@@ -93,9 +92,8 @@ pub(super) fn enabled(issuer: Option<&TaktIssuer>) -> Result<&TaktIssuer, Reques
 /// Issues a TAKT for an attested key, expiring at `max_exp` at the latest. Both attestations
 /// prove a hardware-bound key: App Attest, or Android Key Attestation in a TEE or `StrongBox`
 /// (enforced by the Android verifier).
-pub(super) async fn issue(
+pub(super) fn issue(
     issuer: &TaktIssuer,
-    redis: &mut ConnectionManager,
     attested: Attested,
     max_exp: i64,
 ) -> Result<String, RequestError> {
@@ -133,7 +131,6 @@ pub(super) async fn issue(
     .map_err(|e| internal_error("Invalid TAKT security flags", &e))?;
 
     let now = unix_now()?;
-    claim_sec_flags(redis, &assertion_key, sec_flags, issuer.lifetime_secs()).await?;
     let cwt = issuer
         .issue(
             assertion_key,
@@ -155,50 +152,6 @@ pub(super) async fn issue(
     metrics::counter!("attestation_gateway.takt_issued", "platform" => platform.to_string())
         .increment(1);
     Ok(URL_SAFE_NO_PAD.encode(cwt))
-}
-
-/// Records the `sec_flags` an `assertion_key` is attested with for one TAKT lifetime, and rejects
-/// other flags for the same key (WIP-106 §3.4). Stores only a hash of the key, never a device
-/// identifier (§3.7).
-async fn claim_sec_flags(
-    redis: &mut ConnectionManager,
-    assertion_key: &VerifyingKey,
-    sec_flags: SecFlags,
-    lifetime_secs: u32,
-) -> Result<(), RequestError> {
-    let redis_key = format!(
-        "takt:sec_flags:{}",
-        hex::encode(openssl::sha::sha256(
-            assertion_key.to_encoded_point(false).as_bytes()
-        ))
-    );
-    let packed = sec_flags.pack();
-    let redis_error =
-        |e: redis::RedisError| internal_error("Error recording TAKT security flags", &e);
-    let options = redis::SetOptions::default()
-        .conditional_set(redis::ExistenceCheck::NX)
-        .with_expiration(redis::SetExpiry::EX(u64::from(lifetime_secs)));
-    let created: bool = redis
-        .set_options(&redis_key, packed, options)
-        .await
-        .map_err(redis_error)?;
-    let stored: Option<u64> = if created {
-        None
-    } else {
-        redis.get(&redis_key).await.map_err(redis_error)?
-    };
-    match stored {
-        Some(stored) if stored != packed => {
-            rejected("sec_flags_conflict");
-            Err(RequestError {
-                code: ErrorCode::AttestationRejected,
-                details: Some(
-                    "`assertion_key` is already attested with other security flags.".to_string(),
-                ),
-            })
-        }
-        _ => Ok(()),
-    }
 }
 
 /// The EC2 P-256 `COSE_Key` `{1: 2, -1: 1, -2: x, -3: y}` in deterministic CBOR, as carried in the
