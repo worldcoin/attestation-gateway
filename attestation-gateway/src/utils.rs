@@ -1399,7 +1399,7 @@ mod tests {
     }
 
     #[test]
-    fn world_app_sandbox_accepts_all_android_cert_digests() {
+    fn com_worldcoin_sandbox_accepts_release_and_debug_cert_digests() {
         let expected_digests = [
             // cspell:disable-next-line
             "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
