@@ -564,6 +564,43 @@ mod tests {
     }
 
     #[test]
+    fn org_world_id_sandbox_accepts_internal_app_sharing_cert_digest() {
+        // Google's certificateSha256Digest uses URL-safe Base64 without padding.
+        // cspell:disable-next-line
+        let internal_app_sharing_digest = "YZozNKz2VONuXb1E3ZBH_-TXsumTKppq8rxpt_SPNpg";
+        let mut token = create_test_token();
+        token.app_integrity.package_name = Some("org.world.id.sandbox".to_string());
+        token.app_integrity.certificate_sha_256_digest =
+            Some(vec![internal_app_sharing_digest.to_string()]);
+
+        token
+            .validate_app_integrity(&BundleIdentifier::OrgWorldIdSandbox)
+            .unwrap();
+    }
+
+    #[test]
+    fn com_worldcoin_sandbox_rejects_internal_app_sharing_cert_digest() {
+        // cspell:disable-next-line
+        let internal_app_sharing_digest = "YZozNKz2VONuXb1E3ZBH_-TXsumTKppq8rxpt_SPNpg";
+        let mut token = create_test_token();
+        token.app_integrity.package_name = Some("com.worldcoin.sandbox".to_string());
+        token.app_integrity.certificate_sha_256_digest =
+            Some(vec![internal_app_sharing_digest.to_string()]);
+
+        let error = token
+            .validate_app_integrity(&BundleIdentifier::ComWorldcoinSandbox)
+            .unwrap_err();
+        assert_eq!(
+            error.downcast::<ClientException>().unwrap(),
+            ClientException {
+                code: ErrorCode::IntegrityFailed,
+                internal_debug_info: "certificate_sha_256_digest does not match the expected value"
+                    .to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn test_validate_app_integrity() {
         let token = create_test_token();
 
