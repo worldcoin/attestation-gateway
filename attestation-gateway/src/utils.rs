@@ -332,7 +332,7 @@ impl BundleIdentifier {
         }
     }
 
-    /// Expected app signing-certificate digest(s) (URL-safe Base64) for Android Play Integrity (`POST /g`).
+    /// Expected app signing-certificate digest(s) (URL-safe base64, no padding) for Android Play Integrity (`POST /g`).
     ///
     /// Returns all digests accepted for the bundle identifier; a response listing any one of
     /// them is considered valid.
