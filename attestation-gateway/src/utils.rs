@@ -332,7 +332,7 @@ impl BundleIdentifier {
         }
     }
 
-    /// Expected app signing-certificate digest(s) (hex) for Android Play Integrity (`POST /g`).
+    /// Expected app signing-certificate digest(s) (URL-safe base64, no padding) for Android Play Integrity (`POST /g`).
     ///
     /// Returns all digests accepted for the bundle identifier; a response listing any one of
     /// them is considered valid.
@@ -349,11 +349,20 @@ impl BundleIdentifier {
                 // cspell:disable-next-line
                 "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
             ]),
-            Self::ComWorldcoinSandbox | Self::OrgWorldIdSandbox => Some(&[
+            Self::ComWorldcoinSandbox => Some(&[
                 // cspell:disable-next-line
                 "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
                 // cspell:disable-next-line
                 "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+            ]),
+            Self::OrgWorldIdSandbox => Some(&[
+                // cspell:disable-next-line
+                "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
+                // cspell:disable-next-line
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+                // Google Play Internal App Sharing certificate (World ID Sandbox only).
+                // cspell:disable-next-line
+                "YZozNKz2VONuXb1E3ZBH_-TXsumTKppq8rxpt_SPNpg",
             ]),
             Self::ComWorldcoinDev | Self::OrgWorldIdDev => Some(&["6a6a1474b5cbbb2b1aa57e0bc3"]),
             Self::OrgWorldcoinInsight
@@ -381,10 +390,18 @@ impl BundleIdentifier {
                 // cspell:disable-next-line
                 "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
             ]),
-            Self::ComWorldcoinSandbox | Self::OrgWorldIdSandbox => Some(&[
+            Self::ComWorldcoinSandbox => Some(&[
                 "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
                 // cspell:disable-next-line
                 "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
+            ]),
+            Self::OrgWorldIdSandbox => Some(&[
+                "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
+                // cspell:disable-next-line
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
+                // Google Play Internal App Sharing certificate (World ID Sandbox only).
+                // cspell:disable-next-line
+                "YZozNKz2VONuXb1E3ZBH/+TXsumTKppq8rxpt/SPNpg=",
             ]),
             Self::ComWorldcoinDev | Self::OrgWorldIdDev => {
                 Some(&["o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="])
@@ -1382,7 +1399,7 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_accepts_all_android_cert_digests() {
+    fn com_worldcoin_sandbox_accepts_release_and_debug_cert_digests() {
         let expected_digests = [
             // cspell:disable-next-line
             "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
@@ -1395,17 +1412,73 @@ mod tests {
             "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
         ];
 
-        for bundle in [
+        let bundle = BundleIdentifier::ComWorldcoinSandbox;
+        assert_eq!(
+            bundle.android_certificate_sha256_digest(),
+            Some(expected_digests.as_slice())
+        );
+        assert_eq!(
+            bundle.android_certificate_sha256_digest_base64(),
+            Some(expected_digests_base64.as_slice())
+        );
+    }
+
+    #[test]
+    fn org_world_id_sandbox_accepts_release_debug_and_internal_app_sharing_cert_digests() {
+        // cspell:disable-next-line
+        let internal_app_sharing_digest = "YZozNKz2VONuXb1E3ZBH_-TXsumTKppq8rxpt_SPNpg";
+        // cspell:disable-next-line
+        let internal_app_sharing_digest_base64 = "YZozNKz2VONuXb1E3ZBH/+TXsumTKppq8rxpt/SPNpg=";
+        let expected_digests = [
+            // cspell:disable-next-line
+            "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
+            // cspell:disable-next-line
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+            internal_app_sharing_digest,
+        ];
+        let expected_digests_base64 = [
+            "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
+            // cspell:disable-next-line
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
+            internal_app_sharing_digest_base64,
+        ];
+        let bundle = BundleIdentifier::OrgWorldIdSandbox;
+        assert_eq!(
+            bundle.android_certificate_sha256_digest(),
+            Some(expected_digests.as_slice())
+        );
+        assert_eq!(
+            bundle.android_certificate_sha256_digest_base64(),
+            Some(expected_digests_base64.as_slice())
+        );
+    }
+
+    #[test]
+    fn only_org_world_id_sandbox_accepts_internal_app_sharing_cert_digest() {
+        // cspell:disable-next-line
+        let internal_app_sharing_digest = "YZozNKz2VONuXb1E3ZBH_-TXsumTKppq8rxpt_SPNpg";
+        // cspell:disable-next-line
+        let internal_app_sharing_digest_base64 = "YZozNKz2VONuXb1E3ZBH/+TXsumTKppq8rxpt/SPNpg=";
+        for other_bundle in [
+            BundleIdentifier::ComWorldcoin,
+            BundleIdentifier::ComWorldcoinStaging,
             BundleIdentifier::ComWorldcoinSandbox,
-            BundleIdentifier::OrgWorldIdSandbox,
+            BundleIdentifier::ComWorldcoinDev,
+            BundleIdentifier::OrgWorldId,
+            BundleIdentifier::OrgWorldIdStaging,
+            BundleIdentifier::OrgWorldIdDev,
         ] {
-            assert_eq!(
-                bundle.android_certificate_sha256_digest(),
-                Some(expected_digests.as_slice())
+            assert!(
+                !other_bundle
+                    .android_certificate_sha256_digest()
+                    .unwrap()
+                    .contains(&internal_app_sharing_digest)
             );
-            assert_eq!(
-                bundle.android_certificate_sha256_digest_base64(),
-                Some(expected_digests_base64.as_slice())
+            assert!(
+                !other_bundle
+                    .android_certificate_sha256_digest_base64()
+                    .unwrap()
+                    .contains(&internal_app_sharing_digest_base64)
             );
         }
     }
