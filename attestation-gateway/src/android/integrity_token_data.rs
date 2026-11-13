@@ -383,6 +383,7 @@ impl PlayIntegrityToken {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use std::time::{Duration, UNIX_EPOCH};
 
     fn create_test_token() -> PlayIntegrityToken {
@@ -576,6 +577,78 @@ mod tests {
         token
             .validate_app_integrity(&BundleIdentifier::OrgWorldIdSandbox)
             .unwrap();
+    }
+
+    fn url_safe_debug_certificate_digest() -> String {
+        // SHA-256 of the already-trusted Android debug signing certificate.
+        let digest =
+            hex::decode("a3416edfdcaaaecc5e592b9caa07bb78ecc6f31aec4409f49ca6d3b4dff1dbe0")
+                .unwrap();
+        URL_SAFE_NO_PAD.encode(digest)
+    }
+
+    #[test]
+    fn staging_and_sandbox_accept_url_safe_debug_certificate() {
+        for bundle in [
+            BundleIdentifier::OrgWorldIdSandbox,
+            BundleIdentifier::ComWorldcoinSandbox,
+            BundleIdentifier::ComWorldcoinStaging,
+            BundleIdentifier::OrgWorldIdStaging,
+        ] {
+            let mut token = create_test_token();
+            token.request_details.request_package_name = bundle.to_string();
+            token.app_integrity.package_name = Some(bundle.to_string());
+            token.app_integrity.certificate_sha_256_digest =
+                Some(vec![url_safe_debug_certificate_digest()]);
+            token.app_integrity.app_recognition_verdict = AppIntegrityVerdict::UnrecognizedVersion;
+            token.account_details.app_licensing_verdict = AppLicensingVerdict::Unlicensed;
+
+            token
+                .validate_all_claims(&bundle, "valid_nonce")
+                .unwrap_or_else(|error| panic!("debug-signed {bundle} rejected: {error:?}"));
+        }
+    }
+
+    #[test]
+    fn production_rejects_url_safe_debug_certificate() {
+        for bundle in [BundleIdentifier::ComWorldcoin, BundleIdentifier::OrgWorldId] {
+            let mut token = create_test_token();
+            token.request_details.request_package_name = bundle.to_string();
+            token.app_integrity.package_name = Some(bundle.to_string());
+            token.app_integrity.certificate_sha_256_digest =
+                Some(vec![url_safe_debug_certificate_digest()]);
+
+            let error = token
+                .validate_all_claims(&bundle, "valid_nonce")
+                .unwrap_err()
+                .downcast::<ClientException>()
+                .unwrap();
+            assert_eq!(error.code, ErrorCode::IntegrityFailed);
+            assert_eq!(
+                error.internal_debug_info,
+                "certificate_sha_256_digest does not match the expected value"
+            );
+        }
+    }
+
+    #[test]
+    fn sandbox_rejects_untrusted_url_safe_certificate() {
+        let mut token = create_test_token();
+        token.request_details.request_package_name = "org.world.id.sandbox".to_string();
+        token.app_integrity.package_name = Some("org.world.id.sandbox".to_string());
+        token.app_integrity.certificate_sha_256_digest =
+            Some(vec![URL_SAFE_NO_PAD.encode([0; 32])]);
+
+        let error = token
+            .validate_all_claims(&BundleIdentifier::OrgWorldIdSandbox, "valid_nonce")
+            .unwrap_err()
+            .downcast::<ClientException>()
+            .unwrap();
+        assert_eq!(error.code, ErrorCode::IntegrityFailed);
+        assert_eq!(
+            error.internal_debug_info,
+            "certificate_sha_256_digest does not match the expected value"
+        );
     }
 
     #[test]
