@@ -347,19 +347,19 @@ impl BundleIdentifier {
                 // cspell:disable-next-line
                 "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
                 // cspell:disable-next-line
-                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN_x2-A",
             ]),
             Self::ComWorldcoinSandbox => Some(&[
                 // cspell:disable-next-line
                 "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
                 // cspell:disable-next-line
-                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN_x2-A",
             ]),
             Self::OrgWorldIdSandbox => Some(&[
                 // cspell:disable-next-line
                 "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
                 // cspell:disable-next-line
-                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+                "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN_x2-A",
                 // Google Play Internal App Sharing certificate (World ID Sandbox only).
                 // cspell:disable-next-line
                 "YZozNKz2VONuXb1E3ZBH_-TXsumTKppq8rxpt_SPNpg",
@@ -1404,7 +1404,7 @@ mod tests {
             // cspell:disable-next-line
             "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
             // cspell:disable-next-line
-            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN_x2-A",
         ];
         let expected_digests_base64 = [
             "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
@@ -1433,7 +1433,7 @@ mod tests {
             // cspell:disable-next-line
             "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
             // cspell:disable-next-line
-            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN_x2-A",
             internal_app_sharing_digest,
         ];
         let expected_digests_base64 = [
@@ -1489,7 +1489,7 @@ mod tests {
             // cspell:disable-next-line
             "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8",
             // cspell:disable-next-line
-            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A",
+            "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN_x2-A",
         ];
         let expected_digests_base64 = [
             "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
