@@ -358,10 +358,12 @@ impl PlayIntegrityToken {
                 );
             }
 
-            // For staging & dev apps, allow empty apps_detected, while we're debugging an issue.
+            // Allow a missing app-access-risk verdict for these non-production bundles,
+            // including WIDA sandbox. All other integrity checks remain enforced.
             let allow_empty_apps_detected = [
                 BundleIdentifier::ComWorldcoinStaging,
                 BundleIdentifier::ComWorldcoinDev,
+                BundleIdentifier::OrgWorldIdSandbox,
             ]
             .contains(bundle_identifier);
             if value.app_access_risk_verdict.apps_detected.is_none() && !allow_empty_apps_detected {
@@ -963,6 +965,112 @@ mod tests {
         let no_apps_detected: EnvironmentDetails =
             serde_json::from_str(no_apps_detected_json).unwrap();
         assert_eq!(no_apps_detected.app_access_risk_verdict.apps_detected, None);
+    }
+
+    #[test]
+    fn missing_app_access_risk_is_allowed_only_for_selected_non_production_bundles() {
+        let environment: EnvironmentDetails =
+            serde_json::from_str(r#"{"appAccessRiskVerdict":{},"playProtectVerdict":"NO_ISSUES"}"#)
+                .unwrap();
+        let mut token = create_test_token();
+        token.environment_details = Some(environment);
+
+        for (bundle, allowed) in [
+            (BundleIdentifier::ComWorldcoin, false),
+            (BundleIdentifier::ComWorldcoinStaging, true),
+            (BundleIdentifier::ComWorldcoinDev, true),
+            (BundleIdentifier::ComWorldcoinSandbox, false),
+            (BundleIdentifier::OrgWorldId, false),
+            (BundleIdentifier::OrgWorldIdStaging, false),
+            (BundleIdentifier::OrgWorldIdDev, false),
+            (BundleIdentifier::OrgWorldIdSandbox, true),
+        ] {
+            let result = token.validate_environment_details(&bundle);
+            if allowed {
+                result
+                    .unwrap_or_else(|error| panic!("{bundle} rejected missing verdict: {error:?}"));
+            } else {
+                assert_eq!(
+                    result.unwrap_err().downcast::<ClientException>().unwrap(),
+                    ClientException {
+                        code: ErrorCode::IntegrityFailed,
+                        internal_debug_info: "app_access_risk_verdict.apps_detected is None"
+                            .to_string(),
+                    },
+                    "{bundle} must still require apps_detected",
+                );
+            }
+        }
+    }
+
+    fn create_wida_sandbox_token_without_app_access_risk() -> PlayIntegrityToken {
+        let mut token = create_test_token();
+        token.request_details.request_package_name = "org.world.id.sandbox".to_string();
+        token.app_integrity.package_name = Some("org.world.id.sandbox".to_string());
+        token.app_integrity.certificate_sha_256_digest =
+            Some(vec![url_safe_debug_certificate_digest()]);
+        token.app_integrity.app_recognition_verdict = AppIntegrityVerdict::UnrecognizedVersion;
+        token.account_details.app_licensing_verdict = AppLicensingVerdict::Unlicensed;
+        token.environment_details = Some(
+            serde_json::from_str(r#"{"appAccessRiskVerdict":{},"playProtectVerdict":"NO_ISSUES"}"#)
+                .unwrap(),
+        );
+        token
+    }
+
+    #[test]
+    fn wida_sandbox_accepts_valid_claims_without_app_access_risk() {
+        create_wida_sandbox_token_without_app_access_risk()
+            .validate_all_claims(&BundleIdentifier::OrgWorldIdSandbox, "valid_nonce")
+            .unwrap();
+    }
+
+    #[test]
+    fn wida_sandbox_missing_app_access_risk_still_requires_trusted_signer() {
+        let mut token = create_wida_sandbox_token_without_app_access_risk();
+        token.app_integrity.certificate_sha_256_digest =
+            Some(vec![URL_SAFE_NO_PAD.encode([0; 32])]);
+        let error = token
+            .validate_all_claims(&BundleIdentifier::OrgWorldIdSandbox, "valid_nonce")
+            .unwrap_err()
+            .downcast::<ClientException>()
+            .unwrap();
+        assert_eq!(error.code, ErrorCode::IntegrityFailed);
+        assert_eq!(
+            error.internal_debug_info,
+            "certificate_sha_256_digest does not match the expected value"
+        );
+    }
+
+    #[test]
+    fn wida_sandbox_missing_app_access_risk_still_requires_matching_nonce() {
+        let error = create_wida_sandbox_token_without_app_access_risk()
+            .validate_all_claims(&BundleIdentifier::OrgWorldIdSandbox, "wrong_nonce")
+            .unwrap_err()
+            .downcast::<ClientException>()
+            .unwrap();
+        assert_eq!(error.code, ErrorCode::IntegrityFailed);
+        assert_eq!(
+            error.internal_debug_info,
+            "Provided `request_hash` does not match request_details.nonce"
+        );
+    }
+
+    #[test]
+    fn wida_sandbox_missing_app_access_risk_still_requires_device_integrity() {
+        let mut token = create_wida_sandbox_token_without_app_access_risk();
+        token.device_integrity.device_recognition_verdict = Some(vec![]);
+        let error = token
+            .validate_all_claims(&BundleIdentifier::OrgWorldIdSandbox, "valid_nonce")
+            .unwrap_err()
+            .downcast::<ClientException>()
+            .unwrap();
+        assert_eq!(error.code, ErrorCode::IntegrityFailed);
+        assert!(
+            error
+                .internal_debug_info
+                .starts_with("device_recognition_verdict does not contain MEETS_DEVICE_INTEGRITY.")
+        );
     }
 
     /// Tests parsing of the three optional Play Integrity verdict fields that are opt-in via the
