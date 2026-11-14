@@ -359,7 +359,7 @@ impl PlayIntegrityToken {
             }
 
             // Allow a missing app-access-risk verdict for these non-production bundles,
-            // including WIDA sandbox CI. All other integrity checks remain enforced.
+            // including WIDA sandbox. All other integrity checks remain enforced.
             let allow_empty_apps_detected = [
                 BundleIdentifier::ComWorldcoinStaging,
                 BundleIdentifier::ComWorldcoinDev,
