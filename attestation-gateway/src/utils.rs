@@ -363,6 +363,9 @@ impl BundleIdentifier {
                 // Google Play Internal App Sharing certificate (World ID Sandbox only).
                 // cspell:disable-next-line
                 "YZozNKz2VONuXb1E3ZBH_-TXsumTKppq8rxpt_SPNpg",
+                // Google Play app signing key upgraded on 17 November 2026 (Sandbox only).
+                // cspell:disable-next-line
+                "TRu7qL6sBFJVUsTYPF5DCL1_ovlFd6Xo6e8Q_7NzOQQ",
             ]),
             Self::ComWorldcoinDev | Self::OrgWorldIdDev => Some(&["6a6a1474b5cbbb2b1aa57e0bc3"]),
             Self::OrgWorldcoinInsight
@@ -402,6 +405,9 @@ impl BundleIdentifier {
                 // Google Play Internal App Sharing certificate (World ID Sandbox only).
                 // cspell:disable-next-line
                 "YZozNKz2VONuXb1E3ZBH/+TXsumTKppq8rxpt/SPNpg=",
+                // Google Play app signing key upgraded on 17 November 2026 (Sandbox only).
+                // cspell:disable-next-line
+                "TRu7qL6sBFJVUsTYPF5DCL1/ovlFd6Xo6e8Q/7NzOQQ=",
             ]),
             Self::ComWorldcoinDev | Self::OrgWorldIdDev => {
                 Some(&["o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A="])
@@ -1451,7 +1457,7 @@ mod tests {
     }
 
     #[test]
-    fn org_world_id_sandbox_accepts_release_debug_and_internal_app_sharing_cert_digests() {
+    fn org_world_id_sandbox_accepts_legacy_upgraded_debug_and_internal_app_sharing_cert_digests() {
         // cspell:disable-next-line
         let internal_app_sharing_digest = "YZozNKz2VONuXb1E3ZBH_-TXsumTKppq8rxpt_SPNpg";
         // cspell:disable-next-line
@@ -1462,12 +1468,16 @@ mod tests {
             // cspell:disable-next-line
             "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN_x2-A",
             internal_app_sharing_digest,
+            // cspell:disable-next-line
+            "TRu7qL6sBFJVUsTYPF5DCL1_ovlFd6Xo6e8Q_7NzOQQ",
         ];
         let expected_digests_base64 = [
             "nSrXEn8JkZKXFMAZW0NHhDRTHNi38YE2XCvVzYXjRu8=",
             // cspell:disable-next-line
             "o0Fu39yqrsxeWSucqge7eOzG8xrsRAn0nKbTtN/x2+A=",
             internal_app_sharing_digest_base64,
+            // cspell:disable-next-line
+            "TRu7qL6sBFJVUsTYPF5DCL1/ovlFd6Xo6e8Q/7NzOQQ=",
         ];
         let bundle = BundleIdentifier::OrgWorldIdSandbox;
         assert_eq!(
@@ -1506,6 +1516,36 @@ mod tests {
                     .android_certificate_sha256_digest_base64()
                     .unwrap()
                     .contains(&internal_app_sharing_digest_base64)
+            );
+        }
+    }
+
+    #[test]
+    fn only_org_world_id_sandbox_accepts_upgraded_play_cert_digest() {
+        // cspell:disable-next-line
+        let digest = "TRu7qL6sBFJVUsTYPF5DCL1_ovlFd6Xo6e8Q_7NzOQQ";
+        // cspell:disable-next-line
+        let digest_base64 = "TRu7qL6sBFJVUsTYPF5DCL1/ovlFd6Xo6e8Q/7NzOQQ=";
+        for other_bundle in [
+            BundleIdentifier::ComWorldcoin,
+            BundleIdentifier::ComWorldcoinStaging,
+            BundleIdentifier::ComWorldcoinSandbox,
+            BundleIdentifier::ComWorldcoinDev,
+            BundleIdentifier::OrgWorldId,
+            BundleIdentifier::OrgWorldIdStaging,
+            BundleIdentifier::OrgWorldIdDev,
+        ] {
+            assert!(
+                !other_bundle
+                    .android_certificate_sha256_digest()
+                    .unwrap()
+                    .contains(&digest)
+            );
+            assert!(
+                !other_bundle
+                    .android_certificate_sha256_digest_base64()
+                    .unwrap()
+                    .contains(&digest_base64)
             );
         }
     }
