@@ -1,6 +1,6 @@
 use axum::{Extension, Json, http::HeaderMap};
-use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
+use time::{OffsetDateTime, macros::format_description};
 
 use crate::audience_authorizer::{AudienceAuthorizationError, AudienceAuthorizer};
 use crate::nonces::{NonceDb, TokenDetailsFactory};
@@ -80,20 +80,28 @@ pub async fn handler(
             }
         })?;
 
-    let device_key_expires_at =
-        DateTime::<Utc>::from_timestamp(token_details.exp_max, 0).ok_or(RequestError {
-            code: ErrorCode::InternalServerError,
-            details: Some("Failed to generate device key expires at.".to_string()),
-        })?;
-
-    let device_key_expires_at =
-        device_key_expires_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let device_key_expires_at = format_device_key_expiry(token_details.exp_max)?;
 
     Ok(Json(Response {
         nonce,
         token_exp_max: token_details.exp_max,
         device_key_expires_at,
     }))
+}
+
+fn format_device_key_expiry(timestamp: i64) -> Result<String, RequestError> {
+    OffsetDateTime::from_unix_timestamp(timestamp)
+        .map_err(|_| RequestError {
+            code: ErrorCode::InternalServerError,
+            details: Some("Failed to generate device key expires at.".to_string()),
+        })?
+        .format(format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
+        ))
+        .map_err(|_| RequestError {
+            code: ErrorCode::InternalServerError,
+            details: Some("Failed to generate device key expires at.".to_string()),
+        })
 }
 
 impl From<AudienceAuthorizationError> for RequestError {
@@ -104,5 +112,33 @@ impl From<AudienceAuthorizationError> for RequestError {
                 details: Some("This audience is currently unavailable.".to_owned()),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_device_key_expiry;
+    use time::macros::datetime;
+
+    #[test]
+    fn device_key_expiry_preserves_millisecond_utc_wire_format() {
+        assert_eq!(
+            format_device_key_expiry(0).unwrap(),
+            "1970-01-01T00:00:00.000Z"
+        );
+        assert_eq!(
+            format_device_key_expiry(-1).unwrap(),
+            "1969-12-31T23:59:59.000Z"
+        );
+        assert_eq!(
+            format_device_key_expiry(datetime!(2028-02-29 12:34:56 UTC).unix_timestamp()).unwrap(),
+            "2028-02-29T12:34:56.000Z"
+        );
+    }
+
+    #[test]
+    fn device_key_expiry_rejects_out_of_range_timestamps() {
+        assert!(format_device_key_expiry(i64::MAX).is_err());
+        assert!(format_device_key_expiry(i64::MIN).is_err());
     }
 }

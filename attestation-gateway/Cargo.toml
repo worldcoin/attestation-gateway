@@ -24,7 +24,6 @@ aws-sdk-kms = { version = "1.111.0", default-features = false, features = ["rt-t
 axum = "0.7.9"
 axum-jsonschema = { version = "0.8.0", features = ["aide"] }
 base64 = "0.22.1"
-chrono = { version = "0.4.45", features = ["serde"] }
 ciborium = "0.2.2"
 der-parser = "10.0.0"
 dotenvy = "0.15.7"
@@ -45,6 +44,7 @@ serde.workspace = true
 serde_bytes = "0.11.19"
 serde_json = "1.0.150"
 thiserror.workspace = true
+time = { version = "0.3.55", features = ["formatting", "macros"] }
 tokio = { version = "1.54.1", features = ["full"] }
 tower-http = { version = "0.7.0", features = ["compression-br", "trace", "timeout"] }
 tracing = { version = "0.1.44", features = ["log"] }
@@ -53,7 +53,7 @@ uuid = { version = "1.23.4", default-features = false, features = ["v4"] }
 x509-parser = "0.18.1"
 
 [build-dependencies]
-chrono = "0.4.45"
+time = { version = "0.3.55", features = ["formatting"] }
 
 [dev-dependencies]
 attestation-gateway = { path = ".", features = ["test-helpers"] }

@@ -1,7 +1,7 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
+use time::OffsetDateTime;
 
 use crate::utils::{GlobalConfig, TokenExpiration};
 
@@ -36,8 +36,7 @@ impl TokenDetailsFactory {
         metrics::counter!("attestation_gateway.token_exp_max", "ttl_secs" => ttl.as_secs().to_string())
             .increment(1);
 
-        let now = DateTime::<Utc>::from(SystemTime::now());
-        let exp_max = (now + ttl).timestamp();
+        let exp_max = (OffsetDateTime::now_utc() + ttl).unix_timestamp();
 
         TokenDetails { aud, exp_max }
     }
@@ -54,7 +53,7 @@ mod tests {
     }
 
     fn assert_expires_in(token_details: &TokenDetails, ttl: Duration) {
-        let now = DateTime::<Utc>::from(SystemTime::now()).timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
         let ttl = i64::try_from(ttl.as_secs()).unwrap();
         assert!((now + ttl - 1..=now + ttl).contains(&token_details.exp_max));
     }

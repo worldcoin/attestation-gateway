@@ -723,13 +723,14 @@ impl std::error::Error for RequestError {}
 /// [`RateLimitService::try_incr`](crate::android::rate_limit_service::RateLimitService::try_incr).
 /// Floors at 1 so `Retry-After: 0` never invites an immediate retry.
 fn seconds_until_utc_midnight() -> u64 {
-    let now = chrono::Utc::now();
-    let reset = (now.date_naive() + chrono::Days::new(1))
-        .and_time(chrono::NaiveTime::MIN)
-        .and_utc();
-    reset
-        .signed_duration_since(now)
-        .num_seconds()
+    seconds_until_utc_midnight_at(time::OffsetDateTime::now_utc())
+}
+
+fn seconds_until_utc_midnight_at(now: time::OffsetDateTime) -> u64 {
+    let now = now.to_offset(time::UtcOffset::UTC);
+    let reset = now.replace_time(time::Time::MIDNIGHT) + time::Duration::DAY;
+    (reset - now)
+        .whole_seconds()
         .clamp(1, 86_400)
         .unsigned_abs()
 }
@@ -1133,6 +1134,32 @@ impl OutputTokenPayload {
 mod tests {
     use super::*;
     use tracing_test::traced_test;
+
+    #[test]
+    fn retry_after_preserves_utc_midnight_boundary_and_minimum() {
+        use time::macros::datetime;
+
+        assert_eq!(
+            seconds_until_utc_midnight_at(datetime!(2026-11-17 00:00 UTC)),
+            86_400
+        );
+        assert_eq!(
+            seconds_until_utc_midnight_at(datetime!(2026-11-17 12:00 UTC)),
+            43_200
+        );
+        assert_eq!(
+            seconds_until_utc_midnight_at(datetime!(2026-11-17 23:59:59.999_999_999 UTC)),
+            1
+        );
+        assert_eq!(
+            seconds_until_utc_midnight_at(datetime!(2028-02-29 23:59:58 UTC)),
+            2
+        );
+        assert_eq!(
+            seconds_until_utc_midnight_at(datetime!(2026-01-01 00:30 +01:00)),
+            1_800
+        );
+    }
 
     #[test]
     fn rate_limited_is_429_and_retryable_on_the_wire() {

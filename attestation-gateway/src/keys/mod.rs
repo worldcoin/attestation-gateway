@@ -30,14 +30,16 @@ impl SigningKey {
     /// Returns whether the key is valid for signing.
     #[must_use]
     pub fn can_sign(&self) -> bool {
-        self.created_at + SIGNING_CONFIG.key_ttl_signing > chrono::Utc::now().timestamp()
+        self.created_at + SIGNING_CONFIG.key_ttl_signing
+            > time::OffsetDateTime::now_utc().unix_timestamp()
     }
 
     /// Returns whether the key is valid for verification.
     /// All keys which are valid for signing are valid for verification, but not vice versa.
     #[must_use]
     pub fn can_verify(&self) -> bool {
-        self.created_at + SIGNING_CONFIG.key_ttl_verification > chrono::Utc::now().timestamp()
+        self.created_at + SIGNING_CONFIG.key_ttl_verification
+            > time::OffsetDateTime::now_utc().unix_timestamp()
     }
 }
 
@@ -139,7 +141,7 @@ async fn generate_new_key(
         let signing_key = SigningKey {
             key_definition,
             jwk,
-            created_at: chrono::Utc::now().timestamp(),
+            created_at: time::OffsetDateTime::now_utc().unix_timestamp(),
         };
 
         store_new_key_in_redis(redis, &signing_key).await?;

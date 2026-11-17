@@ -1,8 +1,8 @@
-use chrono::Duration;
 use rand::Rng;
 use redis::{
     AsyncTypedCommands, ExistenceCheck, RedisError, SetExpiry, SetOptions, aio::ConnectionManager,
 };
+use std::time::Duration;
 use thiserror::Error;
 
 use super::TokenDetails;
@@ -46,9 +46,7 @@ impl NonceDb {
         let value =
             serde_json::to_string(token_details).map_err(NonceDbError::SerializationError)?;
         let options = SetOptions::default()
-            .with_expiration(SetExpiry::EX(
-                Duration::minutes(5).num_seconds().cast_unsigned(),
-            ))
+            .with_expiration(SetExpiry::EX(Duration::from_mins(5).as_secs()))
             .conditional_set(ExistenceCheck::NX);
 
         self.redis

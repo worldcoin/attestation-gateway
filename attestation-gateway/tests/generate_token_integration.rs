@@ -255,7 +255,9 @@ gyCLKWWNJZlQ/NBTSekcw1M7xn2Z45Mdres5E7dzazXiC75Zzl4p2+gf
     }"#;
     let token_payload_str = token_payload_str.replace(
         "{timestamp}",
-        chrono::Utc::now().timestamp_millis().to_string().as_str(),
+        (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000)
+            .to_string()
+            .as_str(),
     );
 
     let token_payload: Value = serde_json::from_str(token_payload_str.as_str()).unwrap();
