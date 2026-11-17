@@ -11,5 +11,5 @@ description = "Shared types for the attestation gateway."
 hex.workspace = true
 http.workspace = true
 serde.workspace = true
-sha2 = { version = "0.10" }
+sha2 = { version = "0.11" }
 thiserror.workspace = true
