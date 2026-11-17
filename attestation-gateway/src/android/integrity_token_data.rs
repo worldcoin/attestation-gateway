@@ -468,7 +468,9 @@ mod tests {
         }"#;
         let token_payload_str = token_payload_str.replace(
             "{timestamp}",
-            chrono::Utc::now().timestamp_millis().to_string().as_str(),
+            (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000)
+                .to_string()
+                .as_str(),
         );
         // cspell:enable
 
@@ -1210,7 +1212,9 @@ mod tests {
         }"#;
         let token_payload_str = token_payload_str.replace(
             "{timestamp}",
-            chrono::Utc::now().timestamp_millis().to_string().as_str(),
+            (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000)
+                .to_string()
+                .as_str(),
         );
         // cspell:enable
 

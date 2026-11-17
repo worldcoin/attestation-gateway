@@ -92,7 +92,9 @@ async fn test_fetching_jwks_includes_keys_valid_for_signature() {
             arn: "arn:aws:kms:us-west-2:123456789012:key/key_abcdefgh".to_string(),
         },
         jwk: Jwk::new("EC"),
-        created_at: chrono::Utc::now().timestamp() - SIGNING_CONFIG.key_ttl_signing - 10,
+        created_at: time::OffsetDateTime::now_utc().unix_timestamp()
+            - SIGNING_CONFIG.key_ttl_signing
+            - 10,
     };
     redis
         .rpush::<_, _, ()>("signing-keys", serde_json::to_vec(&verifying_key).unwrap())
@@ -106,7 +108,9 @@ async fn test_fetching_jwks_includes_keys_valid_for_signature() {
             arn: "arn:aws:kms:us-west-2:123456789012:key/key_123".to_string(),
         },
         jwk: Jwk::new("EC"),
-        created_at: chrono::Utc::now().timestamp() - SIGNING_CONFIG.key_ttl_verification - 10,
+        created_at: time::OffsetDateTime::now_utc().unix_timestamp()
+            - SIGNING_CONFIG.key_ttl_verification
+            - 10,
     };
     redis
         .rpush::<_, _, ()>("signing-keys", serde_json::to_vec(&key).unwrap())

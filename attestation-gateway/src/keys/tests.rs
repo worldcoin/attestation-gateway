@@ -49,7 +49,9 @@ async fn test_fetch_all_keys_valid_for_verifying() {
             arn: "arn:aws:kms:us-west-2:123456789012:key/key_abcdefgh".to_string(),
         },
         jwk: Jwk::new("EC"),
-        created_at: chrono::Utc::now().timestamp() - SIGNING_CONFIG.key_ttl_signing - 10,
+        created_at: time::OffsetDateTime::now_utc().unix_timestamp()
+            - SIGNING_CONFIG.key_ttl_signing
+            - 10,
     };
     // note we add at the end of the list
     redis
@@ -67,7 +69,9 @@ async fn test_fetch_all_keys_valid_for_verifying() {
             arn: "arn:aws:kms:us-west-2:123456789012:key/key_123".to_string(),
         },
         jwk: Jwk::new("EC"),
-        created_at: chrono::Utc::now().timestamp() - SIGNING_CONFIG.key_ttl_verification - 10,
+        created_at: time::OffsetDateTime::now_utc().unix_timestamp()
+            - SIGNING_CONFIG.key_ttl_verification
+            - 10,
     };
     // note we add at the end of the list
     redis
@@ -94,7 +98,7 @@ async fn test_fetch_already_existing_active_key() {
             arn: "arn:aws:kms:us-west-2:123456789012:key/key_123".to_string(),
         },
         jwk: Jwk::new("EC"),
-        created_at: chrono::Utc::now().timestamp(),
+        created_at: time::OffsetDateTime::now_utc().unix_timestamp(),
     };
 
     redis
@@ -136,7 +140,7 @@ async fn test_fetch_active_key_creating_a_new_one() {
     assert_eq!(len, 1);
 
     // assert key.created_at is close to the current time
-    let now = chrono::Utc::now().timestamp();
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
     assert!(key.created_at - now < 3);
 
     // Check the key was created in AWS
@@ -174,7 +178,9 @@ async fn test_fetch_active_key_expired_key_creates_a_new_one() {
             arn: "arn:aws:kms:us-west-2:123456789012:key/key_123".to_string(),
         },
         jwk: Jwk::new("EC"),
-        created_at: chrono::Utc::now().timestamp() - SIGNING_CONFIG.key_ttl_signing - 10,
+        created_at: time::OffsetDateTime::now_utc().unix_timestamp()
+            - SIGNING_CONFIG.key_ttl_signing
+            - 10,
     };
     // note we add at the end of the list
     redis
@@ -202,7 +208,7 @@ async fn test_fetch_active_key_expired_key_creates_a_new_one() {
     assert_eq!(new_len, len + 1);
 
     // assert key.created_at is close to the current time
-    let now = chrono::Utc::now().timestamp();
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
     assert!(new_key.created_at - now < 3);
 
     // Check the key was created in AWS

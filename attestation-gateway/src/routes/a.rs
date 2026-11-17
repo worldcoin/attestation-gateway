@@ -2,7 +2,6 @@ use crate::aws_clients::AwsClients;
 
 use axum::{Extension, Json, http::HeaderMap};
 use base64::{Engine, engine::general_purpose::STANDARD as Base64};
-use chrono::Utc;
 use josekit::jwt::JwtPayload;
 use openssl::{
     bn::BigNum,
@@ -13,6 +12,7 @@ use openssl::{
 };
 use redis::aio::ConnectionManager;
 use schemars::JsonSchema;
+use time::OffsetDateTime;
 
 use crate::{
     android::{AndroidAttestationError, AndroidAttestationInput, AndroidAttestationService},
@@ -116,7 +116,9 @@ impl IntegrityTokenPayload {
         let mut payload = JwtPayload::new();
         payload.set_claim(
             "iat",
-            Some(josekit::Value::Number(Utc::now().timestamp().into())),
+            Some(josekit::Value::Number(
+                OffsetDateTime::now_utc().unix_timestamp().into(),
+            )),
         )?;
         payload.set_issuer(issuer);
         payload.set_claim("exp", Some(josekit::Value::Number(self.exp.into())))?;
@@ -465,7 +467,7 @@ mod tests {
         let private_key = EcKey::generate(&group).unwrap();
         let public_key = EcKey::from_public_key(&group, private_key.public_key()).unwrap();
         let cnf_pkey = PKey::from_ec_key(public_key).unwrap();
-        let exp = Utc::now().timestamp() + 60;
+        let exp = OffsetDateTime::now_utc().unix_timestamp() + 60;
         let payload = IntegrityTokenPayload {
             v: "1".to_string(),
             platform: Platform::AppleIOS,

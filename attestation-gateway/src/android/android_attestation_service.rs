@@ -19,7 +19,6 @@ use crate::{
     utils::{BundleIdentifier, ErrorCode},
 };
 use base64::{DecodeError, Engine, engine::general_purpose::STANDARD as Base64};
-use chrono::{DateTime, Datelike, Utc};
 use redis::aio::ConnectionManager;
 use thiserror::Error;
 
@@ -340,8 +339,10 @@ impl AndroidAttestationService {
                 .session_cert()
                 .os_patch_level()
                 .map(|os_patch_level| {
-                    let now = DateTime::<Utc>::from(SystemTime::now());
-                    let now = now.year_ce().1 * 100 + now.month();
+                    let now = time::OffsetDateTime::now_utc();
+                    let now = u32::try_from(now.year()).expect("current UTC year is positive")
+                        * 100
+                        + u32::from(u8::from(now.month()));
                     now - os_patch_level
                 });
 

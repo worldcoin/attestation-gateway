@@ -1,5 +1,4 @@
 use base64::{Engine as _, engine::general_purpose};
-use chrono::Utc;
 use openssl::{
     asn1::Asn1Time,
     ec::{EcGroup, EcKey},
@@ -14,6 +13,7 @@ use openssl::{
     },
 };
 use serde_bytes::ByteBuf;
+use time::OffsetDateTime;
 use x509_parser::prelude::FromDer;
 
 use super::{Attestation, AttestationStatement};
@@ -113,10 +113,10 @@ pub fn create_fake_cert(
         .set_not_before(Asn1Time::days_from_now(0).unwrap().as_ref())
         .unwrap();
     if is_expired {
-        let two_minutes_ago = Utc::now() - chrono::Duration::minutes(2);
+        let two_minutes_ago = OffsetDateTime::now_utc() - std::time::Duration::from_mins(2);
         ca_cert_builder
             .set_not_after(
-                Asn1Time::from_unix(two_minutes_ago.timestamp())
+                Asn1Time::from_unix(two_minutes_ago.unix_timestamp())
                     .unwrap()
                     .as_ref(),
             )

@@ -1,4 +1,5 @@
 use aws_sdk_dynamodb::{operation::get_item::GetItemOutput, types::AttributeValue};
+use time::{OffsetDateTime, macros::format_description};
 
 use crate::utils::{BundleIdentifier, ClientException, ErrorCode};
 
@@ -30,9 +31,7 @@ pub async fn insert_apple_public_key(
         .item("key_counter", AttributeValue::N("0".to_string()))
         .item(
             "created_at",
-            AttributeValue::S(
-                chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-            ),
+            AttributeValue::S(format_created_at(OffsetDateTime::now_utc())),
         )
         .condition_expression("attribute_not_exists(#pk)")
         .expression_attribute_names("#pk", "key_id")
@@ -52,6 +51,15 @@ pub async fn insert_apple_public_key(
     }
 
     Ok(())
+}
+
+fn format_created_at(timestamp: OffsetDateTime) -> String {
+    timestamp
+        .to_offset(time::UtcOffset::UTC)
+        .format(format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:6]Z"
+        ))
+        .expect("valid UTC timestamp")
 }
 
 #[derive(Debug)]
@@ -178,5 +186,27 @@ pub async fn update_apple_public_key_counter_plus(
 
             eyre::bail!(service_error);
         }
+    }
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::format_created_at;
+    use time::macros::datetime;
+
+    #[test]
+    fn created_at_preserves_microsecond_utc_storage_format() {
+        assert_eq!(
+            format_created_at(datetime!(2026-11-17 12:00 UTC)),
+            "2026-11-17T12:00:00.000000Z"
+        );
+        assert_eq!(
+            format_created_at(datetime!(2026-11-17 12:34:56.123_456_789 UTC)),
+            "2026-11-17T12:34:56.123456Z"
+        );
+        assert_eq!(
+            format_created_at(datetime!(2026-11-17 13:34:56.123_456 +01:00)),
+            "2026-11-17T12:34:56.123456Z"
+        );
     }
 }

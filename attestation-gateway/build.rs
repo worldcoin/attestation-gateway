@@ -1,5 +1,5 @@
-use chrono::prelude::{DateTime, Utc};
 use std::process::Command;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 fn get_git_rev() -> Option<String> {
     let output = Command::new("git")
@@ -15,9 +15,9 @@ fn get_git_rev() -> Option<String> {
 }
 
 fn get_compile_date() -> String {
-    let system_time = std::time::SystemTime::now();
-    let date_time: DateTime<Utc> = system_time.into();
-    format!("{}", date_time.format("%+"))
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .expect("UTC build date can be formatted as RFC 3339")
 }
 
 fn main() {
