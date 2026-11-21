@@ -353,6 +353,23 @@ async fn verify_android_or_apple_integrity(
     Ok(report)
 }
 
+fn log_integrity_verification_failure(report: &DataReport) {
+    let app_licensing_verdict = report
+        .play_integrity
+        .as_ref()
+        .map(|token| tracing::field::display(&token.account_details.app_licensing_verdict));
+
+    tracing::info!(
+        request_hash = report.request_hash,
+        bundle_identifier = %report.bundle_identifier,
+        // Keep check_type available as a top-level field for filtering developer traffic.
+        check_type = ?report.check_type,
+        app_licensing_verdict,
+        message = "Integrity verification failed",
+        internal_debug_info = report.internal_debug_info
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_and_finalize_report(
     global_config: &GlobalConfig,
@@ -368,16 +385,7 @@ async fn process_and_finalize_report(
     // TODO: Initial roll out does not include generating failure tokens
     if !report.pass {
         if global_config.log_client_errors {
-            tracing::info!(
-                request_hash = request_hash,
-                bundle_identifier = %report.bundle_identifier,
-                // `check_type` is a top-level field so queries like
-                // `check_type:Developer` filter LP/dev traffic without
-                // parsing the nested payload.
-                check_type = ?report.check_type,
-                message = "Integrity verification failed",
-                internal_debug_info = report.internal_debug_info
-            );
+            log_integrity_verification_failure(&report);
         }
         return Err(RequestError {
             code: ErrorCode::IntegrityFailed,
@@ -541,6 +549,48 @@ fn extract_bearer_token(headers: &HeaderMap) -> Result<Option<String>, RequestEr
 mod tests {
     use super::*;
     use crate::utils::TokenGenerationRequest;
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn integrity_failure_log_includes_play_licensing_verdict() {
+        for verdict in ["UNLICENSED", "UNEVALUATED"] {
+            let token = serde_json::from_value(serde_json::json!({
+                "requestDetails": {
+                    "nonce": "test-hash",
+                    "timestampMillis": 0,
+                    "requestPackageName": "com.worldcoin",
+                },
+                "appIntegrity": { "appRecognitionVerdict": "PLAY_RECOGNIZED" },
+                "deviceIntegrity": {},
+                "accountDetails": { "appLicensingVerdict": verdict },
+            }))
+            .unwrap();
+            let report = DataReport {
+                pass: false,
+                out: OutEnum::Fail,
+                timestamp: SystemTime::now(),
+                request_hash: "test-hash".to_string(),
+                bundle_identifier: BundleIdentifier::ComWorldcoin,
+                client_error: None,
+                aud: "test".to_string(),
+                internal_debug_info: Some(
+                    "AppLicensingVerdict does not match LICENSED".to_string(),
+                ),
+                play_integrity: Some(token),
+                app_version: None,
+                check_type: Some(CheckType::Android),
+                dev_check_sub: None,
+                extra: None,
+            };
+
+            log_integrity_verification_failure(&report);
+
+            assert!(logs_contain(&format!("app_licensing_verdict={verdict}")));
+        }
+        assert!(logs_contain(
+            "internal_debug_info=\"AppLicensingVerdict does not match LICENSED\""
+        ));
+    }
 
     fn base_request() -> TokenGenerationRequest {
         TokenGenerationRequest {
